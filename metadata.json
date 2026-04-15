@@ -1,0 +1,5 @@
+{
+  "name": "EduGestión",
+  "description": "Sistema integral de gestión para distribución y ventas, con control de stock, clientes y finanzas.",
+  "requestFramePermissions": ["geolocation"]
+}
