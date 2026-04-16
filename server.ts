@@ -2,7 +2,6 @@ import express from "express";
 import path from "path";
 import { createServer } from "http";
 import session from "express-session";
-import SQLiteStore from "connect-sqlite3";
 import helmet from "helmet";
 import cors from "cors";
 import morgan from "morgan";
@@ -61,20 +60,20 @@ async function startServer() {
   const PORT = Number(process.env.PORT) || 3000;
   const { cookieOptions } = getSessionConfig();
 
-  // Trust proxy is required for 'secure: true' cookies when behind a proxy (like in AI Studio)
+  // Trust proxy is required for 'secure: true' cookies when behind a proxy (like in AI Studio / production)
   app.set('trust proxy', 1);
 
   // Initialize DB
   initDb();
 
-  const SQLiteStoreSession = SQLiteStore(session);
+  // Session is kept lightweight and optional.
+  // Bearer token auth remains the durable fallback for environments like Vercel.
   const sessionMiddleware = session({
-    store: new SQLiteStoreSession({ db: "sessions.db", dir: "." }),
     secret: process.env.SESSION_SECRET || "fallback-insecure-key-replace-in-production",
     resave: false,
     saveUninitialized: false,
-    name: "sid", // Custom cookie name for security
-    proxy: true, // Required when trust proxy is set
+    name: "sid",
+    proxy: true,
     cookie: cookieOptions,
   });
 
@@ -86,7 +85,7 @@ async function startServer() {
   initSocket(server, sessionMiddleware);
 
   app.use(helmet({
-    contentSecurityPolicy: false, // Vite needs this disabled or configured
+    contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
   }));
   

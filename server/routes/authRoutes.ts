@@ -24,34 +24,37 @@ router.post("/login", validate(loginSchema), (req, res) => {
     return sendError(res, "Credenciales inválidas", 401);
   }
 
-  // 1. Create Session (Cookie)
-  req.session.userId = user.id;
-  req.session.role = user.role;
-  req.session.userName = user.name;
-
-  // 2. Generate Bearer Token (Fallback)
   const token = generateToken({
     userId: user.id,
     role: user.role,
     userName: user.name
   });
 
-  req.session.save((err) => {
-    if (err) {
-      return sendError(res, "Error al guardar la sesión", 500);
-    }
+  const finishLogin = () => {
     const { password: _, ...userWithoutPassword } = user;
     const permissions = UserRepository.getPermissions(user.id);
-    
-    // Return both user data and token
     return sendSuccess(res, { ...userWithoutPassword, permissions, token }, "Login exitoso");
+  };
+
+  if (!req.session) {
+    return finishLogin();
+  }
+
+  req.session.userId = user.id;
+  req.session.role = user.role;
+  req.session.userName = user.name;
+
+  req.session.save((err) => {
+    if (err) {
+      console.warn("[Auth] No se pudo guardar la sesión. Se continuará con token.", err);
+    }
+    return finishLogin();
   });
 });
 
 router.get("/me", (req: any, res) => {
-  let userId = req.session.userId;
+  let userId = req.session?.userId;
   
-  // Fallback to Bearer Token if no session
   if (!userId) {
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -76,16 +79,24 @@ router.get("/me", (req: any, res) => {
 
 router.post("/logout", (req, res) => {
   const { cookieOptions } = getSessionConfig();
-  
-  req.session.destroy((err) => {
-    if (err) return sendError(res, "Error al cerrar sesión", 500);
-    
+
+  const clearAuthCookie = () => {
     res.clearCookie('sid', {
       ...cookieOptions,
-      maxAge: 0, // Force immediate expiration
+      maxAge: 0,
     });
-    
     return sendSuccess(res, null, "Sesión cerrada");
+  };
+
+  if (!req.session) {
+    return clearAuthCookie();
+  }
+
+  req.session.destroy((err) => {
+    if (err) {
+      console.warn("[Auth] Error al destruir sesión. Se limpiará cookie igualmente.", err);
+    }
+    return clearAuthCookie();
   });
 });
 
