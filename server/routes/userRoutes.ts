@@ -7,14 +7,29 @@ import { sendSuccess, sendError } from "../utils/response.js";
 
 const router = express.Router();
 
-const userSchema = z.object({
-  body: z.object({
-    name: z.string().min(2, "Nombre demasiado corto"),
-    email: z.string().email("Email inválido"),
-    role: z.enum(["administrador", "vendedor", "operario"]),
-    password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres").optional(),
-    active: z.union([z.number(), z.boolean()]).optional(),
-    avatar: z.string().optional(),
+const baseUserBodySchema = z.object({
+  name: z.string().min(2, "Nombre demasiado corto"),
+  email: z.string().email("Email inválido"),
+  role: z.enum(["administrador", "empleado", "vendedor", "operario"]),
+  active: z.union([z.number(), z.boolean()]).optional(),
+  avatar: z.string().optional(),
+});
+
+const createUserSchema = z.object({
+  body: baseUserBodySchema.extend({
+    password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres"),
+  }),
+});
+
+const updateUserSchema = z.object({
+  body: baseUserBodySchema.extend({
+    password: z
+      .string()
+      .optional()
+      .refine(
+        (value) => value === undefined || value === "" || value.length >= 6,
+        "La contraseña debe tener al menos 6 caracteres"
+      ),
   }),
 });
 
@@ -30,35 +45,42 @@ const permissionsSchema = z.object({
   }),
 });
 
-router.get("/", requireAdmin, (req, res) => {
-  const users = UserRepository.findAll();
+router.get("/", requireAdmin, async (req, res) => {
+  const users = await UserRepository.findAll();
   return sendSuccess(res, users);
 });
 
-router.post("/", requireAdmin, validate(userSchema), (req, res) => {
+router.post("/", requireAdmin, validate(createUserSchema), async (req, res) => {
   try {
-    const newUser = UserRepository.create(req.body);
+    const newUser = await UserRepository.create(req.body);
     return sendSuccess(res, newUser, "Usuario creado exitosamente", 201);
   } catch (error: any) {
-    if (error.code === 'SQLITE_CONSTRAINT') {
+    if (error.code === 'SQLITE_CONSTRAINT' || error.code === '23505') {
       return sendError(res, "El email ya está registrado", 400);
     }
     throw error;
   }
 });
 
-router.put("/:id", requireAdmin, validate(userSchema), (req, res) => {
-  const updatedUser = UserRepository.update(Number(req.params.id), req.body);
-  return sendSuccess(res, updatedUser, "Usuario actualizado");
+router.put("/:id", requireAdmin, validate(updateUserSchema), async (req, res) => {
+  try {
+    const updatedUser = await UserRepository.update(Number(req.params.id), req.body);
+    return sendSuccess(res, updatedUser, "Usuario actualizado");
+  } catch (error: any) {
+    if (error.code === 'SQLITE_CONSTRAINT' || error.code === '23505') {
+      return sendError(res, "El email ya está registrado", 400);
+    }
+    throw error;
+  }
 });
 
-router.get("/:id/permissions", requireAdmin, (req, res) => {
-  const permissions = UserRepository.getPermissions(Number(req.params.id));
+router.get("/:id/permissions", requireAdmin, async (req, res) => {
+  const permissions = await UserRepository.getPermissions(Number(req.params.id));
   return sendSuccess(res, permissions);
 });
 
-router.put("/:id/permissions", requireAdmin, validate(permissionsSchema), (req, res) => {
-  UserRepository.updatePermissions(Number(req.params.id), req.body.permissions);
+router.put("/:id/permissions", requireAdmin, validate(permissionsSchema), async (req, res) => {
+  await UserRepository.updatePermissions(Number(req.params.id), req.body.permissions);
   return sendSuccess(res, null, "Permisos actualizados");
 });
 
