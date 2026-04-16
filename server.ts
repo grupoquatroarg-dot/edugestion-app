@@ -9,6 +9,7 @@ import "express-async-errors";
 import { createServer as createViteServer } from "vite";
 import { fileURLToPath } from 'url';
 import dotenv from "dotenv";
+import { z } from "zod";
 
 // Load environment variables
 dotenv.config();
@@ -20,10 +21,11 @@ import { initSocket } from "./server/socket.js";
 // Middlewares
 import { errorHandler } from "./server/middleware/errorHandler.js";
 import { getSessionConfig } from "./server/utils/sessionConfig.js";
+import { validate } from "./server/middleware/validate.js";
 
 // Routes
 import { requireAuth, requirePermission } from "./server/middleware/authMiddleware.js";
-import { sendSuccess } from "./server/utils/response.js";
+import { sendSuccess, sendError } from "./server/utils/response.js";
 import db from "./server/db.js";
 import authRoutes from "./server/routes/authRoutes.js";
 import userRoutes from "./server/routes/userRoutes.js";
@@ -41,6 +43,7 @@ import businessRouteRoutes from "./server/routes/businessRouteRoutes.js";
 import dashboardRoutes from "./server/routes/dashboardRoutes.js";
 import stockRoutes from "./server/routes/stockRoutes.js";
 import purchaseInvoiceRoutes from "./server/routes/purchaseInvoiceRoutes.js";
+import { getPostgresPool, isPostgresConfigured } from "./server/utils/postgres.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -53,21 +56,31 @@ declare module 'express-session' {
   }
 }
 
+const familyAliasSchema = z.object({
+  body: z.object({
+    name: z.string().min(2, "Nombre demasiado corto"),
+    category_id: z.number().nullable().optional(),
+  }),
+});
+
+const mapFamily = (row: any) => ({
+  id: Number(row.id),
+  name: row.name,
+  category_id: row.category_id === null || row.category_id === undefined ? null : Number(row.category_id),
+  estado: row.estado,
+});
+
 async function startServer() {
   const app = express();
   const server = createServer(app);
-  
+
   const PORT = Number(process.env.PORT) || 3000;
   const { cookieOptions } = getSessionConfig();
 
-  // Trust proxy is required for 'secure: true' cookies when behind a proxy (like in AI Studio / production)
   app.set('trust proxy', 1);
 
-  // Initialize DB
   initDb();
 
-  // Session is kept lightweight and optional.
-  // Bearer token auth remains the durable fallback for environments like Vercel.
   const sessionMiddleware = session({
     secret: process.env.SESSION_SECRET || "fallback-insecure-key-replace-in-production",
     resave: false,
@@ -81,14 +94,13 @@ async function startServer() {
     console.warn("WARNING: SESSION_SECRET is not set in production. Using insecure fallback.");
   }
 
-  // Initialize Socket.io with session
   initSocket(server, sessionMiddleware);
 
   app.use(helmet({
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
   }));
-  
+
   app.use(cors({
     origin: process.env.CORS_ORIGIN === "*" ? true : (process.env.CORS_ORIGIN || "http://localhost:3000"),
     credentials: true,
@@ -98,13 +110,12 @@ async function startServer() {
   app.use(morgan("dev"));
   app.use(express.json());
   app.use(sessionMiddleware);
-  
+
   app.use((req, res, next) => {
     console.log(`[Session] ${req.method} ${req.url} - SessionID: ${req.sessionID}, UserId: ${(req.session as any).userId}`);
     next();
   });
 
-  // API Routes
   app.use("/api/auth", authRoutes);
   app.use("/api/users", userRoutes);
   app.use("/api/products", productRoutes);
@@ -121,22 +132,62 @@ async function startServer() {
   app.use("/api/dashboard", dashboardRoutes);
   app.use("/api/stock", stockRoutes);
   app.use("/api/purchase-invoices", purchaseInvoiceRoutes);
-  
-  // Missing routes for frontend compatibility
-  app.get("/api/families", requireAuth, requirePermission('products', 'view'), (req, res) => {
-    const families = db.prepare("SELECT * FROM product_families ORDER BY name ASC").all();
-    return sendSuccess(res, families);
+
+  app.get("/api/families", requireAuth, requirePermission('products', 'view'), async (req, res) => {
+    try {
+      if (!isPostgresConfigured()) {
+        const families = db.prepare("SELECT * FROM product_families ORDER BY name ASC").all();
+        return sendSuccess(res, families);
+      }
+
+      const pool = getPostgresPool();
+      const result = await pool.query("SELECT * FROM product_families ORDER BY name ASC");
+      return sendSuccess(res, result.rows.map(mapFamily));
+    } catch (error: any) {
+      return sendError(res, error.message || "Error al obtener familias", 400);
+    }
   });
 
-  app.get("/api/inventory/total-value", requireAuth, requirePermission('products', 'view'), (req, res) => {
-    const totalValue = db.prepare("SELECT SUM(stock * cost) as total FROM products WHERE eliminado = 0").get() as any;
-    return sendSuccess(res, totalValue.total || 0);
+  app.post("/api/families", requireAuth, requirePermission('products', 'create'), validate(familyAliasSchema), async (req, res) => {
+    const { name, category_id } = req.body;
+
+    try {
+      if (!isPostgresConfigured()) {
+        const info = db.prepare("INSERT INTO product_families (name, category_id) VALUES (?, ?)").run(name, category_id || null);
+        return sendSuccess(res, { id: info.lastInsertRowid, name, category_id: category_id || null, estado: 'activo' }, "Familia creada", 201);
+      }
+
+      const pool = getPostgresPool();
+      const result = await pool.query(
+        `INSERT INTO product_families (name, category_id)
+         VALUES ($1, $2)
+         RETURNING id, name, category_id, estado`,
+        [name, category_id || null]
+      );
+
+      return sendSuccess(res, mapFamily(result.rows[0]), "Familia creada", 201);
+    } catch (error: any) {
+      return sendError(res, error.message || "Error al crear familia", 400);
+    }
   });
 
-  // Error handling middleware
+  app.get("/api/inventory/total-value", requireAuth, requirePermission('products', 'view'), async (req, res) => {
+    try {
+      if (!isPostgresConfigured()) {
+        const totalValue = db.prepare("SELECT SUM(stock * cost) as total FROM products WHERE eliminado = 0").get() as any;
+        return sendSuccess(res, totalValue.total || 0);
+      }
+
+      const pool = getPostgresPool();
+      const result = await pool.query("SELECT COALESCE(SUM(stock * cost), 0) AS total FROM products WHERE eliminado = 0");
+      return sendSuccess(res, Number(result.rows[0]?.total || 0));
+    } catch (error: any) {
+      return sendError(res, error.message || "Error al obtener valor total del stock", 400);
+    }
+  });
+
   app.use(errorHandler);
 
-  // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },

@@ -3,7 +3,8 @@ import db from "../db.js";
 import { requirePermission } from "../middleware/authMiddleware.js";
 import { validate } from "../middleware/validate.js";
 import { z } from "zod";
-import { sendSuccess } from "../utils/response.js";
+import { sendSuccess, sendError } from "../utils/response.js";
+import { getPostgresPool, isPostgresConfigured } from "../utils/postgres.js";
 
 const router = Router();
 
@@ -12,10 +13,24 @@ const nameSchema = z.object({
     name: z.string().min(2, "Nombre demasiado corto"),
     description: z.string().optional(),
     estado: z.string().optional(),
-    category_id: z.number().optional(),
+    category_id: z.number().optional().nullable(),
     tipo: z.string().optional(),
     activo: z.number().optional(),
   }),
+});
+
+const mapCategory = (row: any) => ({
+  id: Number(row.id),
+  name: row.name,
+  description: row.description,
+  estado: row.estado,
+});
+
+const mapFamily = (row: any) => ({
+  id: Number(row.id),
+  name: row.name,
+  category_id: row.category_id === null || row.category_id === undefined ? null : Number(row.category_id),
+  estado: row.estado,
 });
 
 // Settings
@@ -31,76 +46,193 @@ router.get("/settings", requirePermission('settings', 'view'), (req, res) => {
 router.post("/settings", requirePermission('settings', 'create'), (req, res) => {
   const settings = req.body;
   const upsert = db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)");
-  
+
   const transaction = db.transaction((data) => {
     for (const [key, value] of Object.entries(data)) {
       upsert.run(key, String(value));
     }
   });
-  
+
   transaction(settings);
   return sendSuccess(res, null, "Configuración guardada");
 });
 
 // Product Families
-router.get("/product-families", requirePermission('settings', 'view'), (req, res) => {
-  const families = db.prepare("SELECT * FROM product_families ORDER BY name ASC").all();
-  return sendSuccess(res, families);
+router.get("/product-families", requirePermission('settings', 'view'), async (req, res) => {
+  if (!isPostgresConfigured()) {
+    const families = db.prepare("SELECT * FROM product_families ORDER BY name ASC").all();
+    return sendSuccess(res, families);
+  }
+
+  try {
+    const pool = getPostgresPool();
+    const result = await pool.query("SELECT * FROM product_families ORDER BY name ASC");
+    return sendSuccess(res, result.rows.map(mapFamily));
+  } catch (error: any) {
+    return sendError(res, error.message || "Error al obtener familias", 400);
+  }
 });
 
-router.get("/families", requirePermission('settings', 'view'), (req, res) => {
-  const families = db.prepare("SELECT * FROM product_families ORDER BY name ASC").all();
-  return sendSuccess(res, families);
+router.get("/families", requirePermission('settings', 'view'), async (req, res) => {
+  if (!isPostgresConfigured()) {
+    const families = db.prepare("SELECT * FROM product_families ORDER BY name ASC").all();
+    return sendSuccess(res, families);
+  }
+
+  try {
+    const pool = getPostgresPool();
+    const result = await pool.query("SELECT * FROM product_families ORDER BY name ASC");
+    return sendSuccess(res, result.rows.map(mapFamily));
+  } catch (error: any) {
+    return sendError(res, error.message || "Error al obtener familias", 400);
+  }
 });
 
-router.post("/product-families", requirePermission('settings', 'create'), validate(nameSchema), (req, res) => {
+router.post("/product-families", requirePermission('settings', 'create'), validate(nameSchema), async (req, res) => {
   const { name, category_id } = req.body;
-  const info = db.prepare("INSERT INTO product_families (name, category_id) VALUES (?, ?)").run(name, category_id || null);
-  return sendSuccess(res, { id: info.lastInsertRowid, name, category_id }, "Familia creada", 201);
+
+  if (!isPostgresConfigured()) {
+    const info = db.prepare("INSERT INTO product_families (name, category_id) VALUES (?, ?)").run(name, category_id || null);
+    return sendSuccess(res, { id: info.lastInsertRowid, name, category_id: category_id || null }, "Familia creada", 201);
+  }
+
+  try {
+    const pool = getPostgresPool();
+    const result = await pool.query(
+      `INSERT INTO product_families (name, category_id)
+       VALUES ($1, $2)
+       RETURNING id, name, category_id, estado`,
+      [name, category_id || null]
+    );
+
+    return sendSuccess(res, mapFamily(result.rows[0]), "Familia creada", 201);
+  } catch (error: any) {
+    return sendError(res, error.message || "Error al crear familia", 400);
+  }
 });
 
-router.put("/product-families/:id", requirePermission('settings', 'edit'), validate(nameSchema), (req, res) => {
+router.put("/product-families/:id", requirePermission('settings', 'edit'), validate(nameSchema), async (req, res) => {
   const { id } = req.params;
   const { name, category_id } = req.body;
-  db.prepare("UPDATE product_families SET name = ?, category_id = ? WHERE id = ?").run(name, category_id || null, id);
-  return sendSuccess(res, null, "Familia actualizada");
+
+  if (!isPostgresConfigured()) {
+    db.prepare("UPDATE product_families SET name = ?, category_id = ? WHERE id = ?").run(name, category_id || null, id);
+    return sendSuccess(res, null, "Familia actualizada");
+  }
+
+  try {
+    const pool = getPostgresPool();
+    await pool.query(
+      "UPDATE product_families SET name = $1, category_id = $2 WHERE id = $3",
+      [name, category_id || null, Number(id)]
+    );
+    return sendSuccess(res, null, "Familia actualizada");
+  } catch (error: any) {
+    return sendError(res, error.message || "Error al actualizar familia", 400);
+  }
 });
 
-router.delete("/product-families/:id", requirePermission('settings', 'delete'), (req, res) => {
+router.delete("/product-families/:id", requirePermission('settings', 'delete'), async (req, res) => {
   const { id } = req.params;
-  db.prepare("DELETE FROM product_families WHERE id = ?").run(id);
-  return sendSuccess(res, null, "Familia eliminada");
+
+  if (!isPostgresConfigured()) {
+    db.prepare("DELETE FROM product_families WHERE id = ?").run(id);
+    return sendSuccess(res, null, "Familia eliminada");
+  }
+
+  try {
+    const pool = getPostgresPool();
+    await pool.query("DELETE FROM product_families WHERE id = $1", [Number(id)]);
+    return sendSuccess(res, null, "Familia eliminada");
+  } catch (error: any) {
+    return sendError(res, error.message || "Error al eliminar familia", 400);
+  }
 });
 
 // Categories
-router.get("/product-categories", requirePermission('settings', 'view'), (req, res) => {
+router.get("/product-categories", requirePermission('settings', 'view'), async (req, res) => {
   const activeOnly = req.query.active === 'true';
-  let query = "SELECT * FROM product_categories";
-  if (activeOnly) {
-    query += " WHERE estado = 'activo'";
+
+  if (!isPostgresConfigured()) {
+    let query = "SELECT * FROM product_categories";
+    if (activeOnly) {
+      query += " WHERE estado = 'activo'";
+    }
+    query += " ORDER BY name ASC";
+
+    const categories = db.prepare(query).all();
+    return sendSuccess(res, categories);
   }
-  query += " ORDER BY name ASC";
-  
-  const categories = db.prepare(query).all();
-  return sendSuccess(res, categories);
+
+  try {
+    const pool = getPostgresPool();
+    const result = activeOnly
+      ? await pool.query("SELECT * FROM product_categories WHERE estado = 'activo' ORDER BY name ASC")
+      : await pool.query("SELECT * FROM product_categories ORDER BY name ASC");
+
+    return sendSuccess(res, result.rows.map(mapCategory));
+  } catch (error: any) {
+    return sendError(res, error.message || "Error al obtener categorías", 400);
+  }
 });
 
-router.post("/product-categories", requirePermission('settings', 'create'), validate(nameSchema), (req, res) => {
+router.post("/product-categories", requirePermission('settings', 'create'), validate(nameSchema), async (req, res) => {
   const { name, description } = req.body;
-  const info = db.prepare("INSERT INTO product_categories (name, description) VALUES (?, ?)").run(name, description || null);
-  return sendSuccess(res, { id: info.lastInsertRowid, name, description }, "Categoría creada", 201);
+
+  if (!isPostgresConfigured()) {
+    const info = db.prepare("INSERT INTO product_categories (name, description) VALUES (?, ?)").run(name, description || null);
+    return sendSuccess(res, { id: info.lastInsertRowid, name, description }, "Categoría creada", 201);
+  }
+
+  try {
+    const pool = getPostgresPool();
+    const result = await pool.query(
+      `INSERT INTO product_categories (name, description)
+       VALUES ($1, $2)
+       RETURNING id, name, description, estado`,
+      [name, description || null]
+    );
+
+    return sendSuccess(res, mapCategory(result.rows[0]), "Categoría creada", 201);
+  } catch (error: any) {
+    return sendError(res, error.message || "Error al crear categoría", 400);
+  }
 });
 
-router.put("/product-categories/:id", requirePermission('settings', 'edit'), validate(nameSchema), (req, res) => {
+router.put("/product-categories/:id", requirePermission('settings', 'edit'), validate(nameSchema), async (req, res) => {
   const { name, description, estado } = req.body;
-  db.prepare("UPDATE product_categories SET name = ?, description = ?, estado = ? WHERE id = ?")
-    .run(name, description || null, estado || 'activo', req.params.id);
-  return sendSuccess(res, null, "Categoría actualizada");
+
+  if (!isPostgresConfigured()) {
+    db.prepare("UPDATE product_categories SET name = ?, description = ?, estado = ? WHERE id = ?")
+      .run(name, description || null, estado || 'activo', req.params.id);
+    return sendSuccess(res, null, "Categoría actualizada");
+  }
+
+  try {
+    const pool = getPostgresPool();
+    await pool.query(
+      "UPDATE product_categories SET name = $1, description = $2, estado = $3 WHERE id = $4",
+      [name, description || null, estado || 'activo', Number(req.params.id)]
+    );
+    return sendSuccess(res, null, "Categoría actualizada");
+  } catch (error: any) {
+    return sendError(res, error.message || "Error al actualizar categoría", 400);
+  }
 });
 
-router.delete("/product-categories/:id", requirePermission('settings', 'delete'), (req, res) => {
-  db.prepare("DELETE FROM product_categories WHERE id = ?").run(req.params.id);
-  return sendSuccess(res, null, "Categoría eliminada");
+router.delete("/product-categories/:id", requirePermission('settings', 'delete'), async (req, res) => {
+  if (!isPostgresConfigured()) {
+    db.prepare("DELETE FROM product_categories WHERE id = ?").run(req.params.id);
+    return sendSuccess(res, null, "Categoría eliminada");
+  }
+
+  try {
+    const pool = getPostgresPool();
+    await pool.query("DELETE FROM product_categories WHERE id = $1", [Number(req.params.id)]);
+    return sendSuccess(res, null, "Categoría eliminada");
+  } catch (error: any) {
+    return sendError(res, error.message || "Error al eliminar categoría", 400);
+  }
 });
 
 // Payment Methods
