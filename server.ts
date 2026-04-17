@@ -175,12 +175,12 @@ async function startServer() {
     try {
       if (!isPostgresConfigured()) {
         const totalValue = db.prepare("SELECT SUM(stock * cost) as total FROM products WHERE eliminado = 0").get() as any;
-        return sendSuccess(res, totalValue.total || 0);
+        return sendSuccess(res, { total: Number(totalValue?.total || 0) });
       }
 
       const pool = getPostgresPool();
       const result = await pool.query("SELECT COALESCE(SUM(stock * cost), 0) AS total FROM products WHERE eliminado = 0");
-      return sendSuccess(res, Number(result.rows[0]?.total || 0));
+      return sendSuccess(res, { total: Number(result.rows[0]?.total || 0) });
     } catch (error: any) {
       return sendError(res, error.message || "Error al obtener valor total del stock", 400);
     }
