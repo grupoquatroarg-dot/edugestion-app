@@ -1,11 +1,13 @@
 import { Router } from "express";
+import { z } from "zod";
 import { clientRepository } from "../repositories/clientRepository.js";
 import { requireAuth, requirePermission } from "../middleware/authMiddleware.js";
 import { validate } from "../middleware/validate.js";
-import { z } from "zod";
-import { sendSuccess, sendError } from "../utils/response.js";
+import { sendSuccess } from "../utils/response.js";
 
 const router = Router();
+
+const optionalEmailSchema = z.string().email("Email inválido").optional().or(z.literal(""));
 
 const clientSchema = z.object({
   body: z.object({
@@ -13,7 +15,7 @@ const clientSchema = z.object({
     razon_social: z.string().optional(),
     cuit: z.string().optional(),
     telefono: z.string().optional(),
-    email: z.string().email("Email inválido").optional().or(z.literal("")),
+    email: optionalEmailSchema,
     direccion: z.string().optional(),
     localidad: z.string().optional(),
     provincia: z.string().optional(),
@@ -26,40 +28,24 @@ const clientSchema = z.object({
   }),
 });
 
-router.get("/", requireAuth, requirePermission('customers', 'view'), (req, res) => {
-  try {
-    const clients = clientRepository.findAll();
-    sendSuccess(res, clients);
-  } catch (error) {
-    throw error;
-  }
+router.get("/", requireAuth, requirePermission('customers', 'view'), async (req, res) => {
+  const clients = await clientRepository.findAll();
+  return sendSuccess(res, clients);
 });
 
-router.post("/", requireAuth, requirePermission('customers', 'create'), validate(clientSchema), (req, res) => {
-  try {
-    const id = clientRepository.create(req.body);
-    sendSuccess(res, { id, ...req.body }, "Cliente creado exitosamente", 201);
-  } catch (error) {
-    throw error;
-  }
+router.post("/", requireAuth, requirePermission('customers', 'create'), validate(clientSchema), async (req, res) => {
+  const id = await clientRepository.create(req.body);
+  return sendSuccess(res, { id, ...req.body }, "Cliente creado exitosamente", 201);
 });
 
-router.put("/:id", requireAuth, requirePermission('customers', 'edit'), validate(clientSchema), (req, res) => {
-  try {
-    clientRepository.update(req.params.id, req.body);
-    sendSuccess(res, null, "Cliente actualizado exitosamente");
-  } catch (error) {
-    throw error;
-  }
+router.put("/:id", requireAuth, requirePermission('customers', 'edit'), validate(clientSchema), async (req, res) => {
+  await clientRepository.update(req.params.id, req.body);
+  return sendSuccess(res, null, "Cliente actualizado exitosamente");
 });
 
-router.delete("/:id", requireAuth, requirePermission('customers', 'delete'), (req, res) => {
-  try {
-    clientRepository.delete(req.params.id);
-    sendSuccess(res, null, "Cliente eliminado exitosamente");
-  } catch (error) {
-    throw error;
-  }
+router.delete("/:id", requireAuth, requirePermission('customers', 'delete'), async (req, res) => {
+  await clientRepository.delete(req.params.id);
+  return sendSuccess(res, null, "Cliente eliminado exitosamente");
 });
 
 export default router;

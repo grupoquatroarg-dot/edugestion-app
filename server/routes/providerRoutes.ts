@@ -1,44 +1,41 @@
 import { Router } from "express";
+import { z } from "zod";
 import { providerRepository } from "../repositories/providerRepository.js";
 import { requireAuth, requirePermission } from "../middleware/authMiddleware.js";
-import { sendSuccess, sendError } from "../utils/response.js";
+import { validate } from "../middleware/validate.js";
+import { sendSuccess } from "../utils/response.js";
 
 const router = Router();
 
-router.get("/", requireAuth, requirePermission('suppliers', 'view'), (req, res) => {
-  try {
-    const providers = providerRepository.findAll();
-    sendSuccess(res, providers);
-  } catch (error) {
-    sendError(res, "Failed to fetch providers", 500);
-  }
+const providerSchema = z.object({
+  body: z.object({
+    nombre: z.string().min(2, "El nombre debe tener al menos 2 caracteres"),
+    cuit: z.string().optional(),
+    telefono: z.string().optional(),
+    email: z.string().email("Email inválido").optional().or(z.literal("")),
+    direccion: z.string().optional(),
+    estado: z.string().optional(),
+  }),
 });
 
-router.post("/", requireAuth, requirePermission('suppliers', 'create'), (req, res) => {
-  try {
-    const id = providerRepository.create(req.body);
-    sendSuccess(res, { id, ...req.body }, "Proveedor creado exitosamente", 201);
-  } catch (error) {
-    sendError(res, "Failed to create provider", 500);
-  }
+router.get("/", requireAuth, requirePermission('suppliers', 'view'), async (req, res) => {
+  const providers = await providerRepository.findAll();
+  return sendSuccess(res, providers);
 });
 
-router.put("/:id", requireAuth, requirePermission('suppliers', 'edit'), (req, res) => {
-  try {
-    providerRepository.update(req.params.id, req.body);
-    sendSuccess(res, null, "Proveedor actualizado exitosamente");
-  } catch (error) {
-    sendError(res, "Failed to update provider", 500);
-  }
+router.post("/", requireAuth, requirePermission('suppliers', 'create'), validate(providerSchema), async (req, res) => {
+  const id = await providerRepository.create(req.body);
+  return sendSuccess(res, { id, ...req.body }, "Proveedor creado exitosamente", 201);
 });
 
-router.delete("/:id", requireAuth, requirePermission('suppliers', 'delete'), (req, res) => {
-  try {
-    providerRepository.delete(req.params.id);
-    sendSuccess(res, null, "Proveedor eliminado exitosamente");
-  } catch (error) {
-    sendError(res, "Failed to delete provider", 500);
-  }
+router.put("/:id", requireAuth, requirePermission('suppliers', 'edit'), validate(providerSchema), async (req, res) => {
+  await providerRepository.update(req.params.id, req.body);
+  return sendSuccess(res, null, "Proveedor actualizado exitosamente");
+});
+
+router.delete("/:id", requireAuth, requirePermission('suppliers', 'delete'), async (req, res) => {
+  await providerRepository.delete(req.params.id);
+  return sendSuccess(res, null, "Proveedor eliminado exitosamente");
 });
 
 export default router;
