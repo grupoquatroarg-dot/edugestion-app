@@ -159,6 +159,7 @@ export default function ProductModule() {
       setEditingProduct(null);
       setFormData({ code: '', name: '', description: '', cost: 0, sale_price: 0, stock: 0, stock_minimo: 0, company: 'Edu', family_id: null, category_id: null, estado: 'activo' });
       fetchProducts();
+      fetchTotalStockValue();
     } catch (error: any) {
       console.error("Error saving product:", error);
       let msg = error.message || "Error al guardar el producto";
@@ -187,6 +188,7 @@ export default function ProductModule() {
       setSelectedProductForStock(null);
       setStockFormData({ cantidad: 0, costo_unitario: 0 });
       fetchProducts();
+      fetchTotalStockValue();
     } catch (error: any) {
       console.error("Error loading stock:", error);
       alert(error.message || "Error al cargar stock");
@@ -218,6 +220,7 @@ export default function ProductModule() {
       setExpireFormData({ cantidad: 0 });
       setSelectedProductForExpire(null);
       fetchProducts();
+      fetchTotalStockValue();
     } catch (error: any) {
       console.error("Error processing expiration write-off:", error);
       alert(error.message || "Error al procesar la baja");
@@ -269,6 +272,7 @@ export default function ProductModule() {
 
       // 2.c Actualizar estado UI inmediatamente
       setProducts(prev => prev.filter(p => p.id !== productId));
+      fetchTotalStockValue();
       return;
     } catch (err) {
       console.error("Error al eliminar directamente:", err);
@@ -294,6 +298,7 @@ export default function ProductModule() {
 
         console.log("PRODUCTO ELIMINADO (via fallback):", productId);
         setProducts(prev => prev.filter(p => p.id !== productId));
+        fetchTotalStockValue();
         return;
       } catch (err2) {
         console.error("Fallback también falló:", err2);
