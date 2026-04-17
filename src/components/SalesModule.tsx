@@ -389,6 +389,7 @@ export default function SalesModule() {
           fecha_vencimiento: new Date().toISOString().split('T')[0],
           importe: ''
         });
+        await Promise.all([fetchSalesHistory(), fetchActiveProducts(), fetchClientes()]);
         return;
       }
 
@@ -410,6 +411,7 @@ export default function SalesModule() {
         fecha_vencimiento: new Date().toISOString().split('T')[0],
         importe: ''
       });
+      await Promise.all([fetchSalesHistory(), fetchActiveProducts(), fetchClientes()]);
     } catch (error: any) {
       console.error("Error en venta:", error);
       alert(error.message || "Error al procesar la venta");
