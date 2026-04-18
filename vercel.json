@@ -1,17 +1,16 @@
 ﻿{
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": "vite",
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
   "functions": {
-    "api/[...all].ts": {
-      "runtime": "nodejs22.x",
+    "api/**/*.ts": {
       "maxDuration": 60
     }
   },
   "rewrites": [
     {
-      "source": "/((?!api/|assets/|.*\\..*).*)",
+      "source": "/api/:path*",
+      "destination": "/api/:path*"
+    },
+    {
+      "source": "/:path*",
       "destination": "/index.html"
     }
   ]
