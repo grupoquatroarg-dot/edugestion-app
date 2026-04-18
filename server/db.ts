@@ -1,12 +1,18 @@
 import Database from "better-sqlite3";
 import path from "path";
-import { fileURLToPath } from 'url';
 import bcrypt from "bcryptjs";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const isServerlessRuntime = Boolean(
+  process.env.VERCEL ||
+  process.env.AWS_LAMBDA_FUNCTION_NAME ||
+  process.env.LAMBDA_TASK_ROOT
+);
 
-const db = new Database("database.db");
+const sqliteTarget = isServerlessRuntime
+  ? ":memory:"
+  : path.resolve(process.cwd(), "database.db");
+
+const db = new Database(sqliteTarget);
 db.pragma("foreign_keys = ON");
 
 // Initialize database schema
@@ -229,7 +235,7 @@ export function initDb() {
 
     CREATE TABLE IF NOT EXISTS movimientos_financieros (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      tipo TEXT NOT NULL, -- 'ingreso' or 'egreso'
+      tipo TEXT NOT NULL,
       origen TEXT NOT NULL,
       descripcion TEXT,
       categoria TEXT,
@@ -269,7 +275,7 @@ export function initDb() {
       costo_unitario REAL,
       cantidad_restante INTEGER,
       descripcion TEXT,
-      tipo_movimiento TEXT NOT NULL, -- 'ingreso' or 'egreso'
+      tipo_movimiento TEXT NOT NULL,
       motivo TEXT,
       usuario TEXT,
       fecha_ingreso DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -308,7 +314,6 @@ export function initDb() {
     );
   `);
 
-  // Bootstrap initial admin user
   const adminExists = db.prepare("SELECT * FROM users WHERE email = 'admin@edugestion.com'").get();
   if (!adminExists) {
     const hashedPassword = bcrypt.hashSync("admin123", 10);
@@ -321,7 +326,6 @@ export function initDb() {
     );
   }
 
-  // Bootstrap initial "Consumidor Final" client
   const clientExists = db.prepare("SELECT * FROM clientes WHERE id = 1").get();
   if (!clientExists) {
     db.prepare(`
@@ -330,7 +334,6 @@ export function initDb() {
     `).run();
   }
 
-  // Bootstrap initial "Proveedor General" provider
   const providerExists = db.prepare("SELECT * FROM proveedores WHERE id = 1").get();
   if (!providerExists) {
     db.prepare(`
@@ -339,23 +342,20 @@ export function initDb() {
     `).run();
   }
 
-  // Migrations
   try { db.exec("ALTER TABLE sales ADD COLUMN costo_total REAL DEFAULT 0"); } catch (e) {}
   try { db.exec("ALTER TABLE sales ADD COLUMN ganancia REAL DEFAULT 0"); } catch (e) {}
   try { db.exec("ALTER TABLE sales ADD COLUMN estado TEXT DEFAULT 'Pagada'"); } catch (e) {}
   try { db.exec("ALTER TABLE checklist_items RENAME COLUMN user_id TO completed_by"); } catch (e) {}
-  
-  // Clientes migrations
+
   try { db.exec("ALTER TABLE clientes ADD COLUMN razon_social TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN cuit TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN provincia TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN lista_precio TEXT DEFAULT 'lista1'"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN limite_credito REAL DEFAULT 0"); } catch (e) {}
-  
-  // Sales migrations
+
   try { db.exec("ALTER TABLE sales ADD COLUMN notes TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE sales ADD COLUMN usuario TEXT"); } catch (e) {}
-  
+
   return db;
 }
 
