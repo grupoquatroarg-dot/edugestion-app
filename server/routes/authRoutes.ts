@@ -16,9 +16,9 @@ const loginSchema = z.object({
   }),
 });
 
-router.post("/login", validate(loginSchema), (req, res) => {
+router.post("/login", validate(loginSchema), async (req, res) => {
   const { email, password } = req.body;
-  const user = UserRepository.findByEmail(email) as any;
+  const user = await UserRepository.findByEmail(email) as any;
   
   if (!user || !bcrypt.compareSync(password, user.password)) {
     return sendError(res, "Credenciales inválidas", 401);
@@ -30,29 +30,27 @@ router.post("/login", validate(loginSchema), (req, res) => {
     userName: user.name
   });
 
-  const finishLogin = () => {
-    const { password: _, ...userWithoutPassword } = user;
-    const permissions = UserRepository.getPermissions(user.id);
-    return sendSuccess(res, { ...userWithoutPassword, permissions, token }, "Login exitoso");
-  };
+  if (req.session) {
+    req.session.userId = user.id;
+    req.session.role = user.role;
+    req.session.userName = user.name;
 
-  if (!req.session) {
-    return finishLogin();
+    await new Promise<void>((resolve) => {
+      req.session.save((err) => {
+        if (err) {
+          console.warn("[Auth] No se pudo guardar la sesión. Se continuará con token.", err);
+        }
+        resolve();
+      });
+    });
   }
 
-  req.session.userId = user.id;
-  req.session.role = user.role;
-  req.session.userName = user.name;
-
-  req.session.save((err) => {
-    if (err) {
-      console.warn("[Auth] No se pudo guardar la sesión. Se continuará con token.", err);
-    }
-    return finishLogin();
-  });
+  const { password: _, ...userWithoutPassword } = user;
+  const permissions = await UserRepository.getPermissions(user.id);
+  return sendSuccess(res, { ...userWithoutPassword, permissions, token }, "Login exitoso");
 });
 
-router.get("/me", (req: any, res) => {
+router.get("/me", async (req: any, res) => {
   let userId = req.session?.userId;
   
   if (!userId) {
@@ -70,10 +68,10 @@ router.get("/me", (req: any, res) => {
     return sendError(res, "No has iniciado sesión", 401);
   }
   
-  const user = UserRepository.findById(userId) as any;
+  const user = await UserRepository.findById(Number(userId)) as any;
   if (!user) return sendError(res, "Usuario no encontrado", 404);
   
-  const permissions = UserRepository.getPermissions(userId);
+  const permissions = await UserRepository.getPermissions(Number(userId));
   return sendSuccess(res, { ...user, permissions });
 });
 

@@ -7,7 +7,6 @@ import { verifyToken } from '../utils/jwt.js';
  * Extracts user info from session or Bearer token.
  */
 const getAuthUser = (req: Request) => {
-  // 1. Try Session
   const sessionUser = {
     userId: (req.session as any).userId,
     role: (req.session as any).role,
@@ -18,7 +17,6 @@ const getAuthUser = (req: Request) => {
     return sessionUser;
   }
 
-  // 2. Try Bearer Token
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.split(' ')[1];
@@ -36,7 +34,6 @@ export const requireAuth = (req: Request, res: Response, next: NextFunction) => 
   if (!user) {
     return sendError(res, "Unauthorized: Login required", 401);
   }
-  // Attach user to request for downstream use if needed
   (req as any).user = user;
   next();
 };
@@ -51,7 +48,7 @@ export const requireAdmin = (req: Request, res: Response, next: NextFunction) =>
 };
 
 export const requirePermission = (module: string, action: 'view' | 'create' | 'edit' | 'delete') => {
-  return (req: Request, res: Response, next: NextFunction) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
     const user = getAuthUser(req);
     
     if (!user) {
@@ -68,7 +65,7 @@ export const requirePermission = (module: string, action: 'view' | 'create' | 'e
       return next();
     }
 
-    const permissions = UserRepository.getPermissions(userId);
+    const permissions = await UserRepository.getPermissions(Number(userId));
     const perm = permissions[module];
 
     if (!perm) {
