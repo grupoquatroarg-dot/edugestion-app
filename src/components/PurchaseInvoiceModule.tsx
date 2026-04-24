@@ -1,8 +1,14 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { Plus, Search, X, FileText, Calendar, User, Trash2, Save, Eye } from 'lucide-react';
-import { Product, PurchaseInvoice, PurchaseInvoiceItem } from '../types';
+import { Product, PurchaseInvoice } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { unwrapResponse, apiFetch } from '../utils/api';
+
+type InvoiceFormItem = {
+  product_id: number | string;
+  cantidad: number;
+  costo_unitario: number;
+};
 
 export default function PurchaseInvoiceModule() {
   const { hasPermission } = useAuth();
@@ -16,19 +22,18 @@ export default function PurchaseInvoiceModule() {
   const [isCreatingNewProduct, setIsCreatingNewProduct] = useState(false);
   const [newProductName, setNewProductName] = useState('');
 
-  // Form state
   const [formData, setFormData] = useState({
     numero_factura: '',
     proveedor_id: 0,
     fecha_compra: new Date().toISOString().split('T')[0],
     metodo_pago: 'efectivo',
-    items: [] as { product_id: number | string; cantidad: number; costo_unitario: number }[]
+    items: [] as InvoiceFormItem[],
   });
 
   const [currentItem, setCurrentItem] = useState({
     product_id: 0 as number | string,
     cantidad: 1,
-    costo_unitario: 0
+    costo_unitario: 0,
   });
 
   useEffect(() => {
@@ -37,165 +42,170 @@ export default function PurchaseInvoiceModule() {
     fetchProveedores();
   }, []);
 
+  const handleApiJson = async (res: Response) => {
+    const body = await res.json();
+    return unwrapResponse(body);
+  };
+
   const fetchProveedores = async () => {
     try {
       const res = await apiFetch('/api/proveedores');
-      const body = await res.json();
-      const data = unwrapResponse(body);
+      const data = await handleApiJson(res);
       setProveedores(data);
     } catch (error) {
-      console.error("Error fetching proveedores:", error);
+      console.error('Error fetching proveedores:', error);
     }
   };
 
   const fetchInvoices = async () => {
     try {
       const res = await apiFetch('/api/purchase-invoices');
-      const body = await res.json();
-      const data = unwrapResponse(body);
+      const data = await handleApiJson(res);
       setInvoices(data);
     } catch (error) {
-      console.error("Error fetching invoices:", error);
+      console.error('Error fetching invoices:', error);
     }
   };
 
   const fetchProducts = async () => {
     try {
       const res = await apiFetch('/api/products?all=true');
-      const body = await res.json();
-      const data = unwrapResponse(body);
+      const data = await handleApiJson(res);
       setProducts(data);
     } catch (error) {
-      console.error("Error fetching products:", error);
+      console.error('Error fetching products:', error);
     }
   };
 
   const fetchInvoiceDetails = async (id: number) => {
     try {
       const res = await apiFetch(`/api/purchase-invoices/${id}`);
-      const body = await res.json();
-      const data = unwrapResponse(body);
+      const data = await handleApiJson(res);
       setSelectedInvoice(data);
       setIsViewModalOpen(true);
     } catch (error) {
-      console.error("Error fetching invoice details:", error);
+      console.error('Error fetching invoice details:', error);
+      alert('Error al obtener el detalle de la factura');
     }
   };
 
-  const handleAddItem = () => {
-    const isNewValid = isCreatingNewProduct && newProductName.trim() !== '';
-    const isExistingValid = !isCreatingNewProduct && currentItem.product_id !== 0;
-    
-    if (!(isNewValid || isExistingValid) || currentItem.cantidad <= 0) return;
-    
-    let finalProductId = currentItem.product_id;
-    if (isCreatingNewProduct) {
-      finalProductId = `new:${newProductName.trim()}`;
-    }
-
-    setFormData(prev => ({
-      ...prev,
-      items: [...prev.items, { ...currentItem, product_id: finalProductId }]
-    }));
-    
+  const resetCurrentItem = () => {
     setCurrentItem({
       product_id: 0,
       cantidad: 1,
-      costo_unitario: 0
+      costo_unitario: 0,
     });
     setIsCreatingNewProduct(false);
     setNewProductName('');
   };
 
-  const handleRemoveItem = (index: number) => {
-    setFormData(prev => ({
+  const handleAddItem = () => {
+    const isNewValid = isCreatingNewProduct && newProductName.trim() !== '';
+    const isExistingValid = !isCreatingNewProduct && currentItem.product_id !== 0;
+
+    if (!(isNewValid || isExistingValid) || currentItem.cantidad <= 0) return;
+
+    const finalProductId = isCreatingNewProduct ? `new:${newProductName.trim()}` : currentItem.product_id;
+
+    setFormData((prev) => ({
       ...prev,
-      items: prev.items.filter((_, i) => i !== index)
+      items: [...prev.items, { ...currentItem, product_id: finalProductId }],
     }));
+
+    resetCurrentItem();
+  };
+
+  const handleRemoveItem = (index: number) => {
+    setFormData((prev) => ({
+      ...prev,
+      items: prev.items.filter((_, i) => i !== index),
+    }));
+  };
+
+  const getPendingItemsForSubmit = () => {
+    const isNewValid = isCreatingNewProduct && newProductName.trim() !== '';
+    const isExistingValid = !isCreatingNewProduct && currentItem.product_id !== 0;
+
+    let finalItems = [...formData.items];
+
+    if ((isNewValid || isExistingValid) && currentItem.cantidad > 0) {
+      const finalProductId = isCreatingNewProduct ? `new:${newProductName.trim()}` : currentItem.product_id;
+      finalItems = [...finalItems, { ...currentItem, product_id: finalProductId }];
+    }
+
+    return finalItems;
+  };
+
+  const resetForm = () => {
+    setFormData({
+      numero_factura: '',
+      proveedor_id: 0,
+      fecha_compra: new Date().toISOString().split('T')[0],
+      metodo_pago: 'efectivo',
+      items: [],
+    });
+    resetCurrentItem();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Try to add current item if it's valid but not yet added to the list
-    const isNewValid = isCreatingNewProduct && newProductName.trim() !== '';
-    const isExistingValid = !isCreatingNewProduct && currentItem.product_id !== 0;
-    
-    let finalItems = [...formData.items];
-    if ((isNewValid || isExistingValid) && currentItem.cantidad > 0) {
-      let finalProductId = currentItem.product_id;
-      if (isCreatingNewProduct) {
-        finalProductId = `new:${newProductName.trim()}`;
-      }
-      finalItems.push({ ...currentItem, product_id: finalProductId });
-    }
+
+    const finalItems = getPendingItemsForSubmit();
 
     if (finalItems.length === 0) {
-      alert("Debe agregar al menos un producto a la lista (use el botón +)");
+      alert('Debe agregar al menos un producto a la lista (use el botÃ³n +)');
       return;
     }
 
     if (formData.proveedor_id === 0) {
-      alert("Seleccione un proveedor");
+      alert('Seleccione un proveedor');
       return;
     }
 
-    const total = finalItems.reduce((sum, item) => sum + (item.cantidad * item.costo_unitario), 0);
+    const total = finalItems.reduce((sum, item) => sum + item.cantidad * item.costo_unitario, 0);
 
     const submissionData = {
       proveedor_id: formData.proveedor_id,
       numero_factura: formData.numero_factura,
       fecha: formData.fecha_compra,
       metodo_pago: formData.metodo_pago,
-      total: total,
-      items: finalItems
+      total,
+      items: finalItems,
     };
 
     try {
       const res = await apiFetch('/api/purchase-invoices', {
         method: 'POST',
-        body: JSON.stringify(submissionData)
+        body: JSON.stringify(submissionData),
       });
 
-      await unwrapResponse(res);
+      await handleApiJson(res);
 
       setIsModalOpen(false);
-      setFormData({
-        numero_factura: '',
-        proveedor_id: 0,
-        fecha_compra: new Date().toISOString().split('T')[0],
-        metodo_pago: 'efectivo',
-        items: []
-      });
-      setCurrentItem({
-        product_id: 0,
-        cantidad: 1,
-        costo_unitario: 0
-      });
-      setIsCreatingNewProduct(false);
-      setNewProductName('');
-      fetchInvoices();
-      fetchProducts();
-      fetchProveedores();
-    } catch (error) {
-      console.error("Error submitting invoice:", error);
-      alert("Error al registrar factura");
+      resetForm();
+      await Promise.all([fetchInvoices(), fetchProducts(), fetchProveedores()]);
+    } catch (error: any) {
+      console.error('Error submitting invoice:', error);
+      alert(error?.message || 'Error al registrar factura');
     }
   };
 
-  const filteredInvoices = invoices.filter(inv => 
-    inv.numero_factura.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    inv.proveedor.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredInvoices = invoices.filter((inv) => {
+    const numero = String(inv.numero_factura || '').toLowerCase();
+    const proveedor = String((inv as any).proveedor || '').toLowerCase();
+    const term = searchTerm.toLowerCase();
 
-  const totalInvoice = formData.items.reduce((sum, item) => sum + (item.cantidad * item.costo_unitario), 0);
+    return numero.includes(term) || proveedor.includes(term);
+  });
+
+  const totalInvoice = formData.items.reduce((sum, item) => sum + item.cantidad * item.costo_unitario, 0);
 
   return (
     <div className="p-6 max-w-7xl mx-auto h-full flex flex-col">
       <div className="flex justify-between items-center mb-8">
         <div>
           <h1 className="text-3xl font-bold text-zinc-900">Facturas de Compra</h1>
-          <p className="text-zinc-500 mt-1">Gestión de ingresos de mercadería y costos PEPS</p>
+          <p className="text-zinc-500 mt-1">GestiÃ³n de ingresos de mercaderÃ­a y costos PEPS</p>
         </div>
         {hasPermission('products', 'create') && (
           <button
@@ -214,7 +224,7 @@ export default function PurchaseInvoiceModule() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
             <input
               type="text"
-              placeholder="Buscar por número o proveedor..."
+              placeholder="Buscar por nÃºmero o proveedor..."
               className="w-full pl-10 pr-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 focus:border-transparent outline-none transition-all"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -227,7 +237,7 @@ export default function PurchaseInvoiceModule() {
             <thead>
               <tr className="bg-zinc-50/50 border-b border-zinc-100">
                 <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</th>
-                <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">N° Factura</th>
+                <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">NÂ° Factura</th>
                 <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Proveedor</th>
                 <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Total</th>
                 <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Acciones</th>
@@ -239,7 +249,7 @@ export default function PurchaseInvoiceModule() {
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center gap-2 text-zinc-600">
                       <Calendar size={14} className="text-zinc-400" />
-                      <span className="text-sm">{inv.fecha_compra}</span>
+                      <span className="text-sm">{(inv as any).fecha_compra}</span>
                     </div>
                   </td>
                   <td className="px-6 py-4">
@@ -248,7 +258,7 @@ export default function PurchaseInvoiceModule() {
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-2 text-zinc-600">
                       <User size={14} className="text-zinc-400" />
-                      <span className="text-sm">{inv.proveedor}</span>
+                      <span className="text-sm">{(inv as any).proveedor}</span>
                     </div>
                   </td>
                   <td className="px-6 py-4 text-right">
@@ -271,7 +281,6 @@ export default function PurchaseInvoiceModule() {
         </div>
       </div>
 
-      {/* New Invoice Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200">
@@ -293,16 +302,18 @@ export default function PurchaseInvoiceModule() {
                     required
                     className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
                     value={formData.proveedor_id}
-                    onChange={(e) => setFormData({ ...formData, proveedor_id: parseInt(e.target.value) || 0 })}
+                    onChange={(e) => setFormData({ ...formData, proveedor_id: parseInt(e.target.value, 10) || 0 })}
                   >
                     <option value={0}>Seleccionar Proveedor</option>
-                    {proveedores.map(p => (
-                      <option key={p.id} value={p.id}>{p.nombre}</option>
+                    {proveedores.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.nombre}
+                      </option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">N° Factura</label>
+                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">NÂ° Factura</label>
                   <input
                     required
                     type="text"
@@ -322,7 +333,7 @@ export default function PurchaseInvoiceModule() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Método de Pago</label>
+                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">MÃ©todo de Pago</label>
                   <select
                     required
                     className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
@@ -333,13 +344,14 @@ export default function PurchaseInvoiceModule() {
                     <option value="transferencia">Transferencia</option>
                     <option value="mercado_pago">Mercado Pago</option>
                     <option value="cheque">Cheque</option>
+                    <option value="Cta Cte">Cta Cte</option>
                   </select>
                 </div>
               </div>
 
               <div className="flex-1 overflow-hidden flex flex-col p-6">
                 <h3 className="text-sm font-bold text-zinc-900 mb-4">Productos en Factura</h3>
-                
+
                 <div className="grid grid-cols-12 gap-4 mb-4 bg-zinc-50 p-4 rounded-xl border border-zinc-200">
                   <div className="col-span-6">
                     <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Producto</label>
@@ -349,20 +361,31 @@ export default function PurchaseInvoiceModule() {
                         value={currentItem.product_id}
                         onChange={(e) => {
                           const val = e.target.value;
+
                           if (val === 'new') {
                             setIsCreatingNewProduct(true);
                             setCurrentItem({ ...currentItem, product_id: 'new' });
-                          } else {
-                            const pid = parseInt(val);
-                            const product = products.find(p => p.id === pid);
-                            setCurrentItem({ ...currentItem, product_id: pid, costo_unitario: product?.cost || 0 });
+                            return;
                           }
+
+                          const pid = parseInt(val, 10) || 0;
+                          const product = products.find((p) => p.id === pid);
+
+                          setCurrentItem({
+                            ...currentItem,
+                            product_id: pid,
+                            costo_unitario: product?.cost || 0,
+                          });
                         }}
                       >
                         <option value={0}>Seleccionar producto...</option>
-                        <option value="new" className="font-bold text-emerald-600">+ Crear nuevo producto...</option>
-                        {products.map(p => (
-                          <option key={p.id} value={p.id}>{p.name} ({p.code})</option>
+                        <option value="new" className="font-bold text-emerald-600">
+                          + Crear nuevo producto...
+                        </option>
+                        {products.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} ({p.code})
+                          </option>
                         ))}
                       </select>
                     ) : (
@@ -377,10 +400,7 @@ export default function PurchaseInvoiceModule() {
                         />
                         <button
                           type="button"
-                          onClick={() => {
-                            setIsCreatingNewProduct(false);
-                            setCurrentItem({ ...currentItem, product_id: 0 });
-                          }}
+                          onClick={resetCurrentItem}
                           className="p-2 text-zinc-400 hover:text-zinc-600"
                         >
                           <X size={16} />
@@ -395,7 +415,9 @@ export default function PurchaseInvoiceModule() {
                       min="1"
                       className="w-full px-3 py-2 rounded-lg border border-zinc-200 outline-none focus:ring-2 focus:ring-zinc-900"
                       value={currentItem.cantidad}
-                      onChange={(e) => setCurrentItem({ ...currentItem, cantidad: parseInt(e.target.value) || 0 })}
+                      onChange={(e) =>
+                        setCurrentItem({ ...currentItem, cantidad: parseInt(e.target.value, 10) || 0 })
+                      }
                     />
                   </div>
                   <div className="col-span-3">
@@ -405,7 +427,9 @@ export default function PurchaseInvoiceModule() {
                       step="0.01"
                       className="w-full px-3 py-2 rounded-lg border border-zinc-200 outline-none focus:ring-2 focus:ring-zinc-900"
                       value={currentItem.costo_unitario}
-                      onChange={(e) => setCurrentItem({ ...currentItem, costo_unitario: parseFloat(e.target.value) || 0 })}
+                      onChange={(e) =>
+                        setCurrentItem({ ...currentItem, costo_unitario: parseFloat(e.target.value) || 0 })
+                      }
                     />
                   </div>
                   <div className="col-span-1 flex items-end">
@@ -433,20 +457,21 @@ export default function PurchaseInvoiceModule() {
                     </thead>
                     <tbody className="divide-y divide-zinc-50">
                       {formData.items.map((item, index) => {
-                        let productName = '';
-                        if (typeof item.product_id === 'string' && item.product_id.startsWith('new:')) {
-                          productName = item.product_id.replace('new:', '') + ' (Nuevo)';
-                        } else {
-                          const product = products.find(p => p.id === item.product_id);
-                          productName = product?.name || '';
-                        }
-                        
+                        const productName =
+                          typeof item.product_id === 'string' && item.product_id.startsWith('new:')
+                            ? `${item.product_id.replace('new:', '')} (Nuevo)`
+                            : products.find((p) => p.id === item.product_id)?.name || '';
+
                         return (
                           <tr key={index} className="hover:bg-zinc-50">
                             <td className="px-4 py-2 text-sm text-zinc-900">{productName}</td>
                             <td className="px-4 py-2 text-sm text-zinc-900 text-center">{item.cantidad}</td>
-                            <td className="px-4 py-2 text-sm text-zinc-900 text-right font-mono">${(item.costo_unitario ?? 0).toLocaleString()}</td>
-                            <td className="px-4 py-2 text-sm font-bold text-zinc-900 text-right font-mono">${((item.cantidad ?? 0) * (item.costo_unitario ?? 0)).toLocaleString()}</td>
+                            <td className="px-4 py-2 text-sm text-zinc-900 text-right font-mono">
+                              ${(item.costo_unitario ?? 0).toLocaleString()}
+                            </td>
+                            <td className="px-4 py-2 text-sm font-bold text-zinc-900 text-right font-mono">
+                              ${((item.cantidad ?? 0) * (item.costo_unitario ?? 0)).toLocaleString()}
+                            </td>
                             <td className="px-4 py-2 text-right">
                               <button
                                 type="button"
@@ -493,29 +518,28 @@ export default function PurchaseInvoiceModule() {
         </div>
       )}
 
-      {/* View Details Modal */}
       {isViewModalOpen && selectedInvoice && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="p-6 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50">
               <div>
                 <h2 className="text-xl font-bold text-zinc-900">Detalle de Factura</h2>
-                <p className="text-xs text-zinc-500">Factura N° {selectedInvoice.numero_factura}</p>
+                <p className="text-xs text-zinc-500">Factura NÂ° {selectedInvoice.numero_factura}</p>
               </div>
               <button onClick={() => setIsViewModalOpen(false)} className="text-zinc-400 hover:text-zinc-600">
                 <X size={24} />
               </button>
             </div>
-            
+
             <div className="p-6 space-y-6">
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-zinc-50 p-4 rounded-xl border border-zinc-100">
                   <span className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Proveedor</span>
-                  <span className="text-sm font-bold text-zinc-900">{selectedInvoice.proveedor}</span>
+                  <span className="text-sm font-bold text-zinc-900">{(selectedInvoice as any).proveedor}</span>
                 </div>
                 <div className="bg-zinc-50 p-4 rounded-xl border border-zinc-100">
                   <span className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Fecha</span>
-                  <span className="text-sm font-bold text-zinc-900">{selectedInvoice.fecha_compra}</span>
+                  <span className="text-sm font-bold text-zinc-900">{(selectedInvoice as any).fecha_compra}</span>
                 </div>
               </div>
 
@@ -530,15 +554,19 @@ export default function PurchaseInvoiceModule() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-50">
-                    {selectedInvoice.items?.map((item) => (
+                    {selectedInvoice.items?.map((item: any) => (
                       <tr key={item.id}>
                         <td className="px-4 py-2 text-sm text-zinc-900">{item.product_name}</td>
                         <td className="px-4 py-2 text-sm text-zinc-900 text-center">{item.cantidad}</td>
-                        <td className="px-4 py-2 text-sm text-zinc-900 text-right font-mono">${(item.costo_unitario ?? 0).toLocaleString()}</td>
+                        <td className="px-4 py-2 text-sm text-zinc-900 text-right font-mono">
+                          ${(item.costo_unitario ?? 0).toLocaleString()}
+                        </td>
                         <td className="px-4 py-2 text-sm text-right">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            item.cantidad_restante > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-zinc-100 text-zinc-400'
-                          }`}>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              item.cantidad_restante > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-zinc-100 text-zinc-400'
+                            }`}
+                          >
                             {item.cantidad_restante}
                           </span>
                         </td>
@@ -555,7 +583,7 @@ export default function PurchaseInvoiceModule() {
                 </div>
               </div>
             </div>
-            
+
             <div className="p-6 bg-zinc-50 border-t border-zinc-100 flex justify-end">
               <button
                 onClick={() => setIsViewModalOpen(false)}
