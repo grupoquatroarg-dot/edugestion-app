@@ -1,6 +1,6 @@
-﻿import { UserRepository } from "../../server/repositories/userRepository.js";
-import { verifyToken } from "../../server/utils/jwt.js";
-import { sendError } from "../../server/utils/response.js";
+﻿import { UserRepository } from "../../repositories/userRepository.js";
+import { verifyToken } from "../../utils/jwt.js";
+import { sendError } from "../../utils/response.js";
 
 export const getBearerToken = (req: any) => {
   const authHeader = req.headers?.authorization;

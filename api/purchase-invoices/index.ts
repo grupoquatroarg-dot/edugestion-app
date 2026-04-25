@@ -1,13 +1,25 @@
-﻿import { createPurchaseInvoice, listPurchaseInvoices, purchaseInvoiceBodySchema } from "../../server/services/purchaseInvoiceService.js";
+﻿import { createPurchaseInvoice, getPurchaseInvoiceById, listPurchaseInvoices, purchaseInvoiceBodySchema } from "../../server/services/purchaseInvoiceService.js";
 import { sendError, sendSuccess } from "../../server/utils/response.js";
-import { getRequestBody, requirePurchaseInvoicePermission } from "./_shared.js";
+import { getRequestBody, requirePurchaseInvoicePermission } from "../../server/services/vercel/purchaseInvoiceApiHelpers.js";
 
 export default async function handler(req: any, res: any) {
   if (req.method === "GET") {
     const user = await requirePurchaseInvoicePermission(req, res, "view");
     if (!user) return;
 
+    const id = Number(req.query?.id);
+
     try {
+      if (id) {
+        const invoice = await getPurchaseInvoiceById(id);
+
+        if (!invoice) {
+          return sendError(res, "Factura no encontrada", 404);
+        }
+
+        return sendSuccess(res, invoice);
+      }
+
       const invoices = await listPurchaseInvoices();
       return sendSuccess(res, invoices);
     } catch (error: any) {

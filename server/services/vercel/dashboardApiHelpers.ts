@@ -1,7 +1,7 @@
-import { getPostgresPool, isPostgresConfigured } from "../../server/utils/postgres.js";
-import { UserRepository } from "../../server/repositories/userRepository.js";
-import { verifyToken } from "../../server/utils/jwt.js";
-import { sendError } from "../../server/utils/response.js";
+﻿import { getPostgresPool, isPostgresConfigured } from "../../utils/postgres.js";
+import { UserRepository } from "../../repositories/userRepository.js";
+import { verifyToken } from "../../utils/jwt.js";
+import { sendError } from "../../utils/response.js";
 
 export const toNumber = (value: any, fallback: number = 0) => {
   if (value === null || value === undefined || value === "") return fallback;

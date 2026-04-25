@@ -1,5 +1,5 @@
-import { sendError, sendSuccess } from "../../server/utils/response.js";
-import { getPoolOrFail, requireDashboardAccess, toNumber } from "./_shared.js";
+﻿import { sendError, sendSuccess } from "../../server/utils/response.js";
+import { getPoolOrFail, requireDashboardAccess, toNumber } from "../../server/services/vercel/dashboardApiHelpers.js";
 
 export default async function handler(req: any, res: any) {
   if (req.method !== "GET") {
@@ -31,6 +31,6 @@ export default async function handler(req: any, res: any) {
       }))
     );
   } catch (error: any) {
-    return sendError(res, error?.message || "Error al obtener stock crítico", 400);
+    return sendError(res, error?.message || "Error al obtener stock crÃ­tico", 400);
   }
 }

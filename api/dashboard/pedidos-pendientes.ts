@@ -1,5 +1,5 @@
-import { sendError, sendSuccess } from "../../server/utils/response.js";
-import { getPoolOrFail, requireDashboardAccess } from "./_shared.js";
+﻿import { sendError, sendSuccess } from "../../server/utils/response.js";
+import { getPoolOrFail, requireDashboardAccess } from "../../server/services/vercel/dashboardApiHelpers.js";
 
 export default async function handler(req: any, res: any) {
   if (req.method !== "GET") {

@@ -79,7 +79,7 @@ export default function PurchaseInvoiceModule() {
 
   const fetchInvoiceDetails = async (id: number) => {
     try {
-      const res = await apiFetch(`/api/purchase-invoices/${id}`);
+      const res = await apiFetch(`/api/purchase-invoices?id=${id}`);
       const data = await handleApiJson(res);
       setSelectedInvoice(data);
       setIsViewModalOpen(true);
@@ -153,7 +153,7 @@ export default function PurchaseInvoiceModule() {
     const finalItems = getPendingItemsForSubmit();
 
     if (finalItems.length === 0) {
-      alert('Debe agregar al menos un producto a la lista (use el botÃ³n +)');
+      alert('Debe agregar al menos un producto a la lista (use el botÃƒÂ³n +)');
       return;
     }
 
@@ -205,7 +205,7 @@ export default function PurchaseInvoiceModule() {
       <div className="flex justify-between items-center mb-8">
         <div>
           <h1 className="text-3xl font-bold text-zinc-900">Facturas de Compra</h1>
-          <p className="text-zinc-500 mt-1">GestiÃ³n de ingresos de mercaderÃ­a y costos PEPS</p>
+          <p className="text-zinc-500 mt-1">GestiÃƒÂ³n de ingresos de mercaderÃƒÂ­a y costos PEPS</p>
         </div>
         {hasPermission('products', 'create') && (
           <button
@@ -224,7 +224,7 @@ export default function PurchaseInvoiceModule() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
             <input
               type="text"
-              placeholder="Buscar por nÃºmero o proveedor..."
+              placeholder="Buscar por nÃƒÂºmero o proveedor..."
               className="w-full pl-10 pr-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 focus:border-transparent outline-none transition-all"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -237,7 +237,7 @@ export default function PurchaseInvoiceModule() {
             <thead>
               <tr className="bg-zinc-50/50 border-b border-zinc-100">
                 <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</th>
-                <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">NÂ° Factura</th>
+                <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">NÃ‚Â° Factura</th>
                 <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Proveedor</th>
                 <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Total</th>
                 <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Acciones</th>
@@ -313,7 +313,7 @@ export default function PurchaseInvoiceModule() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">NÂ° Factura</label>
+                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">NÃ‚Â° Factura</label>
                   <input
                     required
                     type="text"
@@ -333,7 +333,7 @@ export default function PurchaseInvoiceModule() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">MÃ©todo de Pago</label>
+                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">MÃƒÂ©todo de Pago</label>
                   <select
                     required
                     className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
@@ -524,7 +524,7 @@ export default function PurchaseInvoiceModule() {
             <div className="p-6 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50">
               <div>
                 <h2 className="text-xl font-bold text-zinc-900">Detalle de Factura</h2>
-                <p className="text-xs text-zinc-500">Factura NÂ° {selectedInvoice.numero_factura}</p>
+                <p className="text-xs text-zinc-500">Factura NÃ‚Â° {selectedInvoice.numero_factura}</p>
               </div>
               <button onClick={() => setIsViewModalOpen(false)} className="text-zinc-400 hover:text-zinc-600">
                 <X size={24} />
