@@ -209,6 +209,42 @@ export default function PurchaseInvoiceModule() {
 
     const total = finalItems.reduce((sum, item) => sum + item.cantidad * item.costo_unitario, 0);
 
+    const costChanges = finalItems
+      .filter((item) => typeof item.product_id === 'number')
+      .map((item) => {
+        const product = products.find((p) => p.id === item.product_id);
+        if (!product) return null;
+
+        const currentCost = Number(product.cost || 0);
+        const newCost = Number(item.costo_unitario || 0);
+
+        if (currentCost === newCost) return null;
+
+        return {
+          name: product.name,
+          currentCost,
+          newCost,
+        };
+      })
+      .filter(Boolean) as Array<{ name: string; currentCost: number; newCost: number }>;
+
+    if (costChanges.length > 0) {
+      const message = [
+        'Aviso: al guardar esta factura se actualizara el costo del producto al ultimo costo comprado.',
+        '',
+        ...costChanges.map(
+          (change) =>
+            `${change.name}: costo actual $${change.currentCost.toLocaleString()} -> nuevo costo $${change.newCost.toLocaleString()}`
+        ),
+        '',
+        'La ganancia debe calcularse luego con metodo PEPS/FIFO segun los lotes de compra.',
+        'Desea continuar?',
+      ].join('\n');
+
+      const confirmed = window.confirm(message);
+      if (!confirmed) return;
+    }
+
     try {
       const res = await apiFetch('/api/purchase-invoices', {
         method: 'POST',
