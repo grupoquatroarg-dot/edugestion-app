@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Plus, Search, X, FileText, Calendar, User, Trash2, Save, Eye } from 'lucide-react';
 import { Product, PurchaseInvoice } from '../types';
 import { useAuth } from '../contexts/AuthContext';
