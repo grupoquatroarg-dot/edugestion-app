@@ -1,4 +1,5 @@
-﻿import { providerRepository } from "../server/repositories/providerRepository.js";
+﻿import { z } from "zod";
+import { providerRepository } from "../server/repositories/providerRepository.js";
 import { UserRepository } from "../server/repositories/userRepository.js";
 import { sendError, sendSuccess } from "../server/utils/response.js";
 import { verifyToken } from "../server/utils/jwt.js";
@@ -7,13 +8,14 @@ const providerSchema = z.object({
   nombre: z.string().min(2, "El nombre debe tener al menos 2 caracteres"),
   cuit: z.string().optional(),
   telefono: z.string().optional(),
-  email: z.string().email("Email invÃ¡lido").optional().or(z.literal("")),
+  email: z.string().email("Email invalido").optional().or(z.literal("")),
   direccion: z.string().optional(),
   estado: z.string().optional(),
 });
 
 const getBody = (req: any) => {
   if (req.body && typeof req.body === "object") return req.body;
+
   if (typeof req.body === "string") {
     try {
       return JSON.parse(req.body);
@@ -21,6 +23,7 @@ const getBody = (req: any) => {
       return {};
     }
   }
+
   return {};
 };
 
@@ -37,11 +40,20 @@ const permissionKeyByAction = {
 
 const requireSupplierPermission = async (req: any, res: any, action: keyof typeof permissionKeyByAction) => {
   const token = getBearerToken(req);
-  if (!token) return sendError(res, "Unauthorized: Login required", 401);
+
+  if (!token) {
+    return sendError(res, "Unauthorized: Login required", 401);
+  }
 
   const decoded = verifyToken(token);
-  if (!decoded?.userId) return sendError(res, "Unauthorized: Login required", 401);
-  if (decoded.role === "administrador") return decoded;
+
+  if (!decoded?.userId) {
+    return sendError(res, "Unauthorized: Login required", 401);
+  }
+
+  if (decoded.role === "administrador") {
+    return decoded;
+  }
 
   const permissions = await UserRepository.getPermissions(Number(decoded.userId));
   const supplierPermissions = permissions?.suppliers;
@@ -72,6 +84,7 @@ export default async function handler(req: any, res: any) {
     if (!user) return;
 
     const parsed = providerSchema.safeParse(getBody(req));
+
     if (!parsed.success) {
       return sendError(
         res,
