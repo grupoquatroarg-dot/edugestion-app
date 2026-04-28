@@ -9,7 +9,7 @@ type Queryable = {
 
 export const purchaseInvoiceBodySchema = z.object({
   proveedor_id: z.number(),
-  numero_factura: z.string().min(1, "NÃºmero de factura requerido"),
+  numero_factura: z.string().min(1, "Numero de factura requerido"),
   total: z.number().positive(),
   fecha: z.string().optional(),
   metodo_pago: z.string(),
@@ -24,6 +24,13 @@ export const purchaseInvoiceBodySchema = z.object({
     .min(1, "Debe incluir al menos un producto"),
 });
 
+export const purchaseInvoicePaymentSchema = z.object({
+  metodo_pago_real: z.string().min(1, "Metodo de pago requerido"),
+  fecha_pago: z.string().optional(),
+});
+
+const CTA_CTE = "Cta Cte";
+
 const toNumber = (value: any, fallback: number = 0) => {
   if (value === null || value === undefined || value === "") return fallback;
   const parsed = Number(value);
@@ -31,6 +38,8 @@ const toNumber = (value: any, fallback: number = 0) => {
 };
 
 const getExecutor = (executor?: Queryable) => executor || getPostgresPool();
+
+const isCurrentAccount = (method?: string | null) => String(method || "").trim().toLowerCase() === CTA_CTE.toLowerCase();
 
 const sanitizeBaseCode = (name: string) => {
   const cleaned = name
@@ -52,15 +61,26 @@ const buildProductCode = (name: string, attempt: number) => {
   };
 };
 
-const mapInvoice = (row: any) => ({
-  id: toNumber(row.id),
-  proveedor_id: toNumber(row.proveedor_id),
-  proveedor: row.proveedor ?? row.proveedor_nombre ?? "",
-  numero_factura: row.numero_factura || "",
-  total: toNumber(row.total),
-  fecha_compra: row.fecha_compra || row.fecha || "",
-  metodo_pago: row.metodo_pago || "",
-});
+const mapInvoice = (row: any) => {
+  const total = toNumber(row.total);
+  const montoPagado = toNumber(row.monto_pagado);
+  const saldoPendiente = Math.max(0, total - montoPagado);
+
+  return {
+    id: toNumber(row.id),
+    proveedor_id: toNumber(row.proveedor_id),
+    proveedor: row.proveedor ?? row.proveedor_nombre ?? "",
+    numero_factura: row.numero_factura || "",
+    total,
+    fecha_compra: row.fecha_compra || row.fecha || "",
+    metodo_pago: row.metodo_pago || "",
+    estado_pago: row.estado_pago || (isCurrentAccount(row.metodo_pago) ? "pendiente" : "pagado"),
+    monto_pagado: montoPagado,
+    saldo_pendiente: saldoPendiente,
+    fecha_pago: row.fecha_pago || null,
+    metodo_pago_real: row.metodo_pago_real || null,
+  };
+};
 
 const mapInvoiceItem = (row: any) => ({
   id: toNumber(row.id),
@@ -141,7 +161,7 @@ const createProductInSqlite = (productName: string, cost: number) => {
     }
   }
 
-  throw new AppError("No se pudo generar un cÃ³digo Ãºnico para el producto nuevo.", 400);
+  throw new AppError("No se pudo generar un codigo unico para el producto nuevo.", 400);
 };
 
 const createProductInPg = async (client: Queryable, productName: string, cost: number) => {
@@ -178,7 +198,40 @@ const createProductInPg = async (client: Queryable, productName: string, cost: n
     }
   }
 
-  throw new AppError("No se pudo generar un cÃ³digo Ãºnico para el producto nuevo.", 400);
+  throw new AppError("No se pudo generar un codigo unico para el producto nuevo.", 400);
+};
+
+const insertPurchaseFinancialMovementPg = async (
+  client: Queryable,
+  params: {
+    numeroFactura: string;
+    proveedor?: string;
+    metodoPago: string;
+    total: number;
+    fecha: string;
+    usuario: string;
+  }
+) => {
+  const nextPaymentNum = await getNextPaymentNumberPg(client);
+  const proveedorTxt = params.proveedor ? ` - ${params.proveedor}` : "";
+
+  await client.query(
+    `
+      INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `,
+    [
+      "egreso",
+      "compra",
+      `Factura Compra #${params.numeroFactura}${proveedorTxt}`,
+      "Compras",
+      params.metodoPago,
+      params.total,
+      params.fecha,
+      params.usuario || "Sistema",
+      nextPaymentNum,
+    ]
+  );
 };
 
 export const listPurchaseInvoices = async (executor?: Queryable) => {
@@ -186,7 +239,8 @@ export const listPurchaseInvoices = async (executor?: Queryable) => {
     const rows = db
       .prepare(
         `
-          SELECT pi.id, pi.proveedor_id, pi.numero_factura, pi.total, pi.fecha AS fecha_compra, pi.metodo_pago, p.nombre AS proveedor
+          SELECT pi.id, pi.proveedor_id, pi.numero_factura, pi.total, pi.fecha AS fecha_compra, pi.metodo_pago, p.nombre AS proveedor,
+                 pi.estado_pago, pi.monto_pagado, pi.fecha_pago, pi.metodo_pago_real
           FROM purchase_invoices pi
           JOIN proveedores p ON pi.proveedor_id = p.id
           ORDER BY pi.fecha DESC, pi.id DESC
@@ -200,7 +254,8 @@ export const listPurchaseInvoices = async (executor?: Queryable) => {
   const queryable = getExecutor(executor);
   const result = await queryable.query(
     `
-      SELECT pi.id, pi.proveedor_id, pi.numero_factura, pi.total, pi.fecha AS fecha_compra, pi.metodo_pago, p.nombre AS proveedor
+      SELECT pi.id, pi.proveedor_id, pi.numero_factura, pi.total, pi.fecha AS fecha_compra, pi.metodo_pago, p.nombre AS proveedor,
+             pi.estado_pago, pi.monto_pagado, pi.fecha_pago, pi.metodo_pago_real
       FROM purchase_invoices pi
       JOIN proveedores p ON pi.proveedor_id = p.id
       ORDER BY pi.fecha DESC, pi.id DESC
@@ -215,7 +270,8 @@ export const getPurchaseInvoiceById = async (id: number, executor?: Queryable) =
     const invoiceRow = db
       .prepare(
         `
-          SELECT pi.id, pi.proveedor_id, pi.numero_factura, pi.total, pi.fecha AS fecha_compra, pi.metodo_pago, p.nombre AS proveedor
+          SELECT pi.id, pi.proveedor_id, pi.numero_factura, pi.total, pi.fecha AS fecha_compra, pi.metodo_pago, p.nombre AS proveedor,
+                 pi.estado_pago, pi.monto_pagado, pi.fecha_pago, pi.metodo_pago_real
           FROM purchase_invoices pi
           JOIN proveedores p ON pi.proveedor_id = p.id
           WHERE pi.id = ?
@@ -246,7 +302,8 @@ export const getPurchaseInvoiceById = async (id: number, executor?: Queryable) =
   const queryable = getExecutor(executor);
   const invoiceResult = await queryable.query(
     `
-      SELECT pi.id, pi.proveedor_id, pi.numero_factura, pi.total, pi.fecha AS fecha_compra, pi.metodo_pago, p.nombre AS proveedor
+      SELECT pi.id, pi.proveedor_id, pi.numero_factura, pi.total, pi.fecha AS fecha_compra, pi.metodo_pago, p.nombre AS proveedor,
+             pi.estado_pago, pi.monto_pagado, pi.fecha_pago, pi.metodo_pago_real
       FROM purchase_invoices pi
       JOIN proveedores p ON pi.proveedor_id = p.id
       WHERE pi.id = $1
@@ -277,17 +334,32 @@ export const getPurchaseInvoiceById = async (id: number, executor?: Queryable) =
 
 export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvoiceBodySchema>, userName: string) => {
   const invoiceDate = payload.fecha || new Date().toISOString();
+  const isDebt = isCurrentAccount(payload.metodo_pago);
+  const estadoPago = isDebt ? "pendiente" : "pagado";
+  const montoPagado = isDebt ? 0 : payload.total;
+  const fechaPago = isDebt ? null : invoiceDate;
+  const metodoPagoReal = isDebt ? null : payload.metodo_pago;
 
   if (!isPostgresConfigured()) {
     const runTransaction = db.transaction(() => {
       const info = db
         .prepare(
           `
-            INSERT INTO purchase_invoices (proveedor_id, numero_factura, total, fecha, metodo_pago)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO purchase_invoices (proveedor_id, numero_factura, total, fecha, metodo_pago, estado_pago, monto_pagado, fecha_pago, metodo_pago_real)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           `
         )
-        .run(payload.proveedor_id, payload.numero_factura, payload.total, invoiceDate, payload.metodo_pago);
+        .run(
+          payload.proveedor_id,
+          payload.numero_factura,
+          payload.total,
+          invoiceDate,
+          payload.metodo_pago,
+          estadoPago,
+          montoPagado,
+          fechaPago,
+          metodoPagoReal
+        );
 
       const invoiceId = Number(info.lastInsertRowid);
 
@@ -304,7 +376,7 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
         if (typeof item.product_id === "string" && item.product_id.startsWith("new:")) {
           const productName = item.product_id.replace("new:", "").trim();
           if (!productName) {
-            throw new AppError("Nombre de producto nuevo invÃ¡lido.", 400);
+            throw new AppError("Nombre de producto nuevo invalido.", 400);
           }
           productId = createProductInSqlite(productName, item.costo_unitario);
         } else {
@@ -336,24 +408,26 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
         );
       }
 
-      const nextPaymentNum = getNextPaymentNumberSqlite();
+      if (!isDebt) {
+        const nextPaymentNum = getNextPaymentNumberSqlite();
 
-      db.prepare(
-        `
-          INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `
-      ).run(
-        "egreso",
-        "compra",
-        `Factura Compra #${payload.numero_factura}`,
-        "Compras",
-        payload.metodo_pago,
-        payload.total,
-        invoiceDate,
-        userName || "Sistema",
-        nextPaymentNum
-      );
+        db.prepare(
+          `
+            INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `
+        ).run(
+          "egreso",
+          "compra",
+          `Factura Compra #${payload.numero_factura}`,
+          "Compras",
+          payload.metodo_pago,
+          payload.total,
+          invoiceDate,
+          userName || "Sistema",
+          nextPaymentNum
+        );
+      }
 
       return invoiceId;
     });
@@ -363,18 +437,35 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
   }
 
   const pool = getPostgresPool();
-  const client = await pool.connect();
+  const client: any = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
+    const proveedorResult = await client.query(
+      `SELECT nombre FROM proveedores WHERE id = $1 LIMIT 1`,
+      [payload.proveedor_id]
+    );
+
+    const proveedorNombre = proveedorResult.rows[0]?.nombre || "";
+
     const invoiceInsert = await client.query(
       `
-        INSERT INTO purchase_invoices (proveedor_id, numero_factura, total, fecha, metodo_pago)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO purchase_invoices (proveedor_id, numero_factura, total, fecha, metodo_pago, estado_pago, monto_pagado, fecha_pago, metodo_pago_real)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING id
       `,
-      [payload.proveedor_id, payload.numero_factura, payload.total, invoiceDate, payload.metodo_pago]
+      [
+        payload.proveedor_id,
+        payload.numero_factura,
+        payload.total,
+        invoiceDate,
+        payload.metodo_pago,
+        estadoPago,
+        montoPagado,
+        fechaPago,
+        metodoPagoReal,
+      ]
     );
 
     const invoiceId = toNumber(invoiceInsert.rows[0]?.id);
@@ -385,7 +476,7 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
       if (typeof item.product_id === "string" && item.product_id.startsWith("new:")) {
         const productName = item.product_id.replace("new:", "").trim();
         if (!productName) {
-          throw new AppError("Nombre de producto nuevo invÃ¡lido.", 400);
+          throw new AppError("Nombre de producto nuevo invalido.", 400);
         }
         productId = await createProductInPg(client, productName, item.costo_unitario);
       } else {
@@ -428,25 +519,16 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
       );
     }
 
-    const nextPaymentNum = await getNextPaymentNumberPg(client);
-
-    await client.query(
-      `
-        INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      `,
-      [
-        "egreso",
-        "compra",
-        `Factura Compra #${payload.numero_factura}`,
-        "Compras",
-        payload.metodo_pago,
-        payload.total,
-        invoiceDate,
-        userName || "Sistema",
-        nextPaymentNum,
-      ]
-    );
+    if (!isDebt) {
+      await insertPurchaseFinancialMovementPg(client, {
+        numeroFactura: payload.numero_factura,
+        proveedor: proveedorNombre,
+        metodoPago: payload.metodo_pago,
+        total: payload.total,
+        fecha: invoiceDate,
+        usuario: userName || "Sistema",
+      });
+    }
 
     await client.query("COMMIT");
 
@@ -458,3 +540,133 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
     client.release();
   }
 };
+
+export const payPurchaseInvoice = async (
+  id: number,
+  payload: z.infer<typeof purchaseInvoicePaymentSchema>,
+  userName: string
+) => {
+  const paymentDate = payload.fecha_pago || new Date().toISOString();
+
+  if (isCurrentAccount(payload.metodo_pago_real)) {
+    throw new AppError("El pago de una cuenta corriente debe registrarse con un metodo real de pago.", 400);
+  }
+
+  if (!isPostgresConfigured()) {
+    const runTransaction = db.transaction(() => {
+      const invoice = db
+        .prepare(
+          `
+            SELECT pi.*, p.nombre AS proveedor
+            FROM purchase_invoices pi
+            JOIN proveedores p ON pi.proveedor_id = p.id
+            WHERE pi.id = ?
+          `
+        )
+        .get(id) as any;
+
+      if (!invoice) throw new AppError("Factura no encontrada", 404);
+      if (!isCurrentAccount(invoice.metodo_pago)) throw new AppError("Esta factura no esta en cuenta corriente.", 400);
+
+      const total = toNumber(invoice.total);
+      const montoPagadoActual = toNumber(invoice.monto_pagado);
+      const saldo = Math.max(0, total - montoPagadoActual);
+
+      if (saldo <= 0 || invoice.estado_pago === "pagado") {
+        throw new AppError("Esta factura ya esta pagada.", 400);
+      }
+
+      db.prepare(
+        `
+          UPDATE purchase_invoices
+          SET estado_pago = ?, monto_pagado = ?, fecha_pago = ?, metodo_pago_real = ?
+          WHERE id = ?
+        `
+      ).run("pagado", total, paymentDate, payload.metodo_pago_real, id);
+
+      const nextPaymentNum = getNextPaymentNumberSqlite();
+
+      db.prepare(
+        `
+          INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      ).run(
+        "egreso",
+        "compra",
+        `Pago Factura Compra #${invoice.numero_factura} - ${invoice.proveedor || ""}`,
+        "Compras",
+        payload.metodo_pago_real,
+        saldo,
+        paymentDate,
+        userName || "Sistema",
+        nextPaymentNum
+      );
+    });
+
+    runTransaction();
+    return getPurchaseInvoiceById(id);
+  }
+
+  const pool = getPostgresPool();
+  const client: any = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const invoiceResult = await client.query(
+      `
+        SELECT pi.*, p.nombre AS proveedor
+        FROM purchase_invoices pi
+        JOIN proveedores p ON pi.proveedor_id = p.id
+        WHERE pi.id = $1
+        LIMIT 1
+      `,
+      [id]
+    );
+
+    const invoice = invoiceResult.rows[0];
+
+    if (!invoice) throw new AppError("Factura no encontrada", 404);
+    if (!isCurrentAccount(invoice.metodo_pago)) throw new AppError("Esta factura no esta en cuenta corriente.", 400);
+
+    const total = toNumber(invoice.total);
+    const montoPagadoActual = toNumber(invoice.monto_pagado);
+    const saldo = Math.max(0, total - montoPagadoActual);
+
+    if (saldo <= 0 || invoice.estado_pago === "pagado") {
+      throw new AppError("Esta factura ya esta pagada.", 400);
+    }
+
+    await client.query(
+      `
+        UPDATE purchase_invoices
+        SET estado_pago = $1,
+            monto_pagado = $2,
+            fecha_pago = $3,
+            metodo_pago_real = $4
+        WHERE id = $5
+      `,
+      ["pagado", total, paymentDate, payload.metodo_pago_real, id]
+    );
+
+    await insertPurchaseFinancialMovementPg(client, {
+      numeroFactura: invoice.numero_factura,
+      proveedor: invoice.proveedor,
+      metodoPago: payload.metodo_pago_real,
+      total: saldo,
+      fecha: paymentDate,
+      usuario: userName || "Sistema",
+    });
+
+    await client.query("COMMIT");
+
+    return getPurchaseInvoiceById(id);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+

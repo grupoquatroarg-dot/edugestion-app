@@ -1,4 +1,4 @@
-﻿import { sendError, sendSuccess } from "../../server/utils/response.js";
+import { sendError, sendSuccess } from "../../server/utils/response.js";
 import {
   getDateKeys,
   getPoolOrFail,
@@ -66,12 +66,12 @@ export default async function handler(req: any, res: any) {
       const result = await pool.query(`
         SELECT
           p.nombre AS proveedor,
-          pi.total AS monto,
+          (pi.total - COALESCE(pi.monto_pagado, 0)) AS monto,
           pi.fecha,
           'Pendiente' AS estado
         FROM purchase_invoices pi
         JOIN proveedores p ON pi.proveedor_id = p.id
-        WHERE pi.metodo_pago = 'Cta Cte'
+        WHERE pi.metodo_pago = 'Cta Cte' AND COALESCE(pi.estado_pago, 'pendiente') <> 'pagado'
         ORDER BY pi.fecha ASC
       `);
 

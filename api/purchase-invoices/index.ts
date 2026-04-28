@@ -1,4 +1,11 @@
-﻿import { createPurchaseInvoice, getPurchaseInvoiceById, listPurchaseInvoices, purchaseInvoiceBodySchema } from "../../server/services/purchaseInvoiceService.js";
+﻿import {
+  createPurchaseInvoice,
+  getPurchaseInvoiceById,
+  listPurchaseInvoices,
+  payPurchaseInvoice,
+  purchaseInvoiceBodySchema,
+  purchaseInvoicePaymentSchema,
+} from "../../server/services/purchaseInvoiceService.js";
 import { sendError, sendSuccess } from "../../server/utils/response.js";
 import { getRequestBody, requirePurchaseInvoicePermission } from "../../server/services/vercel/purchaseInvoiceApiHelpers.js";
 
@@ -53,5 +60,38 @@ export default async function handler(req: any, res: any) {
     }
   }
 
+  if (req.method === "PATCH") {
+    const user = await requirePurchaseInvoicePermission(req, res, "create");
+    if (!user) return;
+
+    const id = Number(req.query?.id);
+
+    if (!id) {
+      return sendError(res, "ID de factura invalido", 400);
+    }
+
+    const parsed = purchaseInvoicePaymentSchema.safeParse(getRequestBody(req));
+
+    if (!parsed.success) {
+      return sendError(
+        res,
+        "Validation failed",
+        400,
+        parsed.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        }))
+      );
+    }
+
+    try {
+      const invoice = await payPurchaseInvoice(id, parsed.data, user.userName || "Sistema");
+      return sendSuccess(res, invoice, "Pago de proveedor registrado");
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al registrar pago de proveedor", error?.statusCode || 400);
+    }
+  }
+
   return sendError(res, "Method not allowed", 405);
 }
+

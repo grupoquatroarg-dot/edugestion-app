@@ -39,6 +39,12 @@ export default function PurchaseInvoiceModule() {
   const [isCreatingNewProduct, setIsCreatingNewProduct] = useState(false);
   const [newProductName, setNewProductName] = useState('');
   const [providerForm, setProviderForm] = useState<ProviderForm>(emptyProviderForm);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [selectedInvoiceForPayment, setSelectedInvoiceForPayment] = useState<PurchaseInvoice | null>(null);
+  const [paymentForm, setPaymentForm] = useState({
+    metodo_pago_real: 'efectivo',
+    fecha_pago: new Date().toISOString().split('T')[0],
+  });
 
   const [formData, setFormData] = useState({
     numero_factura: '',
@@ -157,6 +163,50 @@ export default function PurchaseInvoiceModule() {
     } catch (error: any) {
       console.error('Error creating provider:', error);
       alert(error?.message || 'Error al crear proveedor');
+    }
+  };
+
+  const openPaymentModal = (invoice: PurchaseInvoice) => {
+    setSelectedInvoiceForPayment(invoice);
+    setPaymentForm({
+      metodo_pago_real: 'efectivo',
+      fecha_pago: new Date().toISOString().split('T')[0],
+    });
+    setIsPaymentModalOpen(true);
+  };
+
+  const handlePayInvoice = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!selectedInvoiceForPayment) return;
+
+    const saldoPendiente = Number((selectedInvoiceForPayment as any).saldo_pendiente ?? selectedInvoiceForPayment.total ?? 0);
+
+    if (saldoPendiente <= 0) {
+      alert('La factura no tiene saldo pendiente');
+      return;
+    }
+
+    if (paymentForm.metodo_pago_real === 'Cta Cte') {
+      alert('Seleccione un metodo de pago real');
+      return;
+    }
+
+    try {
+      const res = await apiFetch(`/api/purchase-invoices?id=${selectedInvoiceForPayment.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(paymentForm),
+      });
+
+      await handleApiJson(res);
+
+      setIsPaymentModalOpen(false);
+      setSelectedInvoiceForPayment(null);
+      await fetchInvoices();
+      alert('Pago registrado correctamente');
+    } catch (error: any) {
+      console.error('Error paying supplier invoice:', error);
+      alert(error?.message || 'Error al registrar pago de proveedor');
     }
   };
 
@@ -347,9 +397,19 @@ export default function PurchaseInvoiceModule() {
                     <button
                       onClick={() => fetchInvoiceDetails(inv.id)}
                       className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors"
+                      title="Ver detalle"
                     >
                       <Eye size={18} />
                     </button>
+                    {(inv as any).metodo_pago === 'Cta Cte' && (inv as any).estado_pago !== 'pagado' && (
+                      <button
+                        onClick={() => openPaymentModal(inv)}
+                        className="ml-2 px-3 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors"
+                        title="Registrar pago"
+                      >
+                        Pagar
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -620,6 +680,76 @@ export default function PurchaseInvoiceModule() {
         </div>
       )}
 
+      {isPaymentModalOpen && selectedInvoiceForPayment && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-6 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50">
+              <div>
+                <h2 className="text-xl font-bold text-zinc-900">Registrar pago a proveedor</h2>
+                <p className="text-xs text-zinc-500">
+                  Factura Nro. {selectedInvoiceForPayment.numero_factura} - {(selectedInvoiceForPayment as any).proveedor}
+                </p>
+              </div>
+              <button onClick={() => setIsPaymentModalOpen(false)} className="text-zinc-400 hover:text-zinc-600">
+                <X size={24} />
+              </button>
+            </div>
+
+            <form onSubmit={handlePayInvoice} className="p-6 space-y-4">
+              <div className="bg-zinc-50 border border-zinc-100 rounded-xl p-4">
+                <span className="block text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Saldo pendiente</span>
+                <span className="text-2xl font-black text-zinc-900 font-mono">
+                  ${Number((selectedInvoiceForPayment as any).saldo_pendiente ?? selectedInvoiceForPayment.total ?? 0).toLocaleString()}
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Metodo de pago</label>
+                <select
+                  required
+                  className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
+                  value={paymentForm.metodo_pago_real}
+                  onChange={(e) => setPaymentForm({ ...paymentForm, metodo_pago_real: e.target.value })}
+                >
+                  <option value="efectivo">Efectivo</option>
+                  <option value="transferencia">Transferencia</option>
+                  <option value="mercado_pago">Mercado Pago</option>
+                  <option value="cheque">Cheque</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Fecha de pago</label>
+                <input
+                  required
+                  type="date"
+                  className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
+                  value={paymentForm.fecha_pago}
+                  onChange={(e) => setPaymentForm({ ...paymentForm, fecha_pago: e.target.value })}
+                />
+              </div>
+
+              <div className="pt-4 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsPaymentModalOpen(false)}
+                  className="px-6 py-2 rounded-xl border border-zinc-200 text-zinc-600 font-bold hover:bg-zinc-50 transition-all"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-8 py-2 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center gap-2"
+                >
+                  <Save size={18} />
+                  Registrar pago
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {isViewModalOpen && selectedInvoice && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
@@ -683,3 +813,4 @@ export default function PurchaseInvoiceModule() {
     </div>
   );
 }
+

@@ -1,4 +1,4 @@
-﻿import { getPostgresPool, isPostgresConfigured } from "../../utils/postgres.js";
+import { getPostgresPool, isPostgresConfigured } from "../../utils/postgres.js";
 import { UserRepository } from "../../repositories/userRepository.js";
 import { verifyToken } from "../../utils/jwt.js";
 import { sendError } from "../../utils/response.js";
