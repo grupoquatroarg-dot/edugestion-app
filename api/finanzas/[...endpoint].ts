@@ -1,0 +1,127 @@
+import { financeRepository } from "../../server/repositories/financeRepository.js";
+import { UserRepository } from "../../server/repositories/userRepository.js";
+import { verifyToken } from "../../server/utils/jwt.js";
+import { sendError, sendSuccess } from "../../server/utils/response.js";
+
+const getBody = (req: any) => {
+  if (req.body && typeof req.body === "object") return req.body;
+  if (typeof req.body === "string") {
+    try { return JSON.parse(req.body); } catch { return {}; }
+  }
+  return {};
+};
+
+const getBearerToken = (req: any) => {
+  const authHeader = req.headers?.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
+  return authHeader.slice(7);
+};
+
+const permissionKeyByAction = { view: "can_view", create: "can_create", edit: "can_edit" } as const;
+
+const requireCurrentAccountsPermission = async (req: any, res: any, action: keyof typeof permissionKeyByAction) => {
+  const token = getBearerToken(req);
+  if (!token) { sendError(res, "Unauthorized: Login required", 401); return null; }
+
+  const decoded = verifyToken(token);
+  if (!decoded?.userId) { sendError(res, "Unauthorized: Login required", 401); return null; }
+  if (decoded.role === "administrador") return decoded;
+
+  const permissions = await UserRepository.getPermissions(Number(decoded.userId));
+  const perm = permissions?.current_accounts;
+  const permissionKey = permissionKeyByAction[action];
+
+  if (!perm?.[permissionKey]) {
+    sendError(res, "Forbidden: No permission for current accounts", 403);
+    return null;
+  }
+
+  return decoded;
+};
+
+const getEndpointParts = (req: any) => {
+  const raw = req.query?.endpoint;
+  if (Array.isArray(raw)) return raw.map(String);
+  if (!raw) return [];
+  return [String(raw)];
+};
+
+const toNumber = (value: any, fallback: number = 0) => {
+  if (value === null || value === undefined || value === "") return fallback;
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? fallback : parsed;
+};
+
+export default async function handler(req: any, res: any) {
+  const parts = getEndpointParts(req);
+  const [resource, id, action] = parts;
+
+  if (req.method === "GET" && resource === "movimientos") {
+    const user = await requireCurrentAccountsPermission(req, res, "view");
+    if (!user) return;
+
+    try {
+      const movimientos = await financeRepository.getMovements();
+      return sendSuccess(res, movimientos);
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al obtener movimientos", error?.statusCode || 400, error?.errors || []);
+    }
+  }
+
+  if (req.method === "GET" && resource === "cheques") {
+    const user = await requireCurrentAccountsPermission(req, res, "view");
+    if (!user) return;
+
+    try {
+      const cheques = await financeRepository.getCheques();
+      return sendSuccess(res, cheques);
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al obtener cheques", error?.statusCode || 400, error?.errors || []);
+    }
+  }
+
+  if (req.method === "POST" && resource === "egresos") {
+    const user = await requireCurrentAccountsPermission(req, res, "create");
+    if (!user) return;
+
+    const body = getBody(req);
+    const amount = toNumber(body.monto);
+
+    if (amount <= 0) return sendError(res, "El monto debe ser positivo", 400);
+    if (!body.descripcion || String(body.descripcion).trim().length < 3) return sendError(res, "La descripcion es muy corta", 400);
+    if (!body.categoria) return sendError(res, "La categoria es requerida", 400);
+    if (!body.forma_pago) return sendError(res, "La forma de pago es requerida", 400);
+
+    try {
+      await financeRepository.registerExpense({
+        ...body,
+        monto: amount,
+        usuario: user.userName || "Sistema",
+      });
+
+      return sendSuccess(res, null, "Egreso registrado exitosamente", 201);
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al registrar egreso", error?.statusCode || 400, error?.errors || []);
+    }
+  }
+
+  if (req.method === "PATCH" && resource === "cheques" && id && action === "estado") {
+    const user = await requireCurrentAccountsPermission(req, res, "edit");
+    if (!user) return;
+
+    const chequeId = Number(id);
+    const body = getBody(req);
+
+    if (!Number.isFinite(chequeId) || chequeId <= 0) return sendError(res, "ID de cheque invalido", 400);
+    if (!body.estado) return sendError(res, "Estado requerido", 400);
+
+    try {
+      await financeRepository.updateChequeStatus(chequeId, body.estado, body.observaciones);
+      return sendSuccess(res, null, "Estado de cheque actualizado");
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al actualizar cheque", error?.statusCode || 400, error?.errors || []);
+    }
+  }
+
+  return sendError(res, "Endpoint de finanzas no encontrado", 404);
+}

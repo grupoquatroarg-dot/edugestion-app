@@ -77,7 +77,12 @@ export default function ProductModule() {
     const res = await apiFetch('/api/products?all=true');
     const body = await res.json();
     const data = unwrapResponse(body);
-    setProducts(data);
+    setProducts(data || []);
+    setTotalStockValue((data || []).reduce((sum: number, product: Product) => {
+      const stock = Number(product.stock || 0);
+      const cost = Number(product.cost || 0);
+      return sum + stock * cost;
+    }, 0));
   };
 
   const fetchFamilies = async () => {
@@ -95,14 +100,11 @@ export default function ProductModule() {
   };
 
   const fetchTotalStockValue = async () => {
-    try {
-      const res = await apiFetch('/api/inventory/total-value');
-      const body = await res.json();
-      const data = unwrapResponse(body);
-      setTotalStockValue(data.total);
-    } catch (error) {
-      console.error("Error fetching total stock value:", error);
-    }
+    setTotalStockValue(products.reduce((sum, product) => {
+      const stock = Number(product.stock || 0);
+      const cost = Number(product.cost || 0);
+      return sum + stock * cost;
+    }, 0));
   };
 
   const handleCreateFamily = async (e: React.FormEvent) => {
