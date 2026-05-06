@@ -1,13 +1,19 @@
-import { financeRepository } from "../../server/repositories/financeRepository.js";
-import { UserRepository } from "../../server/repositories/userRepository.js";
-import { verifyToken } from "../../server/utils/jwt.js";
-import { sendError, sendSuccess } from "../../server/utils/response.js";
+import { financeRepository } from "../server/repositories/financeRepository.js";
+import { UserRepository } from "../server/repositories/userRepository.js";
+import { verifyToken } from "../server/utils/jwt.js";
+import { sendError, sendSuccess } from "../server/utils/response.js";
 
 const getBody = (req: any) => {
   if (req.body && typeof req.body === "object") return req.body;
+
   if (typeof req.body === "string") {
-    try { return JSON.parse(req.body); } catch { return {}; }
+    try {
+      return JSON.parse(req.body);
+    } catch {
+      return {};
+    }
   }
+
   return {};
 };
 
@@ -17,15 +23,30 @@ const getBearerToken = (req: any) => {
   return authHeader.slice(7);
 };
 
-const permissionKeyByAction = { view: "can_view", create: "can_create", edit: "can_edit" } as const;
+const permissionKeyByAction = {
+  view: "can_view",
+  create: "can_create",
+  edit: "can_edit",
+} as const;
 
 const requireCurrentAccountsPermission = async (req: any, res: any, action: keyof typeof permissionKeyByAction) => {
   const token = getBearerToken(req);
-  if (!token) { sendError(res, "Unauthorized: Login required", 401); return null; }
+
+  if (!token) {
+    sendError(res, "Unauthorized: Login required", 401);
+    return null;
+  }
 
   const decoded = verifyToken(token);
-  if (!decoded?.userId) { sendError(res, "Unauthorized: Login required", 401); return null; }
-  if (decoded.role === "administrador") return decoded;
+
+  if (!decoded?.userId) {
+    sendError(res, "Unauthorized: Login required", 401);
+    return null;
+  }
+
+  if (decoded.role === "administrador") {
+    return decoded;
+  }
 
   const permissions = await UserRepository.getPermissions(Number(decoded.userId));
   const perm = permissions?.current_accounts;
@@ -39,11 +60,9 @@ const requireCurrentAccountsPermission = async (req: any, res: any, action: keyo
   return decoded;
 };
 
-const getEndpointParts = (req: any) => {
+const getEndpoint = (req: any) => {
   const raw = req.query?.endpoint;
-  if (Array.isArray(raw)) return raw.map(String);
-  if (!raw) return [];
-  return [String(raw)];
+  return Array.isArray(raw) ? String(raw[0] || "") : String(raw || "");
 };
 
 const toNumber = (value: any, fallback: number = 0) => {
@@ -53,10 +72,9 @@ const toNumber = (value: any, fallback: number = 0) => {
 };
 
 export default async function handler(req: any, res: any) {
-  const parts = getEndpointParts(req);
-  const [resource, id, action] = parts;
+  const endpoint = getEndpoint(req);
 
-  if (req.method === "GET" && resource === "movimientos") {
+  if (req.method === "GET" && endpoint === "movimientos") {
     const user = await requireCurrentAccountsPermission(req, res, "view");
     if (!user) return;
 
@@ -68,7 +86,7 @@ export default async function handler(req: any, res: any) {
     }
   }
 
-  if (req.method === "GET" && resource === "cheques") {
+  if (req.method === "GET" && endpoint === "cheques") {
     const user = await requireCurrentAccountsPermission(req, res, "view");
     if (!user) return;
 
@@ -80,7 +98,7 @@ export default async function handler(req: any, res: any) {
     }
   }
 
-  if (req.method === "POST" && resource === "egresos") {
+  if (req.method === "POST" && endpoint === "egresos") {
     const user = await requireCurrentAccountsPermission(req, res, "create");
     if (!user) return;
 
@@ -105,11 +123,11 @@ export default async function handler(req: any, res: any) {
     }
   }
 
-  if (req.method === "PATCH" && resource === "cheques" && id && action === "estado") {
+  if (req.method === "PATCH" && endpoint === "cheques-estado") {
     const user = await requireCurrentAccountsPermission(req, res, "edit");
     if (!user) return;
 
-    const chequeId = Number(id);
+    const chequeId = Number(req.query?.id);
     const body = getBody(req);
 
     if (!Number.isFinite(chequeId) || chequeId <= 0) return sendError(res, "ID de cheque invalido", 400);

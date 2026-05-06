@@ -69,7 +69,7 @@ export default function FinanceModule() {
 
   const fetchMovimientos = async () => {
     try {
-      const res = await apiFetch('/api/finanzas/movimientos');
+      const res = await apiFetch('/api/finanzas?endpoint=movimientos');
       const body = await res.json();
       const data = unwrapResponse(body);
       setMovimientos(data);
@@ -80,7 +80,7 @@ export default function FinanceModule() {
 
   const fetchCheques = async () => {
     try {
-      const res = await apiFetch('/api/finanzas/cheques');
+      const res = await apiFetch('/api/finanzas?endpoint=cheques');
       const body = await res.json();
       const data = unwrapResponse(body);
       setCheques(data);
@@ -123,7 +123,7 @@ export default function FinanceModule() {
   const handleEgresoSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await apiFetch('/api/finanzas/egresos', {
+      const res = await apiFetch('/api/finanzas?endpoint=egresos', {
         method: 'POST',
         body: JSON.stringify({
           ...egresoForm,
@@ -222,7 +222,7 @@ export default function FinanceModule() {
 
   const handleUpdateChequeStatus = async (id: number, nuevoEstado: string) => {
     try {
-      const res = await apiFetch(`/api/finanzas/cheques/${id}/estado`, {
+      const res = await apiFetch(`/api/finanzas?endpoint=cheques/${id}/estado`, {
         method: 'PATCH',
         body: JSON.stringify({ estado: nuevoEstado })
       });

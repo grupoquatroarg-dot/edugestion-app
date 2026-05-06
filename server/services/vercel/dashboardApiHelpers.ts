@@ -85,7 +85,7 @@ export const getSummaryData = async (pool: any) => {
     alertasDeudaResult,
   ] = await Promise.all([
     pool.query(`SELECT COALESCE(SUM(saldo_cta_cte), 0) AS total FROM clientes WHERE activo = 1`),
-    pool.query(`SELECT COALESCE(SUM(total), 0) AS total FROM purchase_invoices WHERE metodo_pago = 'Cta Cte'`),
+    pool.query(`SELECT COALESCE(SUM(total - COALESCE(monto_pagado, 0)), 0) AS total FROM purchase_invoices WHERE metodo_pago = 'Cta Cte' AND COALESCE(estado_pago, 'pendiente') <> 'pagado'`),
     pool.query(`
       SELECT COALESCE(SUM(ganancia), 0) AS total
       FROM sales
