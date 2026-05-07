@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Plus, Search, X, FileText, Calendar, User, Trash2, Save, Eye } from 'lucide-react';
 import { Product, PurchaseInvoice } from '../types';
 import { useAuth } from '../contexts/AuthContext';
@@ -73,7 +73,7 @@ export default function PurchaseInvoiceModule() {
 
   const fetchProveedores = async () => {
     try {
-      const res = await apiFetch('/api/proveedores');
+      const res = await apiFetch('/api/purchase-invoices?endpoint=proveedores');
       const data = await handleApiJson(res);
       setProveedores(data || []);
     } catch (error) {
@@ -139,7 +139,7 @@ export default function PurchaseInvoiceModule() {
     }
 
     try {
-      const res = await apiFetch('/api/proveedores', {
+      const res = await apiFetch('/api/purchase-invoices?endpoint=proveedores', {
         method: 'POST',
         body: JSON.stringify({
           nombre: providerForm.nombre.trim(),
