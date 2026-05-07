@@ -86,7 +86,7 @@ export default function ProductModule() {
   };
 
   const fetchFamilies = async () => {
-    const res = await apiFetch('/api/families');
+    const res = await apiFetch('/api/config/product-families');
     const body = await res.json();
     const data = unwrapResponse(body);
     setFamilies(data);
@@ -112,7 +112,7 @@ export default function ProductModule() {
     if (!newFamilyName.trim()) return;
 
     try {
-      const res = await apiFetch('/api/families', {
+      const res = await apiFetch('/api/config/product-families', {
         method: 'POST',
         body: JSON.stringify({ 
           name: newFamilyName.trim(),

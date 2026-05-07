@@ -234,7 +234,7 @@ export default function SalesModule() {
 
   const fetchSaleDetails = async (saleId: number) => {
     try {
-      const res = await apiFetch(`/api/sales/${saleId}`);
+      const res = await apiFetch(`/api/sales?id=${saleId}`);
       const body = await res.json();
       const sale = unwrapResponse(body);
       setSelectedSale(sale);
@@ -246,7 +246,7 @@ export default function SalesModule() {
   const handleDownloadReceipt = async (saleId: number) => {
     try {
       setDownloadingSaleId(saleId);
-      const res = await apiFetch(`/api/sales/${saleId}`);
+      const res = await apiFetch(`/api/sales?id=${saleId}`);
       const body = await res.json();
       const sale = unwrapResponse(body);
       generateSaleReceipt(sale, businessSettings);
@@ -262,7 +262,7 @@ export default function SalesModule() {
     if (!selectedCustomerForSaldos || !quickPaymentForm.monto) return;
 
     try {
-      const res = await apiFetch(`/api/clientes/${selectedCustomerForSaldos.id}/pagos`, {
+      const res = await apiFetch(`/api/sales?endpoint=client-payment&id=${selectedCustomerForSaldos.id}`, {
         method: 'POST',
         body: JSON.stringify({
           monto: parseFloat(quickPaymentForm.monto),
