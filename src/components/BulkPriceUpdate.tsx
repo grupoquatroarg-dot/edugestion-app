@@ -44,7 +44,7 @@ export default function BulkPriceUpdate() {
   }, []);
 
   const fetchFamilies = async () => {
-    const res = await apiFetch('/api/families');
+    const res = await apiFetch('/api/config/product-families');
     const body = await res.json();
     const data = unwrapResponse(body);
     setFamilies(data);
@@ -58,7 +58,7 @@ export default function BulkPriceUpdate() {
   };
 
   const fetchHistory = async () => {
-    const res = await apiFetch('/api/bulk-price/history');
+    const res = await apiFetch('/api/products?endpoint=bulk-price-history');
     const body = await res.json();
     const data = unwrapResponse(body);
     setHistory(data);
@@ -82,7 +82,7 @@ export default function BulkPriceUpdate() {
         change_type: changeType,
         value: changeValue.toString()
       });
-      const res = await apiFetch(`/api/bulk-price/preview?${params}`);
+      const res = await apiFetch(`/api/products?endpoint=bulk-price-preview&${params}`);
       const body = await res.json();
       if (!res.ok) {
         const errorData = unwrapResponse(body);
@@ -157,7 +157,7 @@ export default function BulkPriceUpdate() {
         if (found) productIdToApply = found.id.toString();
       }
 
-      const res = await apiFetch('/api/bulk-price/apply', {
+      const res = await apiFetch('/api/products?endpoint=bulk-price-apply', {
         method: 'POST',
         body: JSON.stringify({
           scope,
