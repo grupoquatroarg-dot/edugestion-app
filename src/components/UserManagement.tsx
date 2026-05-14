@@ -131,7 +131,7 @@ export default function UserManagement() {
     setIsSubmitting(true);
 
     try {
-      const url = editingUser ? `/api/users/${editingUser.id}` : '/api/users';
+      const url = editingUser ? `/api/clientes?endpoint=users&id=${editingUser.id}` : '/api/clientes?endpoint=users';
       const method = editingUser ? 'PUT' : 'POST';
       
       const res = await apiFetch(url, {
