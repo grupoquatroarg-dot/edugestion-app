@@ -204,6 +204,548 @@ export default async function handler(req: any, res: any) {
       );
     }
 
+
+    const isReportEndpoint = [
+      "reports",
+      "sales-period",
+      "sales-by-client",
+      "best-selling-products",
+      "product-profitability",
+      "current-accounts",
+      "commissions",
+    ].includes(endpoint);
+
+    if (isReportEndpoint) {
+      const rawFrom = Array.isArray(req.query?.from) ? req.query.from[0] : req.query?.from;
+      const rawTo = Array.isArray(req.query?.to) ? req.query.to[0] : req.query?.to;
+      const rawClienteId = Array.isArray(req.query?.cliente_id) ? req.query.cliente_id[0] : req.query?.cliente_id;
+      const rawProductId = Array.isArray(req.query?.productId) ? req.query.productId[0] : req.query?.productId;
+
+      const fromDate = rawFrom ? `${rawFrom} 00:00:00` : "1970-01-01 00:00:00";
+      const toDate = rawTo ? `${rawTo} 23:59:59` : "2099-12-31 23:59:59";
+      const clienteId = rawClienteId ? Number(rawClienteId) : null;
+      const productId = rawProductId && rawProductId !== "all" ? Number(rawProductId) : null;
+
+      if (endpoint === "reports") {
+        const salesStatsResult = await pool.query(
+          `
+            SELECT
+              COALESCE(SUM(total), 0) AS total,
+              COUNT(*)::int AS cantidad,
+              COALESCE(AVG(total), 0) AS promedio
+            FROM sales s
+            WHERE s.fecha BETWEEN $1 AND $2
+              AND ($3::int IS NULL OR s.cliente_id = $3)
+          `,
+          [fromDate, toDate, clienteId]
+        );
+
+        const salesByDayResult = await pool.query(
+          `
+            SELECT
+              TO_CHAR(s.fecha::timestamp, 'YYYY-MM-DD') AS fecha,
+              COALESCE(SUM(s.total), 0) AS total,
+              COUNT(*)::int AS cantidad
+            FROM sales s
+            WHERE s.fecha BETWEEN $1 AND $2
+              AND ($3::int IS NULL OR s.cliente_id = $3)
+            GROUP BY TO_CHAR(s.fecha::timestamp, 'YYYY-MM-DD')
+            ORDER BY fecha ASC
+          `,
+          [fromDate, toDate, clienteId]
+        );
+
+        const salesByMethodResult = await pool.query(
+          `
+            SELECT
+              s.metodo_pago AS name,
+              COALESCE(SUM(s.total), 0) AS value
+            FROM sales s
+            WHERE s.fecha BETWEEN $1 AND $2
+              AND ($3::int IS NULL OR s.cliente_id = $3)
+            GROUP BY s.metodo_pago
+            ORDER BY value DESC
+          `,
+          [fromDate, toDate, clienteId]
+        );
+
+        const salesListResult = await pool.query(
+          `
+            SELECT
+              s.id,
+              s.fecha,
+              COALESCE(c.nombre_apellido, s.nombre_cliente, 'Consumidor Final') AS nombre_cliente,
+              s.total,
+              s.metodo_pago
+            FROM sales s
+            LEFT JOIN clientes c ON s.cliente_id = c.id
+            WHERE s.fecha BETWEEN $1 AND $2
+              AND ($3::int IS NULL OR s.cliente_id = $3)
+            ORDER BY s.fecha DESC, s.id DESC
+          `,
+          [fromDate, toDate, clienteId]
+        );
+
+        const newClientsResult = await pool.query(
+          `
+            SELECT COUNT(*)::int AS count
+            FROM clientes
+            WHERE fecha_alta BETWEEN $1 AND $2
+          `,
+          [fromDate, toDate]
+        );
+
+        const activeClientsResult = await pool.query(
+          `
+            SELECT COUNT(DISTINCT cliente_id)::int AS count
+            FROM sales
+            WHERE fecha BETWEEN $1 AND $2
+          `,
+          [fromDate, toDate]
+        );
+
+        const clientsWithDebtResult = await pool.query(
+          `SELECT COUNT(*)::int AS count FROM clientes WHERE COALESCE(saldo_cta_cte, 0) > 0`
+        );
+
+        const clientListResult = await pool.query(
+          `
+            SELECT
+              c.id,
+              c.nombre_apellido AS nombre,
+              COALESCE(SUM(s.total), 0) AS total,
+              COUNT(s.id)::int AS cantidad,
+              MAX(s.fecha) AS ultima_compra
+            FROM sales s
+            JOIN clientes c ON s.cliente_id = c.id
+            WHERE s.fecha BETWEEN $1 AND $2
+            GROUP BY c.id, c.nombre_apellido
+            ORDER BY total DESC, c.nombre_apellido ASC
+          `,
+          [fromDate, toDate]
+        );
+
+        const productListResult = await pool.query(
+          `
+            SELECT
+              p.name,
+              COALESCE(SUM(si.cantidad), 0)::int AS cantidad,
+              COALESCE(SUM(si.cantidad * si.precio_venta), 0) AS total,
+              MAX(s.fecha) AS ultima_venta
+            FROM sale_items si
+            JOIN sales s ON si.sale_id = s.id
+            JOIN products p ON si.product_id = p.id
+            WHERE s.fecha BETWEEN $1 AND $2
+            GROUP BY p.id, p.name
+            ORDER BY cantidad DESC, p.name ASC
+          `,
+          [fromDate, toDate]
+        );
+
+        const productFamilyResult = await pool.query(
+          `
+            SELECT
+              COALESCE(f.name, 'Sin familia') AS name,
+              COALESCE(SUM(si.cantidad * si.precio_venta), 0) AS value
+            FROM sale_items si
+            JOIN sales s ON si.sale_id = s.id
+            JOIN products p ON si.product_id = p.id
+            LEFT JOIN product_families f ON p.family_id = f.id
+            WHERE s.fecha BETWEEN $1 AND $2
+            GROUP BY COALESCE(f.name, 'Sin familia')
+            ORDER BY value DESC
+          `,
+          [fromDate, toDate]
+        );
+
+        const lowStockResult = await pool.query(
+          `
+            SELECT name, stock
+            FROM products
+            WHERE stock <= stock_minimo AND eliminado = 0
+            ORDER BY stock ASC, name ASC
+          `
+        );
+
+        const totalDebtResult = await pool.query(
+          `SELECT COALESCE(SUM(saldo_cta_cte), 0) AS total FROM clientes`
+        );
+
+        const debtorsCountResult = await pool.query(
+          `SELECT COUNT(*)::int AS count FROM clientes WHERE COALESCE(saldo_cta_cte, 0) > 0`
+        );
+
+        const rankingDebtorsResult = await pool.query(
+          `
+            SELECT
+              c.id,
+              c.nombre_apellido AS nombre,
+              c.saldo_cta_cte AS saldo,
+              COUNT(s.id)::int AS ventas_pendientes,
+              MIN(s.fecha) AS fecha_antigua
+            FROM clientes c
+            LEFT JOIN sales s ON s.cliente_id = c.id AND s.monto_pendiente > 0
+            WHERE COALESCE(c.saldo_cta_cte, 0) > 0
+            GROUP BY c.id, c.nombre_apellido, c.saldo_cta_cte
+            ORDER BY c.saldo_cta_cte DESC
+          `
+        );
+
+        const financeStatsResult = await pool.query(
+          `
+            SELECT
+              COALESCE(SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE 0 END), 0) AS ingresos,
+              COALESCE(SUM(CASE WHEN tipo = 'egreso' THEN monto ELSE 0 END), 0) AS egresos
+            FROM movimientos_financieros
+            WHERE fecha BETWEEN $1 AND $2
+          `,
+          [fromDate, toDate]
+        );
+
+        const expensesByCategoryResult = await pool.query(
+          `
+            SELECT categoria AS name, COALESCE(SUM(monto), 0) AS value
+            FROM movimientos_financieros
+            WHERE tipo = 'egreso' AND fecha BETWEEN $1 AND $2
+            GROUP BY categoria
+            ORDER BY value DESC
+          `,
+          [fromDate, toDate]
+        );
+
+        const cashFlowResult = await pool.query(
+          `
+            SELECT
+              TO_CHAR(fecha::timestamp, 'YYYY-MM-DD') AS fecha,
+              COALESCE(SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE 0 END), 0) AS ingresos,
+              COALESCE(SUM(CASE WHEN tipo = 'egreso' THEN monto ELSE 0 END), 0) AS egresos
+            FROM movimientos_financieros
+            WHERE fecha BETWEEN $1 AND $2
+            GROUP BY TO_CHAR(fecha::timestamp, 'YYYY-MM-DD')
+            ORDER BY fecha ASC
+          `,
+          [fromDate, toDate]
+        );
+
+        const salesStats = salesStatsResult.rows[0] || {};
+        const financeStats = financeStatsResult.rows[0] || {};
+
+        return sendSuccess(res, {
+          ventas: {
+            total: toNumber(salesStats.total),
+            cantidad: toNumber(salesStats.cantidad),
+            promedio: toNumber(salesStats.promedio),
+            porDia: salesByDayResult.rows.map((row: any) => ({
+              fecha: row.fecha,
+              total: toNumber(row.total),
+              cantidad: toNumber(row.cantidad),
+            })),
+            porMetodoPago: salesByMethodResult.rows.map((row: any) => ({
+              name: row.name || "Sin metodo",
+              value: toNumber(row.value),
+            })),
+            listaVentas: salesListResult.rows.map((row: any) => ({
+              id: toNumber(row.id),
+              fecha: row.fecha,
+              nombre_cliente: row.nombre_cliente,
+              total: toNumber(row.total),
+              metodo_pago: row.metodo_pago,
+            })),
+          },
+          clientes: {
+            nuevos: toNumber(newClientsResult.rows[0]?.count),
+            activos: toNumber(activeClientsResult.rows[0]?.count),
+            conDeuda: toNumber(clientsWithDebtResult.rows[0]?.count),
+            listadoClientes: clientListResult.rows.map((row: any) => ({
+              id: toNumber(row.id),
+              nombre: row.nombre,
+              total: toNumber(row.total),
+              cantidad: toNumber(row.cantidad),
+              ultima_compra: row.ultima_compra,
+            })),
+          },
+          productos: {
+            listadoProductos: productListResult.rows.map((row: any) => ({
+              name: row.name,
+              cantidad: toNumber(row.cantidad),
+              total: toNumber(row.total),
+              ultima_venta: row.ultima_venta,
+            })),
+            porFamilia: productFamilyResult.rows.map((row: any) => ({
+              name: row.name,
+              value: toNumber(row.value),
+            })),
+            bajoStock: lowStockResult.rows.map((row: any) => ({
+              name: row.name,
+              stock: toNumber(row.stock),
+            })),
+          },
+          deudas: {
+            totalAdeudado: toNumber(totalDebtResult.rows[0]?.total),
+            clientesDeudores: toNumber(debtorsCountResult.rows[0]?.count),
+            deudaVencida: 0,
+            rankingDeudores: rankingDebtorsResult.rows.map((row: any) => ({
+              id: toNumber(row.id),
+              nombre: row.nombre,
+              saldo: toNumber(row.saldo),
+              ventas_pendientes: toNumber(row.ventas_pendientes),
+              fecha_antigua: row.fecha_antigua,
+            })),
+          },
+          finanzas: {
+            ingresos: toNumber(financeStats.ingresos),
+            egresos: toNumber(financeStats.egresos),
+            balance: toNumber(financeStats.ingresos) - toNumber(financeStats.egresos),
+            egresosPorCategoria: expensesByCategoryResult.rows.map((row: any) => ({
+              name: row.name || "Sin categoria",
+              value: toNumber(row.value),
+            })),
+            flujoCaja: cashFlowResult.rows.map((row: any) => ({
+              fecha: row.fecha,
+              ingresos: toNumber(row.ingresos),
+              egresos: toNumber(row.egresos),
+            })),
+          },
+        });
+      }
+
+      if (endpoint === "sales-period") {
+        const salesResult = await pool.query(
+          `
+            SELECT
+              s.id,
+              s.fecha,
+              COALESCE(c.nombre_apellido, s.nombre_cliente, 'Consumidor Final') AS cliente,
+              s.metodo_pago,
+              STRING_AGG(p.name || ' (x' || si.cantidad::text || ')', ', ' ORDER BY p.name) AS productos,
+              COALESCE(SUM(si.cantidad), 0)::int AS cantidad,
+              s.total AS total_venta,
+              COALESCE(s.costo_total, 0) AS costo_total,
+              COALESCE(s.ganancia, 0) AS ganancia
+            FROM sales s
+            JOIN sale_items si ON s.id = si.sale_id
+            JOIN products p ON si.product_id = p.id
+            LEFT JOIN clientes c ON s.cliente_id = c.id
+            WHERE s.fecha BETWEEN $1 AND $2
+              AND ($3::int IS NULL OR s.cliente_id = $3)
+            GROUP BY s.id, s.fecha, cliente, s.metodo_pago, s.total, s.costo_total, s.ganancia
+            ORDER BY s.fecha DESC, s.id DESC
+          `,
+          [fromDate, toDate, clienteId]
+        );
+
+        const summaryResult = await pool.query(
+          `
+            SELECT
+              COALESCE(SUM(total), 0) AS total_ventas,
+              COALESCE(SUM(costo_total), 0) AS total_costo,
+              COALESCE(SUM(ganancia), 0) AS total_ganancia,
+              COUNT(*)::int AS cantidad_ventas,
+              COALESCE(AVG(total), 0) AS ticket_promedio
+            FROM sales s
+            WHERE s.fecha BETWEEN $1 AND $2
+              AND ($3::int IS NULL OR s.cliente_id = $3)
+          `,
+          [fromDate, toDate, clienteId]
+        );
+
+        const summary = summaryResult.rows[0] || {};
+
+        return sendSuccess(res, {
+          sales: salesResult.rows.map((row: any) => ({
+            id: toNumber(row.id),
+            fecha: row.fecha,
+            cliente: row.cliente,
+            metodo_pago: row.metodo_pago,
+            productos: row.productos || "",
+            cantidad: toNumber(row.cantidad),
+            total_venta: toNumber(row.total_venta),
+            costo_total: toNumber(row.costo_total),
+            ganancia: toNumber(row.ganancia),
+          })),
+          summary: {
+            totalVentas: toNumber(summary.total_ventas),
+            totalCosto: toNumber(summary.total_costo),
+            totalGanancia: toNumber(summary.total_ganancia),
+            cantidadVentas: toNumber(summary.cantidad_ventas),
+            ticketPromedio: toNumber(summary.ticket_promedio),
+          },
+        });
+      }
+
+      if (endpoint === "sales-by-client") {
+        const result = await pool.query(
+          `
+            SELECT
+              COALESCE(c.id, s.cliente_id) AS cliente_id,
+              COALESCE(c.nombre_apellido, s.nombre_cliente, 'Consumidor Final') AS cliente,
+              COUNT(s.id)::int AS cantidad_ventas,
+              COALESCE(SUM(s.total), 0) AS total_comprado,
+              COALESCE(SUM(s.ganancia), 0) AS total_ganancia
+            FROM sales s
+            LEFT JOIN clientes c ON s.cliente_id = c.id
+            WHERE s.fecha BETWEEN $1 AND $2
+            GROUP BY COALESCE(c.id, s.cliente_id), COALESCE(c.nombre_apellido, s.nombre_cliente, 'Consumidor Final')
+            ORDER BY total_comprado DESC, cliente ASC
+          `,
+          [fromDate, toDate]
+        );
+
+        return sendSuccess(
+          res,
+          result.rows.map((row: any) => ({
+            cliente_id: toNumber(row.cliente_id),
+            cliente: row.cliente,
+            cantidad_ventas: toNumber(row.cantidad_ventas),
+            total_comprado: toNumber(row.total_comprado),
+            total_ganancia: toNumber(row.total_ganancia),
+          }))
+        );
+      }
+
+      if (endpoint === "best-selling-products") {
+        const result = await pool.query(
+          `
+            SELECT
+              p.name AS producto,
+              COALESCE(SUM(si.cantidad), 0)::int AS cantidad_vendida,
+              COALESCE(SUM(si.cantidad * si.precio_venta), 0) AS total_facturado,
+              COALESCE(SUM((si.cantidad * si.precio_venta) - COALESCE(si.costo_total_peps, 0)), 0) AS total_ganancia
+            FROM sale_items si
+            JOIN sales s ON si.sale_id = s.id
+            JOIN products p ON si.product_id = p.id
+            WHERE s.fecha BETWEEN $1 AND $2
+            GROUP BY p.id, p.name
+            ORDER BY cantidad_vendida DESC, producto ASC
+          `,
+          [fromDate, toDate]
+        );
+
+        return sendSuccess(
+          res,
+          result.rows.map((row: any) => ({
+            producto: row.producto,
+            cantidad_vendida: toNumber(row.cantidad_vendida),
+            total_facturado: toNumber(row.total_facturado),
+            total_ganancia: toNumber(row.total_ganancia),
+          }))
+        );
+      }
+
+      if (endpoint === "product-profitability") {
+        const result = await pool.query(
+          `
+            SELECT
+              p.id AS product_id,
+              p.name AS producto,
+              COALESCE(SUM(si.cantidad), 0)::int AS cantidad_vendida,
+              COALESCE(SUM(si.cantidad * si.precio_venta), 0) AS ventas_totales,
+              COALESCE(SUM(COALESCE(si.costo_total_peps, 0)), 0) AS costo_total,
+              COALESCE(SUM((si.cantidad * si.precio_venta) - COALESCE(si.costo_total_peps, 0)), 0) AS ganancia,
+              CASE
+                WHEN COALESCE(SUM(si.cantidad * si.precio_venta), 0) > 0 THEN
+                  (COALESCE(SUM((si.cantidad * si.precio_venta) - COALESCE(si.costo_total_peps, 0)), 0)
+                    / SUM(si.cantidad * si.precio_venta)) * 100
+                ELSE 0
+              END AS margen_porcentual
+            FROM sale_items si
+            JOIN sales s ON si.sale_id = s.id
+            JOIN products p ON si.product_id = p.id
+            WHERE s.fecha BETWEEN $1 AND $2
+              AND ($3::int IS NULL OR p.id = $3)
+            GROUP BY p.id, p.name
+            ORDER BY ganancia DESC, producto ASC
+          `,
+          [fromDate, toDate, productId]
+        );
+
+        return sendSuccess(
+          res,
+          result.rows.map((row: any) => ({
+            product_id: toNumber(row.product_id),
+            producto: row.producto,
+            cantidad_vendida: toNumber(row.cantidad_vendida),
+            ventas_totales: toNumber(row.ventas_totales),
+            costo_total: toNumber(row.costo_total),
+            ganancia: toNumber(row.ganancia),
+            margen_porcentual: toNumber(row.margen_porcentual),
+          }))
+        );
+      }
+
+      if (endpoint === "current-accounts") {
+        const result = await pool.query(
+          `
+            SELECT
+              c.id AS cliente_id,
+              c.nombre_apellido AS cliente,
+              c.saldo_cta_cte AS monto_deuda,
+              COUNT(s.id)::int AS ventas_pendientes,
+              MIN(s.fecha) AS fecha_antigua,
+              COALESCE((CURRENT_DATE - MIN(DATE(s.fecha::timestamp)))::int, 0) AS dias_vencidos
+            FROM clientes c
+            LEFT JOIN sales s ON s.cliente_id = c.id AND s.monto_pendiente > 0
+            WHERE COALESCE(c.saldo_cta_cte, 0) > 0
+            GROUP BY c.id, c.nombre_apellido, c.saldo_cta_cte
+            ORDER BY c.saldo_cta_cte DESC
+          `
+        );
+
+        return sendSuccess(
+          res,
+          result.rows.map((row: any) => ({
+            cliente_id: toNumber(row.cliente_id),
+            cliente: row.cliente,
+            monto_deuda: toNumber(row.monto_deuda),
+            ventas_pendientes: toNumber(row.ventas_pendientes),
+            fecha_antigua: row.fecha_antigua,
+            dias_vencidos: toNumber(row.dias_vencidos),
+          }))
+        );
+      }
+
+      if (endpoint === "commissions") {
+        const pctResult = await pool.query(
+          `SELECT COALESCE((SELECT value::numeric FROM settings WHERE key = 'default_commission_percentage' LIMIT 1), 5) AS pct`
+        );
+        const commissionPct = toNumber(pctResult.rows[0]?.pct, 5);
+
+        const result = await pool.query(
+          `
+            SELECT
+              s.id,
+              s.fecha,
+              COALESCE(c.nombre_apellido, s.nombre_cliente, 'Consumidor Final') AS cliente,
+              s.total AS total_venta,
+              $3::numeric AS porcentaje_comision,
+              (s.total * $3::numeric / 100) AS comision_generada
+            FROM sales s
+            JOIN clientes c ON s.cliente_id = c.id
+            WHERE s.fecha BETWEEN $1 AND $2
+              AND c.tipo_cliente = 'mayorista'
+            ORDER BY s.fecha DESC, s.id DESC
+          `,
+          [fromDate, toDate, commissionPct]
+        );
+
+        const sales = result.rows.map((row: any) => ({
+          id: toNumber(row.id),
+          fecha: row.fecha,
+          cliente: row.cliente,
+          total_venta: toNumber(row.total_venta),
+          porcentaje_comision: toNumber(row.porcentaje_comision),
+          comision_generada: toNumber(row.comision_generada),
+        }));
+
+        return sendSuccess(res, {
+          sales,
+          summary: {
+            totalComisiones: sales.reduce((acc: number, sale: any) => acc + sale.comision_generada, 0),
+          },
+        });
+      }
+    }
+
     return sendError(res, "Endpoint de dashboard no encontrado", 404);
   } catch (error: any) {
     return sendError(res, error?.message || "Error al obtener datos de dashboard", 400);

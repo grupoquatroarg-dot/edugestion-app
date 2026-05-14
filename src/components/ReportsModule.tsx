@@ -118,7 +118,7 @@ export default function ReportsModule() {
         to: dateRange.to,
         cliente_id: clientId.toString()
       });
-      const res = await apiFetch(`/api/reports/sales-period?${queryParams.toString()}`);
+      const res = await apiFetch(`/api/dashboard/sales-period?${queryParams.toString()}`);
       const body = await res.json();
       const reportData = unwrapResponse(body);
       setClientSales(reportData.sales);
@@ -160,7 +160,7 @@ export default function ReportsModule() {
       });
       if (clienteId) queryParams.append('cliente_id', clienteId);
       
-      const res = await apiFetch(`/api/reports?${queryParams.toString()}`);
+      const res = await apiFetch(`/api/dashboard/reports?${queryParams.toString()}`);
       const body = await res.json();
       const reportData = unwrapResponse(body);
       setData(reportData);
@@ -178,7 +178,7 @@ export default function ReportsModule() {
         from: dateRange.from,
         to: dateRange.to,
       });
-      const res = await apiFetch(`/api/reports/sales-period?${queryParams.toString()}`);
+      const res = await apiFetch(`/api/dashboard/sales-period?${queryParams.toString()}`);
       const body = await res.json();
       const reportData = unwrapResponse(body);
       setSalesPeriodData(reportData);
@@ -196,7 +196,7 @@ export default function ReportsModule() {
         from: dateRange.from,
         to: dateRange.to,
       });
-      const res = await apiFetch(`/api/reports/sales-by-client?${queryParams.toString()}`);
+      const res = await apiFetch(`/api/dashboard/sales-by-client?${queryParams.toString()}`);
       const body = await res.json();
       const reportData = unwrapResponse(body);
       setSalesByClientData(reportData);
@@ -214,7 +214,7 @@ export default function ReportsModule() {
         from: dateRange.from,
         to: dateRange.to,
       });
-      const res = await apiFetch(`/api/reports/best-selling-products?${queryParams.toString()}`);
+      const res = await apiFetch(`/api/dashboard/best-selling-products?${queryParams.toString()}`);
       const body = await res.json();
       const reportData = unwrapResponse(body);
       setBestSellingProductsData(reportData);
@@ -233,7 +233,7 @@ export default function ReportsModule() {
         to: dateRange.to,
         productId: selectedProductId
       });
-      const res = await apiFetch(`/api/reports/product-profitability?${queryParams.toString()}`);
+      const res = await apiFetch(`/api/dashboard/product-profitability?${queryParams.toString()}`);
       const body = await res.json();
       const reportData = unwrapResponse(body);
       setProfitabilityData(reportData);
@@ -247,7 +247,7 @@ export default function ReportsModule() {
   const fetchCurrentAccountsData = async () => {
     setLoadingCurrentAccounts(true);
     try {
-      const res = await apiFetch('/api/reports/current-accounts');
+      const res = await apiFetch('/api/dashboard/current-accounts');
       const body = await res.json();
       const reportData = unwrapResponse(body);
       setCurrentAccountsData(reportData);
@@ -265,7 +265,7 @@ export default function ReportsModule() {
         from: dateRange.from,
         to: dateRange.to,
       });
-      const res = await apiFetch(`/api/reports/commissions?${queryParams.toString()}`);
+      const res = await apiFetch(`/api/dashboard/commissions?${queryParams.toString()}`);
       const body = await res.json();
       const reportData = unwrapResponse(body);
       setCommissionsData(reportData);
