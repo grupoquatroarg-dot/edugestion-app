@@ -40,7 +40,7 @@ export default function UserManagement() {
 
   const fetchUsers = async () => {
     try {
-      const res = await apiFetch('/api/users');
+      const res = await apiFetch('/api/clientes?endpoint=users');
       const body = await res.json();
       if (res.ok) {
         const data = unwrapResponse(body);
@@ -82,7 +82,7 @@ export default function UserManagement() {
     setIsPermissionsModalOpen(true);
     setIsLoading(true);
     try {
-      const res = await apiFetch(`/api/users/${user.id}/permissions`);
+      const res = await apiFetch(`/api/clientes?endpoint=users-permissions&id=${user.id}`);
       const body = await res.json();
       if (res.ok) {
         const data = unwrapResponse(body);
@@ -109,7 +109,7 @@ export default function UserManagement() {
     if (!editingUser) return;
     setIsSubmitting(true);
     try {
-      const res = await apiFetch(`/api/users/${editingUser.id}/permissions`, {
+      const res = await apiFetch(`/api/clientes?endpoint=users-permissions&id=${editingUser.id}`, {
         method: 'PUT',
         body: JSON.stringify({ permissions: userPermissions })
       });
