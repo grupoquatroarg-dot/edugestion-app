@@ -1349,6 +1349,19 @@ export default async function handler(req: any, res: any) {
     return handleRoutes(req, res);
   }
 
+  if ([
+    "checklist-templates",
+    "checklist-template",
+    "checklist-template-status",
+    "checklists",
+    "checklists-today",
+    "checklist",
+    "checklist-item",
+    "checklist-summary",
+  ].includes(endpoint)) {
+    return handleChecklist(req, res);
+  }
+
   const id = getId(req);
 
   if (req.method === "GET") {
