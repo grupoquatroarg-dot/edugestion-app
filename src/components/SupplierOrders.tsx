@@ -75,7 +75,7 @@ export default function SupplierOrders() {
 
   const fetchOrders = async () => {
     try {
-      const res = await apiFetch('/api/supplier-orders');
+      const res = await apiFetch('/api/sales?endpoint=supplier-orders');
       const body = await res.json();
       const data = unwrapResponse(body);
       setOrders(data);
@@ -90,7 +90,7 @@ export default function SupplierOrders() {
     if (!window.confirm("¿Deseas completar la venta para este cliente? Esto generará un registro de venta y consumirá el stock recién ingresado.")) return;
 
     try {
-      const res = await apiFetch(`/api/supplier-orders/${id}/complete-sale`, {
+      const res = await apiFetch(`/api/sales?endpoint=supplier-order-complete&id=${id}`, {
         method: 'POST'
       });
       
@@ -318,7 +318,7 @@ export default function SupplierOrders() {
 
   const updateStatus = async (id: number, newStatus: string) => {
     try {
-      const res = await apiFetch(`/api/supplier-orders/${id}/status`, {
+      const res = await apiFetch(`/api/sales?endpoint=supplier-order-status&id=${id}`, {
         method: 'POST',
         body: JSON.stringify({ estado: newStatus })
       });
@@ -344,7 +344,7 @@ export default function SupplierOrders() {
   const deleteOrder = async (id: number) => {
     if (!window.confirm("¿Estás seguro de eliminar este pedido?")) return;
     try {
-      const res = await apiFetch(`/api/supplier-orders/${id}`, {
+      const res = await apiFetch(`/api/sales?endpoint=supplier-order&id=${id}`, {
         method: 'DELETE'
       });
       
@@ -398,7 +398,7 @@ export default function SupplierOrders() {
   const handleSaveChanges = async () => {
     if (!editingOrder) return;
     try {
-      const res = await apiFetch(`/api/supplier-orders/${editingOrder.id}/items`, {
+      const res = await apiFetch(`/api/sales?endpoint=supplier-order-items&id=${editingOrder.id}`, {
         method: 'PUT',
         body: JSON.stringify({ items: editingItems, notes: editingNotes })
       });
