@@ -61,7 +61,7 @@ export default function ChecklistModule() {
 
   useEffect(() => {
     if (selectedChecklistForDetail && !selectedChecklistForDetail.items) {
-      apiFetch(`/api/checklists/${selectedChecklistForDetail.id}`)
+      apiFetch(`/api/clientes?endpoint=checklist&id=${selectedChecklistForDetail.id}`)
         .then(res => res.json())
         .then(body => {
           const data = unwrapResponse(body);
@@ -75,11 +75,11 @@ export default function ChecklistModule() {
     setLoading(true);
     try {
       const [templatesRes, todayRes, historyRes, routeRes, summaryRes] = await Promise.all([
-        apiFetch('/api/checklist-templates'),
-        apiFetch('/api/checklists/today'),
-        apiFetch('/api/checklists'),
-        apiFetch('/api/routes/today'),
-        apiFetch('/api/checklist/summary')
+        apiFetch('/api/clientes?endpoint=checklist-templates'),
+        apiFetch('/api/clientes?endpoint=checklists-today'),
+        apiFetch('/api/clientes?endpoint=checklists'),
+        apiFetch('/api/clientes?endpoint=routes-today'),
+        apiFetch('/api/clientes?endpoint=checklist-summary')
       ]);
 
       const templatesBody = await templatesRes.json();
@@ -122,8 +122,8 @@ export default function ChecklistModule() {
 
     try {
       const url = editingTemplateId 
-        ? `/api/checklist-templates/${editingTemplateId}`
-        : '/api/checklist-templates';
+        ? `/api/clientes?endpoint=checklist-template&id=${editingTemplateId}`
+        : '/api/clientes?endpoint=checklist-templates';
       
       const res = await apiFetch(url, {
         method: editingTemplateId ? 'PUT' : 'POST',
@@ -151,7 +151,7 @@ export default function ChecklistModule() {
   const handleEditTemplate = async (template: Template) => {
     setLoading(true);
     try {
-      const res = await apiFetch(`/api/checklist-templates/${template.id}`);
+      const res = await apiFetch(`/api/clientes?endpoint=checklist-template&id=${template.id}`);
       const body = await res.json();
       const data = unwrapResponse(body);
       setEditingTemplateId(template.id);
@@ -169,7 +169,7 @@ export default function ChecklistModule() {
 
   const handleToggleTemplateStatus = async (id: number, currentActive: number) => {
     try {
-      const res = await apiFetch(`/api/checklist-templates/${id}/status`, {
+      const res = await apiFetch(`/api/clientes?endpoint=checklist-template-status&id=${id}`, {
         method: 'PATCH',
         body: JSON.stringify({ active: currentActive === 1 ? 0 : 1 })
       });
@@ -182,7 +182,7 @@ export default function ChecklistModule() {
   const handleStartTodayChecklist = async (templateId: number) => {
     const today = new Date().toISOString().split('T')[0];
     try {
-      const res = await apiFetch('/api/checklists', {
+      const res = await apiFetch('/api/clientes?endpoint=checklists', {
         method: 'POST',
         body: JSON.stringify({
           template_id: templateId,
@@ -205,7 +205,7 @@ export default function ChecklistModule() {
 
   const handleToggleItem = async (checklistId: number, itemId: number, currentStatus: number) => {
     try {
-      const res = await apiFetch(`/api/checklist-items/${itemId}`, {
+      const res = await apiFetch(`/api/clientes?endpoint=checklist-item&id=${itemId}`, {
         method: 'PATCH',
         body: JSON.stringify({ 
           completed: currentStatus === 0 ? 1 : 0,
@@ -259,7 +259,7 @@ export default function ChecklistModule() {
 
   const handleToggleRouteItem = async (itemId: number, field: string, currentValue: number) => {
     try {
-      const res = await apiFetch(`/api/routes/items/${itemId}`, {
+      const res = await apiFetch(`/api/clientes?endpoint=route-item&id=${itemId}`, {
         method: 'PATCH',
         body: JSON.stringify({ [field]: currentValue === 0 ? 1 : 0 })
       });
@@ -282,7 +282,7 @@ export default function ChecklistModule() {
 
   const handleFinishChecklist = async (id: number) => {
     try {
-      const res = await apiFetch(`/api/checklists/${id}`, {
+      const res = await apiFetch(`/api/clientes?endpoint=checklist&id=${id}`, {
         method: 'PATCH',
         body: JSON.stringify({ status: 'completado' })
       });
@@ -299,7 +299,7 @@ export default function ChecklistModule() {
   const handleDeleteTemplate = async (id: number) => {
     if (!confirm("¿Estás seguro de eliminar esta plantilla?")) return;
     try {
-      const res = await apiFetch(`/api/checklist-templates/${id}`, { method: 'DELETE' });
+      const res = await apiFetch(`/api/clientes?endpoint=checklist-template&id=${id}`, { method: 'DELETE' });
       if (res.ok) fetchInitialData();
     } catch (error) {
       console.error("Error deleting template:", error);

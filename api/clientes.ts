@@ -688,6 +688,652 @@ const handleRoutes = async (req: any, res: any) => {
   return sendError(res, "Endpoint de rutas no encontrado", 404);
 };
 
+
+
+const requireChecklistPermission = async (req: any, res: any, action: keyof typeof permissionKeyByAction) => {
+  const token = getBearerToken(req);
+
+  if (!token) {
+    sendError(res, "Unauthorized: Login required", 401);
+    return null;
+  }
+
+  const decoded = verifyToken(token);
+
+  if (!decoded?.userId) {
+    sendError(res, "Unauthorized: Login required", 401);
+    return null;
+  }
+
+  if (decoded.role === "administrador") {
+    return decoded;
+  }
+
+  const permissions = await UserRepository.getPermissions(Number(decoded.userId));
+  const permissionKey = permissionKeyByAction[action];
+  const checklistPermissions = permissions?.checklist;
+
+  if (!checklistPermissions?.[permissionKey]) {
+    sendError(res, "Forbidden: No permission for checklist", 403);
+    return null;
+  }
+
+  return decoded;
+};
+
+const checklistTemplateSchema = z.object({
+  name: z.string().min(2, "Nombre de plantilla requerido"),
+  description: z.string().optional().nullable(),
+  type: z.string().optional().nullable(),
+  items: z.array(z.string().min(1)).min(1, "Debe incluir al menos una tarea"),
+});
+
+const checklistTemplateStatusSchema = z.object({
+  active: z.union([z.number(), z.boolean()]),
+});
+
+const checklistCreateSchema = z.object({
+  template_id: z.number(),
+  date: z.string().min(10, "Fecha requerida"),
+  notes: z.string().optional().nullable(),
+});
+
+const checklistUpdateSchema = z.object({
+  status: z.string().optional(),
+  notes: z.string().optional().nullable(),
+});
+
+const checklistItemUpdateSchema = z.object({
+  completed: z.union([z.number(), z.boolean()]),
+  completed_by: z.string().optional().nullable(),
+});
+
+const mapChecklistTemplate = (row: any) => ({
+  id: toNumber(row.id),
+  name: row.name || "",
+  description: row.description || "",
+  type: row.type || "General",
+  active: toNumber(row.active, 1),
+  created_at: row.created_at || null,
+});
+
+const mapChecklistItem = (row: any) => ({
+  id: toNumber(row.id),
+  checklist_id: toNumber(row.checklist_id),
+  task_name: row.task_name || "",
+  completed: toNumber(row.completed),
+  completed_at: row.completed_at || null,
+  completed_by: row.completed_by || null,
+});
+
+const mapChecklist = (row: any, items?: any[]) => ({
+  id: toNumber(row.id),
+  template_id: toNumber(row.template_id),
+  template_name: row.template_name || "",
+  date: typeof row.date === "string" ? row.date.slice(0, 10) : row.date,
+  status: row.status || "pendiente",
+  notes: row.notes || "",
+  created_at: row.created_at || null,
+  completed_at: row.completed_at || null,
+  total_tasks: toNumber(row.total_tasks),
+  completed_tasks: toNumber(row.completed_tasks),
+  ...(items ? { items: items.map(mapChecklistItem) } : {}),
+});
+
+const getChecklistItems = async (pool: any, checklistId: number) => {
+  const itemsResult = await pool.query(
+    `
+      SELECT id, checklist_id, task_name, completed, completed_at, completed_by
+      FROM checklist_items
+      WHERE checklist_id = $1
+      ORDER BY id ASC
+    `,
+    [checklistId]
+  );
+
+  return itemsResult.rows;
+};
+
+const updateChecklistCompletionStatus = async (pool: any, checklistId: number) => {
+  const countsResult = await pool.query(
+    `
+      SELECT
+        COUNT(*)::int AS total,
+        COALESCE(SUM(CASE WHEN COALESCE(completed, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS completed
+      FROM checklist_items
+      WHERE checklist_id = $1
+    `,
+    [checklistId]
+  );
+
+  const total = toNumber(countsResult.rows[0]?.total);
+  const completed = toNumber(countsResult.rows[0]?.completed);
+
+  if (total > 0 && total === completed) {
+    await pool.query(
+      `UPDATE checklists SET status = 'completado', completed_at = COALESCE(completed_at, now()) WHERE id = $1`,
+      [checklistId]
+    );
+  } else {
+    await pool.query(
+      `UPDATE checklists SET status = 'pendiente', completed_at = NULL WHERE id = $1`,
+      [checklistId]
+    );
+  }
+};
+
+const handleChecklist = async (req: any, res: any) => {
+  const endpoint = getEndpoint(req);
+  const id = getId(req);
+  const pool = getPostgresPool();
+
+  if (endpoint === "checklist-templates") {
+    if (req.method === "GET") {
+      const user = await requireChecklistPermission(req, res, "view");
+      if (!user) return;
+
+      try {
+        const result = await pool.query(
+          `
+            SELECT id, name, description, type, active, created_at
+            FROM checklist_templates
+            ORDER BY created_at DESC, id DESC
+          `
+        );
+
+        return sendSuccess(res, result.rows.map(mapChecklistTemplate));
+      } catch (error: any) {
+        return sendError(res, error?.message || "Error al obtener plantillas", 400);
+      }
+    }
+
+    if (req.method === "POST") {
+      const user = await requireChecklistPermission(req, res, "create");
+      if (!user) return;
+
+      const parsed = checklistTemplateSchema.safeParse(getBody(req));
+      if (!parsed.success) {
+        return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        })));
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+
+        const templateResult = await client.query(
+          `
+            INSERT INTO checklist_templates (name, description, type, active)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id
+          `,
+          [
+            parsed.data.name,
+            parsed.data.description || null,
+            parsed.data.type || "General",
+            1,
+          ]
+        );
+
+        const templateId = toNumber(templateResult.rows[0]?.id);
+
+        for (const taskName of parsed.data.items) {
+          await client.query(
+            `INSERT INTO checklist_template_items (template_id, task_name) VALUES ($1, $2)`,
+            [templateId, taskName.trim()]
+          );
+        }
+
+        await client.query("COMMIT");
+        return sendSuccess(res, { id: templateId }, "Plantilla creada exitosamente", 201);
+      } catch (error: any) {
+        await client.query("ROLLBACK");
+        return sendError(res, error?.message || "Error al crear plantilla", 400);
+      } finally {
+        client.release();
+      }
+    }
+
+    return sendError(res, "Method not allowed", 405);
+  }
+
+  if (endpoint === "checklist-template") {
+    if (!id) return sendError(res, "ID de plantilla invalido", 400);
+
+    if (req.method === "GET") {
+      const user = await requireChecklistPermission(req, res, "view");
+      if (!user) return;
+
+      try {
+        const templateResult = await pool.query(
+          `
+            SELECT id, name, description, type, active, created_at
+            FROM checklist_templates
+            WHERE id = $1
+            LIMIT 1
+          `,
+          [id]
+        );
+
+        if (!templateResult.rowCount) return sendError(res, "Plantilla no encontrada", 404);
+
+        const itemsResult = await pool.query(
+          `
+            SELECT id, template_id, task_name
+            FROM checklist_template_items
+            WHERE template_id = $1
+            ORDER BY id ASC
+          `,
+          [id]
+        );
+
+        return sendSuccess(res, {
+          ...mapChecklistTemplate(templateResult.rows[0]),
+          items: itemsResult.rows.map((row: any) => ({
+            id: toNumber(row.id),
+            template_id: toNumber(row.template_id),
+            task_name: row.task_name || "",
+          })),
+        });
+      } catch (error: any) {
+        return sendError(res, error?.message || "Error al obtener plantilla", 400);
+      }
+    }
+
+    if (req.method === "PUT") {
+      const user = await requireChecklistPermission(req, res, "edit");
+      if (!user) return;
+
+      const parsed = checklistTemplateSchema.safeParse(getBody(req));
+      if (!parsed.success) {
+        return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        })));
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+
+        await client.query(
+          `
+            UPDATE checklist_templates
+            SET name = $1, description = $2, type = $3
+            WHERE id = $4
+          `,
+          [
+            parsed.data.name,
+            parsed.data.description || null,
+            parsed.data.type || "General",
+            id,
+          ]
+        );
+
+        await client.query(`DELETE FROM checklist_template_items WHERE template_id = $1`, [id]);
+
+        for (const taskName of parsed.data.items) {
+          await client.query(
+            `INSERT INTO checklist_template_items (template_id, task_name) VALUES ($1, $2)`,
+            [id, taskName.trim()]
+          );
+        }
+
+        await client.query("COMMIT");
+        return sendSuccess(res, null, "Plantilla actualizada exitosamente");
+      } catch (error: any) {
+        await client.query("ROLLBACK");
+        return sendError(res, error?.message || "Error al actualizar plantilla", 400);
+      } finally {
+        client.release();
+      }
+    }
+
+    if (req.method === "DELETE") {
+      const user = await requireChecklistPermission(req, res, "delete");
+      if (!user) return;
+
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(`DELETE FROM checklist_template_items WHERE template_id = $1`, [id]);
+        const result = await client.query(`DELETE FROM checklist_templates WHERE id = $1`, [id]);
+        await client.query("COMMIT");
+
+        if (!result.rowCount) return sendError(res, "Plantilla no encontrada", 404);
+        return sendSuccess(res, null, "Plantilla eliminada exitosamente");
+      } catch (error: any) {
+        await client.query("ROLLBACK");
+        return sendError(res, error?.message || "Error al eliminar plantilla", 400);
+      } finally {
+        client.release();
+      }
+    }
+
+    return sendError(res, "Method not allowed", 405);
+  }
+
+  if (endpoint === "checklist-template-status") {
+    const user = await requireChecklistPermission(req, res, "edit");
+    if (!user) return;
+    if (!id) return sendError(res, "ID de plantilla invalido", 400);
+    if (req.method !== "PATCH") return sendError(res, "Method not allowed", 405);
+
+    const parsed = checklistTemplateStatusSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+      })));
+    }
+
+    try {
+      await pool.query(
+        `UPDATE checklist_templates SET active = $1 WHERE id = $2`,
+        [toIntFlag(parsed.data.active), id]
+      );
+
+      return sendSuccess(res, null, "Estado de plantilla actualizado");
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al actualizar estado", 400);
+    }
+  }
+
+  if (endpoint === "checklists") {
+    if (req.method === "GET") {
+      const user = await requireChecklistPermission(req, res, "view");
+      if (!user) return;
+
+      try {
+        const result = await pool.query(
+          `
+            SELECT
+              c.id,
+              c.template_id,
+              c.date,
+              c.status,
+              c.notes,
+              c.created_at,
+              c.completed_at,
+              t.name AS template_name,
+              COUNT(ci.id)::int AS total_tasks,
+              COALESCE(SUM(CASE WHEN COALESCE(ci.completed, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS completed_tasks
+            FROM checklists c
+            JOIN checklist_templates t ON c.template_id = t.id
+            LEFT JOIN checklist_items ci ON ci.checklist_id = c.id
+            GROUP BY c.id, t.name
+            ORDER BY c.date DESC, c.created_at DESC, c.id DESC
+          `
+        );
+
+        return sendSuccess(res, result.rows.map((row: any) => mapChecklist(row)));
+      } catch (error: any) {
+        return sendError(res, error?.message || "Error al obtener checklists", 400);
+      }
+    }
+
+    if (req.method === "POST") {
+      const user = await requireChecklistPermission(req, res, "create");
+      if (!user) return;
+
+      const parsed = checklistCreateSchema.safeParse(getBody(req));
+      if (!parsed.success) {
+        return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        })));
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+
+        const checklistResult = await client.query(
+          `
+            INSERT INTO checklists (template_id, date, notes, status)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id
+          `,
+          [
+            parsed.data.template_id,
+            parsed.data.date,
+            parsed.data.notes || null,
+            "pendiente",
+          ]
+        );
+
+        const checklistId = toNumber(checklistResult.rows[0]?.id);
+
+        const templateItemsResult = await client.query(
+          `
+            SELECT task_name
+            FROM checklist_template_items
+            WHERE template_id = $1
+            ORDER BY id ASC
+          `,
+          [parsed.data.template_id]
+        );
+
+        for (const item of templateItemsResult.rows) {
+          await client.query(
+            `INSERT INTO checklist_items (checklist_id, task_name, completed) VALUES ($1, $2, $3)`,
+            [checklistId, item.task_name, 0]
+          );
+        }
+
+        await client.query("COMMIT");
+        return sendSuccess(res, { id: checklistId }, "Checklist iniciado exitosamente", 201);
+      } catch (error: any) {
+        await client.query("ROLLBACK");
+        return sendError(res, error?.message || "Error al iniciar checklist", 400);
+      } finally {
+        client.release();
+      }
+    }
+
+    return sendError(res, "Method not allowed", 405);
+  }
+
+  if (endpoint === "checklists-today") {
+    const user = await requireChecklistPermission(req, res, "view");
+    if (!user) return;
+    if (req.method !== "GET") return sendError(res, "Method not allowed", 405);
+
+    try {
+      const result = await pool.query(
+        `
+          SELECT
+            c.id,
+            c.template_id,
+            c.date,
+            c.status,
+            c.notes,
+            c.created_at,
+            c.completed_at,
+            t.name AS template_name
+          FROM checklists c
+          JOIN checklist_templates t ON c.template_id = t.id
+          WHERE c.date::date = (now() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+            AND c.status = 'pendiente'
+          ORDER BY c.created_at DESC, c.id DESC
+        `
+      );
+
+      const checklists = [];
+      for (const row of result.rows) {
+        const items = await getChecklistItems(pool, toNumber(row.id));
+        checklists.push(mapChecklist(row, items));
+      }
+
+      return sendSuccess(res, checklists);
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al obtener checklists de hoy", 400);
+    }
+  }
+
+  if (endpoint === "checklist") {
+    if (!id) return sendError(res, "ID de checklist invalido", 400);
+
+    if (req.method === "GET") {
+      const user = await requireChecklistPermission(req, res, "view");
+      if (!user) return;
+
+      try {
+        const checklistResult = await pool.query(
+          `
+            SELECT
+              c.id,
+              c.template_id,
+              c.date,
+              c.status,
+              c.notes,
+              c.created_at,
+              c.completed_at,
+              t.name AS template_name
+            FROM checklists c
+            JOIN checklist_templates t ON c.template_id = t.id
+            WHERE c.id = $1
+            LIMIT 1
+          `,
+          [id]
+        );
+
+        if (!checklistResult.rowCount) return sendError(res, "Checklist no encontrado", 404);
+
+        const items = await getChecklistItems(pool, id);
+        return sendSuccess(res, mapChecklist(checklistResult.rows[0], items));
+      } catch (error: any) {
+        return sendError(res, error?.message || "Error al obtener checklist", 400);
+      }
+    }
+
+    if (req.method === "PATCH") {
+      const user = await requireChecklistPermission(req, res, "edit");
+      if (!user) return;
+
+      const parsed = checklistUpdateSchema.safeParse(getBody(req));
+      if (!parsed.success) {
+        return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        })));
+      }
+
+      try {
+        const completedAt = parsed.data.status === "completado" ? new Date().toISOString() : null;
+        await pool.query(
+          `
+            UPDATE checklists
+            SET status = COALESCE($1, status),
+                notes = COALESCE($2, notes),
+                completed_at = $3
+            WHERE id = $4
+          `,
+          [
+            parsed.data.status || null,
+            parsed.data.notes ?? null,
+            completedAt,
+            id,
+          ]
+        );
+
+        return sendSuccess(res, null, "Checklist actualizado");
+      } catch (error: any) {
+        return sendError(res, error?.message || "Error al actualizar checklist", 400);
+      }
+    }
+
+    return sendError(res, "Method not allowed", 405);
+  }
+
+  if (endpoint === "checklist-item") {
+    const user = await requireChecklistPermission(req, res, "edit");
+    if (!user) return;
+    if (!id) return sendError(res, "ID de item invalido", 400);
+    if (req.method !== "PATCH") return sendError(res, "Method not allowed", 405);
+
+    const parsed = checklistItemUpdateSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+      })));
+    }
+
+    try {
+      const completed = toIntFlag(parsed.data.completed);
+      const completedAt = completed ? new Date().toISOString() : null;
+
+      const itemResult = await pool.query(
+        `
+          UPDATE checklist_items
+          SET completed = $1,
+              completed_at = $2,
+              completed_by = $3
+          WHERE id = $4
+          RETURNING checklist_id
+        `,
+        [
+          completed,
+          completedAt,
+          parsed.data.completed_by || null,
+          id,
+        ]
+      );
+
+      const checklistId = toNumber(itemResult.rows[0]?.checklist_id);
+      if (checklistId) {
+        await updateChecklistCompletionStatus(pool, checklistId);
+      }
+
+      return sendSuccess(res, null, "Item de checklist actualizado");
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al actualizar item", 400);
+    }
+  }
+
+  if (endpoint === "checklist-summary") {
+    const user = await requireChecklistPermission(req, res, "view");
+    if (!user) return;
+    if (req.method !== "GET") return sendError(res, "Method not allowed", 405);
+
+    try {
+      const [
+        routeClientsResult,
+        pendingMoneyResult,
+        criticalStockResult,
+        pendingSupplierOrdersResult,
+      ] = await Promise.all([
+        pool.query(
+          `
+            SELECT COUNT(*)::int AS count
+            FROM route_items ri
+            JOIN routes r ON ri.route_id = r.id
+            WHERE r.date::date = (now() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+          `
+        ),
+        pool.query(`SELECT COALESCE(SUM(monto_pendiente), 0) AS total FROM sales WHERE estado <> 'Pagada'`),
+        pool.query(`SELECT COUNT(*)::int AS count FROM products WHERE stock <= stock_minimo AND eliminado = 0`),
+        pool.query(`SELECT COUNT(*)::int AS count FROM supplier_orders WHERE estado = 'pendiente'`),
+      ]);
+
+      return sendSuccess(res, {
+        routeClients: toNumber(routeClientsResult.rows[0]?.count),
+        pendingMoney: toNumber(pendingMoneyResult.rows[0]?.total),
+        criticalStock: toNumber(criticalStockResult.rows[0]?.count),
+        pendingSupplierOrders: toNumber(pendingSupplierOrdersResult.rows[0]?.count),
+      });
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al obtener resumen", 400);
+    }
+  }
+
+  return sendError(res, "Endpoint de checklist no encontrado", 404);
+};
+
+
 export default async function handler(req: any, res: any) {
   const endpoint = getEndpoint(req);
 
