@@ -176,8 +176,8 @@ export default function RouteModule() {
     setLoading(true);
     try {
       const [routesRes, todayRes, clientesRes, productsRes] = await Promise.all([
-        apiFetch('/api/routes'),
-        apiFetch('/api/routes/today'),
+        apiFetch('/api/clientes?endpoint=routes'),
+        apiFetch('/api/clientes?endpoint=routes-today'),
         apiFetch('/api/clientes'),
         apiFetch('/api/products')
       ]);
@@ -209,7 +209,7 @@ export default function RouteModule() {
 
   useEffect(() => {
     if (selectedRouteForDetail && !selectedRouteForDetail.items) {
-      apiFetch(`/api/routes/${selectedRouteForDetail.id}`)
+      apiFetch(`/api/clientes?endpoint=routes&id=${selectedRouteForDetail.id}`)
         .then(res => res.json())
         .then(body => {
           const data = unwrapResponse(body);
@@ -221,7 +221,7 @@ export default function RouteModule() {
 
   const fetchRoutes = async () => {
     try {
-      const res = await apiFetch('/api/routes');
+      const res = await apiFetch('/api/clientes?endpoint=routes');
       const body = await res.json();
       const data = unwrapResponse(body);
       setRoutes(data);
@@ -232,7 +232,7 @@ export default function RouteModule() {
 
   const fetchTodayRoute = async () => {
     try {
-      const res = await apiFetch('/api/routes/today');
+      const res = await apiFetch('/api/clientes?endpoint=routes-today');
       const body = await res.json();
       const data = unwrapResponse(body);
       setTodayRoute(data);
@@ -248,7 +248,7 @@ export default function RouteModule() {
     }
 
     try {
-      const res = await apiFetch('/api/routes', {
+      const res = await apiFetch('/api/clientes?endpoint=routes', {
         method: 'POST',
         body: JSON.stringify({
           name: planName,
@@ -316,7 +316,7 @@ export default function RouteModule() {
       } else if (quickActionType === 'pedido') {
         if (actionCart.length === 0) return;
         // Register order
-        const res = await apiFetch('/api/supplier-orders', {
+        const res = await apiFetch('/api/clientes?endpoint=route-supplier-order', {
           method: 'POST',
           body: JSON.stringify({
             cliente: selectedItemForAction.nombre_apellido,
@@ -339,7 +339,7 @@ export default function RouteModule() {
       } else if (quickActionType === 'pago') {
         if (paymentAmount <= 0) return;
         // Register payment
-        const res = await apiFetch(`/api/clientes/${selectedItemForAction.cliente_id}/pagos`, {
+        const res = await apiFetch(`/api/sales?endpoint=client-payment&id=${selectedItemForAction.cliente_id}`, {
           method: 'POST',
           body: JSON.stringify({
             monto: paymentAmount,
@@ -368,7 +368,7 @@ export default function RouteModule() {
     try {
       // If the route is still 'planificada', update it to 'en curso'
       if (todayRoute && todayRoute.status === 'planificada') {
-        const routeRes = await apiFetch(`/api/routes/${todayRoute.id}`, {
+        const routeRes = await apiFetch(`/api/clientes?endpoint=routes&id=${todayRoute.id}`, {
           method: 'PATCH',
           body: JSON.stringify({ status: 'en curso' })
         });
@@ -383,7 +383,7 @@ export default function RouteModule() {
       if (status === 'pedido tomado') body.pedido_generado = 1;
       if (status === 'venta realizada') body.venta_registrada = 1;
 
-      const res = await apiFetch(`/api/routes/items/${itemId}`, {
+      const res = await apiFetch(`/api/clientes?endpoint=route-item&id=${itemId}`, {
         method: 'PATCH',
         body: JSON.stringify(body)
       });
@@ -405,7 +405,7 @@ export default function RouteModule() {
     if (!confirm("¿Estás seguro de marcar esta ruta como completada?")) return;
     
     try {
-      const res = await apiFetch(`/api/routes/${routeId}`, {
+      const res = await apiFetch(`/api/clientes?endpoint=routes&id=${routeId}`, {
         method: 'PATCH',
         body: JSON.stringify({ status: 'finalizada' })
       });
@@ -445,7 +445,7 @@ export default function RouteModule() {
     }));
 
     try {
-      const res = await apiFetch(`/api/routes/${routeId}/reorder`, {
+      const res = await apiFetch(`/api/clientes?endpoint=routes-reorder&id=${routeId}`, {
         method: 'POST',
         body: JSON.stringify({ items: reorderedItems })
       });
@@ -516,7 +516,7 @@ export default function RouteModule() {
     }));
 
     try {
-      const res = await apiFetch(`/api/routes/${routeId}/reorder`, {
+      const res = await apiFetch(`/api/clientes?endpoint=routes-reorder&id=${routeId}`, {
         method: 'POST',
         body: JSON.stringify({ items: reorderedItems })
       });
@@ -538,7 +538,7 @@ export default function RouteModule() {
     if (!confirm("¿Estás seguro de eliminar esta ruta?")) return;
 
     try {
-      const res = await apiFetch(`/api/routes/${routeId}`, {
+      const res = await apiFetch(`/api/clientes?endpoint=routes&id=${routeId}`, {
         method: 'DELETE'
       });
 
@@ -1002,7 +1002,7 @@ export default function RouteModule() {
                       {todayRoute.status === 'planificada' && hasPermission('routes', 'edit') && (
                         <button
                           onClick={async () => {
-                            const res = await apiFetch(`/api/routes/${todayRoute.id}`, {
+                            const res = await apiFetch(`/api/clientes?endpoint=routes&id=${todayRoute.id}`, {
                               method: 'PATCH',
                               body: JSON.stringify({ status: 'en curso' })
                             });

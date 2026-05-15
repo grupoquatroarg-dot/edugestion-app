@@ -3,6 +3,7 @@ import { clientRepository } from "../server/repositories/clientRepository.js";
 import { UserRepository } from "../server/repositories/userRepository.js";
 import { verifyToken } from "../server/utils/jwt.js";
 import { sendError, sendSuccess } from "../server/utils/response.js";
+import { getPostgresPool } from "../server/utils/postgres.js";
 
 const clientSchema = z.object({
   nombre_apellido: z.string().min(2, "El nombre es requerido"),
@@ -274,6 +275,419 @@ const handleUserPermissions = async (req: any, res: any) => {
   return sendError(res, "Method not allowed", 405);
 };
 
+
+const routeSchema = z.object({
+  name: z.string().min(2, "Nombre de ruta requerido"),
+  date: z.string().min(10, "Fecha requerida"),
+  customerIds: z.array(z.number()).optional(),
+  clientIds: z.array(z.number()).optional(),
+});
+
+const routeStatusSchema = z.object({
+  status: z.enum(["planificada", "en curso", "finalizada", "cancelada", "pendiente"]).optional(),
+});
+
+const routeItemSchema = z.object({
+  status: z.string().optional(),
+  notes: z.string().optional(),
+  visitado: z.union([z.number(), z.boolean()]).optional(),
+  venta_registrada: z.union([z.number(), z.boolean()]).optional(),
+  pedido_generado: z.union([z.number(), z.boolean()]).optional(),
+  cobranza_realizada: z.union([z.number(), z.boolean()]).optional(),
+});
+
+const routeReorderSchema = z.object({
+  items: z.array(z.object({
+    id: z.number(),
+    order_index: z.number(),
+  })),
+});
+
+const routeSupplierOrderSchema = z.object({
+  cliente: z.string().optional(),
+  cliente_id: z.number().optional(),
+  notes: z.string().optional(),
+  items: z.array(z.object({
+    product_id: z.number(),
+    cantidad: z.number().positive(),
+  })).min(1, "Debe incluir al menos un producto"),
+});
+
+const toNumber = (value: any, fallback: number = 0) => {
+  if (value === null || value === undefined || value === "") return fallback;
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? fallback : parsed;
+};
+
+const toIntFlag = (value: any) => {
+  if (value === true) return 1;
+  if (value === false) return 0;
+  return Number(value || 0) ? 1 : 0;
+};
+
+const requireRoutePermission = async (req: any, res: any, action: keyof typeof permissionKeyByAction) => {
+  const token = getBearerToken(req);
+
+  if (!token) {
+    sendError(res, "Unauthorized: Login required", 401);
+    return null;
+  }
+
+  const decoded = verifyToken(token);
+
+  if (!decoded?.userId) {
+    sendError(res, "Unauthorized: Login required", 401);
+    return null;
+  }
+
+  if (decoded.role === "administrador") {
+    return decoded;
+  }
+
+  const permissions = await UserRepository.getPermissions(Number(decoded.userId));
+  const permissionKey = permissionKeyByAction[action];
+  const routePermissions = permissions?.routes;
+
+  if (!routePermissions?.[permissionKey]) {
+    sendError(res, "Forbidden: No permission for routes", 403);
+    return null;
+  }
+
+  return decoded;
+};
+
+const mapRouteItem = (row: any) => ({
+  id: toNumber(row.id),
+  route_id: toNumber(row.route_id),
+  cliente_id: toNumber(row.cliente_id ?? row.client_id),
+  order_index: toNumber(row.order_index),
+  status: row.status || (toNumber(row.visitado) ? "visitado" : "pendiente"),
+  visitado: toNumber(row.visitado),
+  venta_registrada: toNumber(row.venta_registrada),
+  pedido_generado: toNumber(row.pedido_generado),
+  cobranza_realizada: toNumber(row.cobranza_realizada),
+  notes: row.notes || null,
+  visited_at: row.visited_at || null,
+  nombre_apellido: row.nombre_apellido || row.client_name || "",
+  razon_social: row.razon_social || "",
+  localidad: row.localidad || "",
+  direccion: row.direccion || "",
+  latitud: row.latitud === null || row.latitud === undefined ? null : toNumber(row.latitud),
+  longitud: row.longitud === null || row.longitud === undefined ? null : toNumber(row.longitud),
+  telefono: row.telefono || "",
+  tipo_cliente: row.tipo_cliente || "minorista",
+  saldo_cta_cte: toNumber(row.saldo_cta_cte),
+});
+
+const mapRoute = (row: any) => ({
+  id: toNumber(row.id),
+  name: row.name || "",
+  date: typeof row.date === "string" ? row.date.slice(0, 10) : row.date,
+  status: row.status || "planificada",
+  created_at: row.created_at || null,
+  total_customers: toNumber(row.total_customers),
+  visited_customers: toNumber(row.visited_customers),
+  sales_count: toNumber(row.sales_count),
+  orders_count: toNumber(row.orders_count),
+});
+
+const getRouteItems = async (routeId: number) => {
+  const pool = getPostgresPool();
+  const result = await pool.query(
+    `
+      SELECT
+        ri.id,
+        ri.route_id,
+        ri.client_id AS cliente_id,
+        ri.order_index,
+        COALESCE(ri.status, CASE WHEN COALESCE(ri.visitado, 0) <> 0 THEN 'visitado' ELSE 'pendiente' END) AS status,
+        COALESCE(ri.visitado, 0) AS visitado,
+        COALESCE(ri.venta_registrada, 0) AS venta_registrada,
+        COALESCE(ri.pedido_generado, 0) AS pedido_generado,
+        COALESCE(ri.cobranza_realizada, 0) AS cobranza_realizada,
+        ri.notes,
+        ri.visited_at,
+        c.nombre_apellido,
+        c.razon_social,
+        c.localidad,
+        c.direccion,
+        c.latitud,
+        c.longitud,
+        c.telefono,
+        c.tipo_cliente,
+        COALESCE(c.saldo_cta_cte, 0) AS saldo_cta_cte
+      FROM route_items ri
+      JOIN clientes c ON ri.client_id = c.id
+      WHERE ri.route_id = $1
+      ORDER BY ri.order_index ASC, ri.id ASC
+    `,
+    [routeId]
+  );
+
+  return result.rows.map(mapRouteItem);
+};
+
+const handleRoutes = async (req: any, res: any) => {
+  const endpoint = getEndpoint(req);
+  const id = getId(req);
+  const pool = getPostgresPool();
+
+  if (endpoint === "route-supplier-order") {
+    const user = await requireRoutePermission(req, res, "edit");
+    if (!user) return;
+
+    if (req.method !== "POST") return sendError(res, "Method not allowed", 405);
+
+    const parsed = routeSupplierOrderSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+      })));
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const nextNumberResult = await client.query("SELECT COALESCE(MAX(numero_pedido), 0) + 1 AS next_number FROM supplier_orders");
+      const nextNumber = toNumber(nextNumberResult.rows[0]?.next_number, 1);
+      const orderResult = await client.query(
+        `
+          INSERT INTO supplier_orders (numero_pedido, cliente, cliente_id, estado, notes)
+          VALUES ($1, $2, $3, $4, $5)
+          RETURNING id, numero_pedido
+        `,
+        [nextNumber, parsed.data.cliente || "Cliente de ruta", parsed.data.cliente_id || null, "pendiente", parsed.data.notes || null]
+      );
+      const orderId = toNumber(orderResult.rows[0]?.id);
+      for (const item of parsed.data.items) {
+        await client.query(
+          `INSERT INTO supplier_order_items (order_id, product_id, cantidad) VALUES ($1, $2, $3)`,
+          [orderId, item.product_id, item.cantidad]
+        );
+      }
+      await client.query("COMMIT");
+      return sendSuccess(res, { orderId, numero_pedido: nextNumber }, "Pedido creado exitosamente", 201);
+    } catch (error: any) {
+      await client.query("ROLLBACK");
+      return sendError(res, error?.message || "Error al crear pedido", 400);
+    } finally {
+      client.release();
+    }
+  }
+
+  if (endpoint === "route-item") {
+    const user = await requireRoutePermission(req, res, "edit");
+    if (!user) return;
+    if (!id) return sendError(res, "ID de item invalido", 400);
+    if (req.method !== "PATCH") return sendError(res, "Method not allowed", 405);
+
+    const parsed = routeItemSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+      })));
+    }
+
+    const fields: string[] = [];
+    const values: any[] = [];
+    const addField = (sqlField: string, value: any) => {
+      values.push(value);
+      fields.push(`${sqlField} = $${values.length}`);
+    };
+
+    if (parsed.data.status !== undefined) addField("status", parsed.data.status);
+    if (parsed.data.notes !== undefined) addField("notes", parsed.data.notes);
+    if (parsed.data.visitado !== undefined) addField("visitado", toIntFlag(parsed.data.visitado));
+    if (parsed.data.venta_registrada !== undefined) addField("venta_registrada", toIntFlag(parsed.data.venta_registrada));
+    if (parsed.data.pedido_generado !== undefined) addField("pedido_generado", toIntFlag(parsed.data.pedido_generado));
+    if (parsed.data.cobranza_realizada !== undefined) addField("cobranza_realizada", toIntFlag(parsed.data.cobranza_realizada));
+
+    const shouldSetVisitedAt = parsed.data.visitado !== undefined || ["visitado", "pedido tomado", "venta realizada"].includes(parsed.data.status || "");
+    if (shouldSetVisitedAt) addField("visited_at", new Date().toISOString());
+
+    if (fields.length === 0) return sendSuccess(res, null, "Sin cambios");
+
+    values.push(id);
+    await pool.query(`UPDATE route_items SET ${fields.join(", ")} WHERE id = $${values.length}`, values);
+    return sendSuccess(res, null, "Item de ruta actualizado");
+  }
+
+  if (endpoint === "routes-reorder") {
+    const user = await requireRoutePermission(req, res, "edit");
+    if (!user) return;
+    if (!id) return sendError(res, "ID de ruta invalido", 400);
+    if (req.method !== "POST") return sendError(res, "Method not allowed", 405);
+
+    const parsed = routeReorderSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+      })));
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      for (const item of parsed.data.items) {
+        await client.query(
+          `UPDATE route_items SET order_index = $1 WHERE id = $2 AND route_id = $3`,
+          [item.order_index, item.id, id]
+        );
+      }
+      await client.query("COMMIT");
+      return sendSuccess(res, null, "Ruta reordenada");
+    } catch (error: any) {
+      await client.query("ROLLBACK");
+      return sendError(res, error?.message || "Error al reordenar ruta", 400);
+    } finally {
+      client.release();
+    }
+  }
+
+  if (endpoint === "routes-today") {
+    const user = await requireRoutePermission(req, res, "view");
+    if (!user) return;
+    if (req.method !== "GET") return sendError(res, "Method not allowed", 405);
+
+    const routeResult = await pool.query(
+      `
+        SELECT r.*,
+          COUNT(ri.id)::int AS total_customers,
+          COALESCE(SUM(CASE WHEN COALESCE(ri.visitado, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS visited_customers,
+          COALESCE(SUM(CASE WHEN COALESCE(ri.venta_registrada, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS sales_count,
+          COALESCE(SUM(CASE WHEN COALESCE(ri.pedido_generado, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS orders_count
+        FROM routes r
+        LEFT JOIN route_items ri ON ri.route_id = r.id
+        WHERE r.date::date = (now() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+        GROUP BY r.id
+        ORDER BY r.id DESC
+        LIMIT 1
+      `
+    );
+
+    const route = routeResult.rows[0];
+    if (!route) return sendSuccess(res, null, "No hay ruta para hoy");
+    const items = await getRouteItems(toNumber(route.id));
+    return sendSuccess(res, { ...mapRoute(route), items });
+  }
+
+  if (endpoint === "routes") {
+    if (req.method === "GET") {
+      const user = await requireRoutePermission(req, res, "view");
+      if (!user) return;
+
+      if (id) {
+        const routeResult = await pool.query(
+          `
+            SELECT r.*,
+              COUNT(ri.id)::int AS total_customers,
+              COALESCE(SUM(CASE WHEN COALESCE(ri.visitado, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS visited_customers,
+              COALESCE(SUM(CASE WHEN COALESCE(ri.venta_registrada, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS sales_count,
+              COALESCE(SUM(CASE WHEN COALESCE(ri.pedido_generado, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS orders_count
+            FROM routes r
+            LEFT JOIN route_items ri ON ri.route_id = r.id
+            WHERE r.id = $1
+            GROUP BY r.id
+            LIMIT 1
+          `,
+          [id]
+        );
+        const route = routeResult.rows[0];
+        if (!route) return sendError(res, "Ruta no encontrada", 404);
+        const items = await getRouteItems(id);
+        return sendSuccess(res, { ...mapRoute(route), items });
+      }
+
+      const result = await pool.query(
+        `
+          SELECT r.*,
+            COUNT(ri.id)::int AS total_customers,
+            COALESCE(SUM(CASE WHEN COALESCE(ri.visitado, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS visited_customers,
+            COALESCE(SUM(CASE WHEN COALESCE(ri.venta_registrada, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS sales_count,
+            COALESCE(SUM(CASE WHEN COALESCE(ri.pedido_generado, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS orders_count
+          FROM routes r
+          LEFT JOIN route_items ri ON ri.route_id = r.id
+          GROUP BY r.id
+          ORDER BY r.date DESC, r.id DESC
+        `
+      );
+      return sendSuccess(res, result.rows.map(mapRoute));
+    }
+
+    if (req.method === "POST") {
+      const user = await requireRoutePermission(req, res, "create");
+      if (!user) return;
+
+      const parsed = routeSchema.safeParse(getBody(req));
+      if (!parsed.success) {
+        return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        })));
+      }
+
+      const customerIds = parsed.data.customerIds || parsed.data.clientIds || [];
+      if (customerIds.length === 0) return sendError(res, "Seleccione al menos un cliente", 400);
+
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const routeResult = await client.query(
+          `INSERT INTO routes (name, date, status) VALUES ($1, $2, $3) RETURNING id`,
+          [parsed.data.name, parsed.data.date, "planificada"]
+        );
+        const routeId = toNumber(routeResult.rows[0]?.id);
+        for (let index = 0; index < customerIds.length; index += 1) {
+          await client.query(
+            `INSERT INTO route_items (route_id, client_id, order_index, status) VALUES ($1, $2, $3, $4)`,
+            [routeId, customerIds[index], index, "pendiente"]
+          );
+        }
+        await client.query("COMMIT");
+        return sendSuccess(res, { id: routeId }, "Ruta creada exitosamente", 201);
+      } catch (error: any) {
+        await client.query("ROLLBACK");
+        return sendError(res, error?.message || "Error al crear ruta", 400);
+      } finally {
+        client.release();
+      }
+    }
+
+    if (req.method === "PATCH") {
+      const user = await requireRoutePermission(req, res, "edit");
+      if (!user) return;
+      if (!id) return sendError(res, "ID de ruta invalido", 400);
+
+      const parsed = routeStatusSchema.safeParse(getBody(req));
+      if (!parsed.success) {
+        return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        })));
+      }
+
+      if (parsed.data.status) {
+        await pool.query(`UPDATE routes SET status = $1 WHERE id = $2`, [parsed.data.status, id]);
+      }
+      return sendSuccess(res, null, "Ruta actualizada");
+    }
+
+    if (req.method === "DELETE") {
+      const user = await requireRoutePermission(req, res, "delete");
+      if (!user) return;
+      if (!id) return sendError(res, "ID de ruta invalido", 400);
+
+      await pool.query(`DELETE FROM routes WHERE id = $1`, [id]);
+      return sendSuccess(res, null, "Ruta eliminada");
+    }
+  }
+
+  return sendError(res, "Endpoint de rutas no encontrado", 404);
+};
+
 export default async function handler(req: any, res: any) {
   const endpoint = getEndpoint(req);
 
@@ -283,6 +697,10 @@ export default async function handler(req: any, res: any) {
 
   if (endpoint === "users-permissions") {
     return handleUserPermissions(req, res);
+  }
+
+  if (["routes", "routes-today", "route-item", "routes-reorder", "route-supplier-order"].includes(endpoint)) {
+    return handleRoutes(req, res);
   }
 
   const id = getId(req);
