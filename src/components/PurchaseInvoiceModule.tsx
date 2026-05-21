@@ -214,7 +214,20 @@ export default function PurchaseInvoiceModule() {
     const isNewValid = isCreatingNewProduct && newProductName.trim() !== '';
     const isExistingValid = !isCreatingNewProduct && currentItem.product_id !== 0;
 
-    if (!(isNewValid || isExistingValid) || currentItem.cantidad <= 0) return;
+    if (!(isNewValid || isExistingValid)) {
+      alert('Seleccione un producto o cargue el nombre del producto nuevo');
+      return;
+    }
+
+    if (currentItem.cantidad <= 0) {
+      alert('La cantidad debe ser mayor a cero');
+      return;
+    }
+
+    if (currentItem.costo_unitario < 0) {
+      alert('El costo unitario no puede ser negativo');
+      return;
+    }
 
     const finalProductId = isCreatingNewProduct ? `new:${newProductName.trim()}` : currentItem.product_id;
 
@@ -325,7 +338,12 @@ export default function PurchaseInvoiceModule() {
     return numero.includes(term) || proveedor.includes(term);
   });
 
+  const currentItemSubtotal = currentItem.cantidad > 0 && currentItem.costo_unitario >= 0
+    ? currentItem.cantidad * currentItem.costo_unitario
+    : 0;
+
   const totalInvoice = formData.items.reduce((sum, item) => sum + item.cantidad * item.costo_unitario, 0);
+  const totalInvoiceWithCurrentItem = totalInvoice + currentItemSubtotal;
 
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto h-full w-full flex flex-col overflow-hidden">
@@ -565,11 +583,17 @@ export default function PurchaseInvoiceModule() {
                     <button
                       type="button"
                       onClick={handleAddItem}
-                      title="Agregar producto a la lista"
-                      className="w-full h-10 bg-emerald-600 text-white rounded-lg flex items-center justify-center hover:bg-emerald-700 transition-colors shadow-sm"
+                      title="Agregar producto a la factura"
+                      className="w-full h-11 bg-emerald-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-emerald-700 transition-colors shadow-sm font-bold text-sm"
                     >
-                      <Plus size={20} />
+                      <Plus size={18} />
+                      <span className="lg:hidden">Agregar producto</span>
                     </button>
+                  </div>
+
+                  <div className="sm:col-span-2 lg:col-span-12 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 bg-white border border-zinc-100 rounded-lg px-3 py-2">
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Subtotal producto actual</span>
+                    <span className="text-base font-black text-zinc-900 font-mono">${currentItemSubtotal.toLocaleString()}</span>
                   </div>
                 </div>
 
@@ -585,6 +609,13 @@ export default function PurchaseInvoiceModule() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-50">
+                      {formData.items.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="px-4 py-8 text-center text-sm text-zinc-400">
+                            Todavia no agregaste productos a la factura. Selecciona un producto y toca "Agregar producto".
+                          </td>
+                        </tr>
+                      )}
                       {formData.items.map((item, index) => {
                         const productName =
                           typeof item.product_id === 'string' && item.product_id.startsWith('new:')
@@ -612,8 +643,13 @@ export default function PurchaseInvoiceModule() {
 
               <div className="p-4 sm:p-6 bg-zinc-50 border-t border-zinc-100 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
                 <div className="flex flex-col">
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Total factura</span>
+                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Total agregado</span>
                   <span className="text-2xl font-black text-zinc-900 font-mono">${(totalInvoice ?? 0).toLocaleString()}</span>
+                  {currentItemSubtotal > 0 && (
+                    <span className="text-xs font-bold text-emerald-600 mt-1">
+                      Total si agregas el producto actual: ${totalInvoiceWithCurrentItem.toLocaleString()}
+                    </span>
+                  )}
                 </div>
                 <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
                   <button type="button" onClick={() => setIsModalOpen(false)} className="w-full sm:w-auto px-6 py-2 rounded-xl border border-zinc-200 text-zinc-600 font-bold hover:bg-white transition-all">
