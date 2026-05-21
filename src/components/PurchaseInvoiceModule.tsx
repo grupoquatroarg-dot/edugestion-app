@@ -449,8 +449,8 @@ export default function PurchaseInvoiceModule() {
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="flex-1 min-h-0 overflow-hidden flex flex-col">
-              <div className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 border-b border-zinc-100 overflow-y-auto max-h-[40dvh] sm:max-h-none">
+            <form onSubmit={handleSubmit} className="flex-1 min-h-0 overflow-y-auto flex flex-col">
+              <div className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 border-b border-zinc-100 shrink-0">
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest">Proveedor</label>
@@ -515,7 +515,7 @@ export default function PurchaseInvoiceModule() {
                 </div>
               </div>
 
-              <div className="flex-1 min-h-0 overflow-hidden flex flex-col p-4 sm:p-6">
+              <div className="shrink-0 flex flex-col p-4 sm:p-6">
                 <h3 className="text-sm font-bold text-zinc-900 mb-4">Productos en factura</h3>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-4 mb-4 bg-zinc-50 p-4 rounded-xl border border-zinc-200">
@@ -523,8 +523,9 @@ export default function PurchaseInvoiceModule() {
                     <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Producto</label>
                     {!isCreatingNewProduct ? (
                       <select
+                        key={`purchase-product-select-${formData.items.length}`}
                         className="w-full px-3 py-2 rounded-lg border border-zinc-200 outline-none focus:ring-2 focus:ring-zinc-900"
-                        value={currentItem.product_id}
+                        value={String(currentItem.product_id)}
                         onChange={(e) => {
                           const val = e.target.value;
                           if (val === 'new') {
@@ -537,10 +538,10 @@ export default function PurchaseInvoiceModule() {
                           setCurrentItem({ ...currentItem, product_id: pid, costo_unitario: product?.cost || 0 });
                         }}
                       >
-                        <option value={0}>Seleccionar producto...</option>
+                        <option value="0">Seleccionar producto...</option>
                         <option value="new" className="font-bold text-emerald-600">+ Crear nuevo producto...</option>
                         {products.map((p) => (
-                          <option key={p.id} value={p.id}>{p.name} ({p.code})</option>
+                          <option key={p.id} value={String(p.id)}>{p.name} ({p.code})</option>
                         ))}
                       </select>
                     ) : (
@@ -597,7 +598,7 @@ export default function PurchaseInvoiceModule() {
                   </div>
                 </div>
 
-                <div className="flex-1 min-h-[220px] overflow-auto border border-zinc-100 rounded-xl">
+                <div className="max-h-[260px] sm:max-h-[340px] overflow-auto border border-zinc-100 rounded-xl">
                   <table className="w-full min-w-[640px] text-left">
                     <thead className="sticky top-0 bg-white border-b border-zinc-100">
                       <tr>
@@ -641,7 +642,7 @@ export default function PurchaseInvoiceModule() {
                 </div>
               </div>
 
-              <div className="p-4 sm:p-6 bg-zinc-50 border-t border-zinc-100 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+              <div className="p-4 sm:p-6 bg-zinc-50 border-t border-zinc-100 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 shrink-0">
                 <div className="flex flex-col">
                   <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Total agregado</span>
                   <span className="text-2xl font-black text-zinc-900 font-mono">${(totalInvoice ?? 0).toLocaleString()}</span>
