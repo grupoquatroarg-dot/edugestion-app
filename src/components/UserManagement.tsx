@@ -160,15 +160,15 @@ export default function UserManagement() {
   }
 
   return (
-    <div className="p-4 lg:p-8 max-w-7xl mx-auto">
-      <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full overflow-hidden">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
         <div>
           <h1 className="text-2xl lg:text-3xl font-black text-zinc-900 tracking-tight">Gestión de Usuarios</h1>
           <p className="text-zinc-500 text-sm">Administra los accesos y roles del sistema</p>
         </div>
         <button
           onClick={() => handleOpenModal()}
-          className="flex items-center gap-2 bg-zinc-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-900/10"
+          className="w-full sm:w-auto flex items-center justify-center gap-2 bg-zinc-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-900/10"
         >
           <UserPlus size={20} />
           Nuevo Usuario
@@ -177,7 +177,7 @@ export default function UserManagement() {
 
       <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+          <table className="w-full min-w-[720px] text-left border-collapse">
             <thead>
               <tr className="bg-zinc-50/50 border-b border-zinc-100">
                 <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Usuario</th>
@@ -250,9 +250,9 @@ export default function UserManagement() {
 
       {/* Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-zinc-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
+        <div className="fixed inset-0 bg-zinc-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[95dvh] overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200">
+            <div className="p-4 sm:p-6 border-b border-zinc-100 flex items-center justify-between gap-3 shrink-0">
               <h3 className="text-xl font-black text-zinc-900 tracking-tight">
                 {editingUser ? 'Editar Usuario' : 'Nuevo Usuario'}
               </h3>
@@ -261,7 +261,7 @@ export default function UserManagement() {
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            <form onSubmit={handleSubmit} className="p-4 sm:p-6 space-y-4 overflow-y-auto">
               {error && (
                 <div className="p-4 bg-red-50 border border-red-100 rounded-xl flex items-center gap-3 text-red-600 text-sm">
                   <AlertCircle size={18} className="shrink-0" />
@@ -304,7 +304,7 @@ export default function UserManagement() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2 px-1">Rol</label>
                   <select
@@ -329,7 +329,7 @@ export default function UserManagement() {
                 </div>
               </div>
 
-              <div className="pt-4 flex gap-3">
+              <div className="pt-4 flex flex-col sm:flex-row gap-3">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
@@ -352,9 +352,9 @@ export default function UserManagement() {
 
       {/* Permissions Modal */}
       {isPermissionsModalOpen && editingUser && (
-        <div className="fixed inset-0 bg-zinc-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
+        <div className="fixed inset-0 bg-zinc-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[95dvh] overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200">
+            <div className="p-4 sm:p-6 border-b border-zinc-100 flex items-center justify-between gap-3 shrink-0">
               <div>
                 <h3 className="text-xl font-black text-zinc-900 tracking-tight">Permisos de Usuario</h3>
                 <p className="text-sm text-zinc-500">{editingUser.name} ({editingUser.email})</p>
@@ -364,16 +364,16 @@ export default function UserManagement() {
               </button>
             </div>
 
-            <div className="p-6 overflow-y-auto max-h-[60vh]">
+            <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0">
               {editingUser.role === 'administrador' ? (
-                <div className="p-8 text-center bg-zinc-50 rounded-2xl border border-dashed border-zinc-200">
+                <div className="p-6 sm:p-8 text-center bg-zinc-50 rounded-2xl border border-dashed border-zinc-200">
                   <Shield size={48} className="mx-auto mb-4 text-zinc-300" />
                   <p className="font-bold text-zinc-900">Acceso de Administrador</p>
                   <p className="text-sm text-zinc-500">Los administradores tienen todos los permisos habilitados por defecto.</p>
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <div className="grid grid-cols-5 gap-4 px-4 py-2 bg-zinc-50 rounded-lg text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
+                  <div className="hidden sm:grid grid-cols-5 gap-4 px-4 py-2 bg-zinc-50 rounded-lg text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
                     <div className="col-span-1">Módulo</div>
                     <div className="text-center">Ver</div>
                     <div className="text-center">Crear</div>
@@ -381,50 +381,54 @@ export default function UserManagement() {
                     <div className="text-center">Eliminar</div>
                   </div>
                   {MODULES.map((module) => (
-                    <div key={module.id} className="grid grid-cols-5 gap-4 px-4 py-3 items-center border-b border-zinc-50 hover:bg-zinc-50/50 transition-colors">
-                      <div className="col-span-1 font-bold text-zinc-900 text-sm">{module.label}</div>
-                      <div className="flex justify-center">
+                    <div key={module.id} className="grid grid-cols-2 sm:grid-cols-5 gap-3 sm:gap-4 px-4 py-4 sm:py-3 items-center border border-zinc-100 sm:border-b sm:border-x-0 sm:border-t-0 rounded-xl sm:rounded-none hover:bg-zinc-50/50 transition-colors">
+                      <div className="col-span-2 sm:col-span-1 font-bold text-zinc-900 text-sm">{module.label}</div>
+                      <label className="flex items-center justify-between sm:justify-center gap-3 bg-zinc-50 sm:bg-transparent px-3 py-2 sm:p-0 rounded-lg text-xs font-bold text-zinc-500 uppercase tracking-widest">
+                        <span className="sm:hidden">Ver</span>
                         <input
                           type="checkbox"
                           checked={!!userPermissions[module.id]?.can_view}
                           onChange={(e) => handlePermissionChange(module.id, 'can_view', e.target.checked)}
                           className="w-5 h-5 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900"
                         />
-                      </div>
-                      <div className="flex justify-center">
+                      </label>
+                      <label className="flex items-center justify-between sm:justify-center gap-3 bg-zinc-50 sm:bg-transparent px-3 py-2 sm:p-0 rounded-lg text-xs font-bold text-zinc-500 uppercase tracking-widest">
+                        <span className="sm:hidden">Crear</span>
                         <input
                           type="checkbox"
                           checked={!!userPermissions[module.id]?.can_create}
                           onChange={(e) => handlePermissionChange(module.id, 'can_create', e.target.checked)}
                           className="w-5 h-5 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900"
                         />
-                      </div>
-                      <div className="flex justify-center">
+                      </label>
+                      <label className="flex items-center justify-between sm:justify-center gap-3 bg-zinc-50 sm:bg-transparent px-3 py-2 sm:p-0 rounded-lg text-xs font-bold text-zinc-500 uppercase tracking-widest">
+                        <span className="sm:hidden">Editar</span>
                         <input
                           type="checkbox"
                           checked={!!userPermissions[module.id]?.can_edit}
                           onChange={(e) => handlePermissionChange(module.id, 'can_edit', e.target.checked)}
                           className="w-5 h-5 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900"
                         />
-                      </div>
-                      <div className="flex justify-center">
+                      </label>
+                      <label className="flex items-center justify-between sm:justify-center gap-3 bg-zinc-50 sm:bg-transparent px-3 py-2 sm:p-0 rounded-lg text-xs font-bold text-zinc-500 uppercase tracking-widest">
+                        <span className="sm:hidden">Eliminar</span>
                         <input
                           type="checkbox"
                           checked={!!userPermissions[module.id]?.can_delete}
                           onChange={(e) => handlePermissionChange(module.id, 'can_delete', e.target.checked)}
                           className="w-5 h-5 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900"
                         />
-                      </div>
+                      </label>
                     </div>
                   ))}
                 </div>
               )}
             </div>
 
-            <div className="p-6 bg-zinc-50 border-t border-zinc-100 flex justify-end gap-3">
+            <div className="p-4 sm:p-6 bg-zinc-50 border-t border-zinc-100 flex flex-col sm:flex-row sm:justify-end gap-3 shrink-0">
               <button
                 onClick={() => setIsPermissionsModalOpen(false)}
-                className="px-6 py-2.5 text-zinc-600 font-bold hover:text-zinc-900 transition-all"
+                className="w-full sm:w-auto px-6 py-2.5 text-zinc-600 font-bold hover:text-zinc-900 transition-all"
               >
                 Cancelar
               </button>
@@ -432,7 +436,7 @@ export default function UserManagement() {
                 <button
                   onClick={handleSavePermissions}
                   disabled={isSubmitting}
-                  className="bg-zinc-900 text-white px-8 py-2.5 rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-900/10 flex items-center gap-2"
+                  className="w-full sm:w-auto bg-zinc-900 text-white px-8 py-2.5 rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-900/10 flex items-center justify-center gap-2"
                 >
                   {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
                   Guardar Permisos
