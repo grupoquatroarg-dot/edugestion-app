@@ -550,7 +550,7 @@ export default function ChecklistModule() {
                                     ) : (
                                       <Circle size={24} className="text-zinc-200 shrink-0" />
                                     )}
-                                    <span className={`font-bold break-words min-w-0 ${item.completed ? 'line-through opacity-50' : ''}`}>
+                                    <span className={`font-bold ${item.completed ? 'line-through opacity-50' : ''}`}>
                                       {item.task_name}
                                     </span>
                                     {item.completed && (
@@ -580,7 +580,7 @@ export default function ChecklistModule() {
                   <div className="w-24 h-24 bg-zinc-50 rounded-[40px] flex items-center justify-center mx-auto mb-6">
                     <ClipboardCheck size={48} className="text-zinc-200" />
                   </div>
-                  <h3 className="text-2xl font-black text-zinc-900 mb-2">No hay controles activos</h3>
+                  <h3 className="text-xl sm:text-2xl font-black text-zinc-900 mb-2">No hay controles activos</h3>
                   <p className="text-zinc-500 mb-8 max-w-sm mx-auto">Selecciona una plantilla arriba para iniciar el control de tareas de hoy.</p>
                 </div>
               )}
@@ -600,7 +600,7 @@ export default function ChecklistModule() {
                   <div className="w-24 h-24 bg-zinc-50 rounded-[40px] flex items-center justify-center mx-auto mb-6 text-zinc-200">
                     <Map size={48} />
                   </div>
-                  <h3 className="text-2xl font-black text-zinc-900 mb-2">No hay ruta activa para hoy</h3>
+                  <h3 className="text-xl sm:text-2xl font-black text-zinc-900 mb-2">No hay ruta activa para hoy</h3>
                   <p className="text-zinc-500 mb-8 max-w-sm mx-auto">Planifica una ruta en el módulo de Rutas para ver el checklist aquí.</p>
                 </div>
               ) : (
@@ -616,8 +616,8 @@ export default function ChecklistModule() {
                   </div>
 
                   <div className="bg-white rounded-[40px] border border-zinc-100 shadow-sm overflow-hidden">
-                    <div className="overflow-x-auto">
-                      <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left border-collapse">
+                    <div className="overflow-x-auto -mx-2 px-2">
+                      <table className="w-full min-w-[720px] text-left border-collapse">
                         <thead>
                           <tr className="bg-zinc-50/50">
                             <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
@@ -773,7 +773,7 @@ export default function ChecklistModule() {
                   <h3 className="text-xl sm:text-2xl font-black text-zinc-900">Historial de Check Lists</h3>
                   <p className="text-zinc-500 text-sm font-medium mt-1">Registro de todas las listas ejecutadas.</p>
                 </div>
-                <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left border-collapse">
+                <table className="w-full min-w-[720px] text-left border-collapse">
                   <thead>
                     <tr className="bg-zinc-50/50">
                       <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</th>
@@ -824,7 +824,7 @@ export default function ChecklistModule() {
                       </tr>
                     ))}
                   </tbody>
-                </table></div>
+                </table>
               </div>
             </motion.div>
           )}
@@ -870,7 +870,7 @@ export default function ChecklistModule() {
                     ) : (
                       <Circle size={24} className="text-zinc-200 shrink-0" />
                     )}
-                    <span className="font-bold break-words min-w-0">
+                    <span className="font-bold">
                       {item.task_name}
                     </span>
                     {item.completed && (
