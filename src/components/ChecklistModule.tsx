@@ -317,16 +317,16 @@ export default function ChecklistModule() {
   return (
     <div className="h-full flex flex-col bg-zinc-50 overflow-hidden">
       {/* Header */}
-      <header className="bg-white border-b border-zinc-200 px-8 py-6 shrink-0">
-        <div className="flex items-center justify-between mb-6">
+      <header className="bg-white border-b border-zinc-200 px-4 sm:px-6 lg:px-8 py-4 sm:py-6 shrink-0">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4 sm:mb-6">
           <div>
-            <h2 className="text-3xl font-black text-zinc-900 tracking-tight flex items-center gap-3">
+            <h2 className="text-2xl sm:text-3xl font-black text-zinc-900 tracking-tight flex items-center gap-3">
               <ClipboardCheck className="text-zinc-400" size={32} />
               CHECK LIST
             </h2>
             <p className="text-zinc-500 text-sm font-medium mt-1">Control de tareas diarias y procesos.</p>
           </div>
-          <div className="flex items-center gap-3 bg-zinc-100 p-2 rounded-2xl px-4">
+          <div className="flex items-center gap-3 bg-zinc-100 p-2 rounded-2xl px-4 w-fit">
             <Users size={18} className="text-zinc-400" />
             <span className="text-sm font-bold text-zinc-900">
               {user?.name || 'Admin'}
@@ -334,10 +334,10 @@ export default function ChecklistModule() {
           </div>
         </div>
 
-        <div className="flex gap-1 bg-zinc-100 p-1 rounded-xl w-fit">
+        <div className="flex gap-1 bg-zinc-100 p-1 rounded-xl w-full sm:w-fit overflow-x-auto no-scrollbar">
           <button
             onClick={() => setActiveTab('hoy')}
-            className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${
+            className={`px-3 sm:px-6 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap ${
               activeTab === 'hoy' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
             }`}
           >
@@ -345,7 +345,7 @@ export default function ChecklistModule() {
           </button>
           <button
             onClick={() => setActiveTab('ruta')}
-            className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${
+            className={`px-3 sm:px-6 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap ${
               activeTab === 'ruta' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
             }`}
           >
@@ -353,7 +353,7 @@ export default function ChecklistModule() {
           </button>
           <button
             onClick={() => setActiveTab('plantillas')}
-            className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${
+            className={`px-3 sm:px-6 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap ${
               activeTab === 'plantillas' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
             }`}
           >
@@ -361,7 +361,7 @@ export default function ChecklistModule() {
           </button>
           <button
             onClick={() => setActiveTab('historial')}
-            className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${
+            className={`px-3 sm:px-6 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap ${
               activeTab === 'historial' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
             }`}
           >
@@ -370,7 +370,7 @@ export default function ChecklistModule() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto p-8">
+      <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
         <AnimatePresence mode="wait">
           {activeTab === 'hoy' && (
             <motion.div
@@ -378,7 +378,7 @@ export default function ChecklistModule() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="max-w-5xl mx-auto space-y-8"
+              className="max-w-5xl w-full mx-auto space-y-6 sm:space-y-8"
             >
               {/* Resumen del día Section */}
               {summary && (
@@ -388,40 +388,40 @@ export default function ChecklistModule() {
                     <h3 className="text-sm font-bold text-zinc-500 uppercase tracking-widest">Resumen del día</h3>
                   </div>
                   
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div className="p-6 bg-white border border-zinc-100 rounded-[32px] shadow-sm flex flex-col gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                    <div className="p-4 sm:p-6 bg-white border border-zinc-100 rounded-2xl sm:rounded-[32px] shadow-sm flex flex-col gap-2">
                       <div className="flex items-center gap-2 text-zinc-400 mb-1">
                         <Users size={16} />
                         <span className="text-[10px] font-bold uppercase tracking-widest">Clientes en Ruta</span>
                       </div>
-                      <p className="text-3xl font-black text-zinc-900">{summary.routeClients}</p>
+                      <p className="text-2xl sm:text-3xl font-black text-zinc-900">{summary.routeClients}</p>
                       <p className="text-[10px] text-zinc-400">Programados para hoy</p>
                     </div>
 
-                    <div className="p-6 bg-white border border-zinc-100 rounded-[32px] shadow-sm flex flex-col gap-2">
+                    <div className="p-4 sm:p-6 bg-white border border-zinc-100 rounded-2xl sm:rounded-[32px] shadow-sm flex flex-col gap-2">
                       <div className="flex items-center gap-2 text-zinc-400 mb-1">
                         <DollarSign size={16} />
                         <span className="text-[10px] font-bold uppercase tracking-widest">Dinero Pendiente</span>
                       </div>
-                      <p className="text-3xl font-black text-zinc-900">${(summary.pendingMoney ?? 0).toLocaleString()}</p>
+                      <p className="text-2xl sm:text-3xl font-black text-zinc-900">${(summary.pendingMoney ?? 0).toLocaleString()}</p>
                       <p className="text-[10px] text-zinc-400">Cuentas por cobrar</p>
                     </div>
 
-                    <div className="p-6 bg-white border border-zinc-100 rounded-[32px] shadow-sm flex flex-col gap-2">
+                    <div className="p-4 sm:p-6 bg-white border border-zinc-100 rounded-2xl sm:rounded-[32px] shadow-sm flex flex-col gap-2">
                       <div className="flex items-center gap-2 text-zinc-400 mb-1">
                         <AlertCircle size={16} />
                         <span className="text-[10px] font-bold uppercase tracking-widest">Stock Crítico</span>
                       </div>
-                      <p className={`text-3xl font-black ${summary.criticalStock > 0 ? 'text-red-600' : 'text-zinc-900'}`}>{summary.criticalStock}</p>
+                      <p className={`text-2xl sm:text-3xl font-black ${summary.criticalStock > 0 ? 'text-red-600' : 'text-zinc-900'}`}>{summary.criticalStock}</p>
                       <p className="text-[10px] text-zinc-400">Productos bajo el mínimo</p>
                     </div>
 
-                    <div className="p-6 bg-white border border-zinc-100 rounded-[32px] shadow-sm flex flex-col gap-2">
+                    <div className="p-4 sm:p-6 bg-white border border-zinc-100 rounded-2xl sm:rounded-[32px] shadow-sm flex flex-col gap-2">
                       <div className="flex items-center gap-2 text-zinc-400 mb-1">
                         <ShoppingCart size={16} />
                         <span className="text-[10px] font-bold uppercase tracking-widest">Pedidos Pendientes</span>
                       </div>
-                      <p className="text-3xl font-black text-zinc-900">{summary.pendingSupplierOrders}</p>
+                      <p className="text-2xl sm:text-3xl font-black text-zinc-900">{summary.pendingSupplierOrders}</p>
                       <p className="text-[10px] text-zinc-400">A proveedores</p>
                     </div>
                   </div>
@@ -451,13 +451,13 @@ export default function ChecklistModule() {
                           }`}></span>
                           {type === 'Apertura' ? 'Inicio del día' : type === 'Cierre' ? 'Cierre del día' : type === 'General' ? 'Control comercial' : type}
                         </h4>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                           {filteredTemplates.map(template => (
                             <button
                               key={template.id}
                               onClick={() => hasPermission('checklist', 'create') && handleStartTodayChecklist(template.id)}
                               disabled={!hasPermission('checklist', 'create')}
-                              className={`p-5 bg-white border border-zinc-100 rounded-3xl hover:border-zinc-900 transition-all group shadow-sm text-left ${!hasPermission('checklist', 'create') ? 'opacity-50 cursor-not-allowed' : ''}`}
+                              className={`p-4 sm:p-5 bg-white border border-zinc-100 rounded-2xl sm:rounded-3xl hover:border-zinc-900 transition-all group shadow-sm text-left ${!hasPermission('checklist', 'create') ? 'opacity-50 cursor-not-allowed' : ''}`}
                             >
                               <div className="flex items-center justify-between mb-2">
                                 <ChevronRight size={14} className="text-zinc-300 group-hover:text-zinc-900 ml-auto" />
@@ -482,8 +482,8 @@ export default function ChecklistModule() {
 
               {/* Controles en Curso Section */}
               {todayChecklists.length > 0 && (
-                <section className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                  <div className="md:col-span-1 space-y-4">
+                <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
+                  <div className="lg:col-span-1 space-y-4">
                     <div className="flex items-center gap-2 mb-4">
                       <AlertCircle size={20} className="text-amber-400" />
                       <h3 className="text-sm font-bold text-zinc-500 uppercase tracking-widest">Controles en Curso</h3>
@@ -499,7 +499,7 @@ export default function ChecklistModule() {
                               : 'bg-white border-zinc-100 text-zinc-900 hover:border-zinc-300'
                           }`}
                         >
-                          <div className="flex items-center justify-between">
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                             <h4 className="font-black text-sm">{cl.template_name}</h4>
                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                               selectedActiveChecklistId === cl.id ? 'bg-white/20 text-white' : 'bg-zinc-100 text-zinc-500'
@@ -515,31 +515,31 @@ export default function ChecklistModule() {
                     </div>
                   </div>
 
-                  <div className="md:col-span-2">
+                  <div className="lg:col-span-2">
                     {selectedActiveChecklistId && todayChecklists.find(cl => cl.id === selectedActiveChecklistId) && (
-                      <div className="bg-white rounded-[40px] shadow-sm border border-zinc-100 overflow-hidden">
+                      <div className="bg-white rounded-3xl sm:rounded-[40px] shadow-sm border border-zinc-100 overflow-hidden">
                         {(() => {
                           const cl = todayChecklists.find(c => c.id === selectedActiveChecklistId)!;
                           return (
                             <>
-                              <div className="p-8 border-b border-zinc-100 bg-zinc-50/50 flex items-center justify-between">
+                              <div className="p-4 sm:p-6 lg:p-8 border-b border-zinc-100 bg-zinc-50/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                                 <div>
                                   <h3 className="text-xl font-black text-zinc-900">{cl.template_name}</h3>
                                   <p className="text-sm text-zinc-500 font-medium">Control activo del día</p>
                                 </div>
                                 <button
                                   onClick={() => handleFinishChecklist(cl.id)}
-                                  className="px-6 py-3 bg-zinc-900 text-white rounded-2xl font-bold text-sm hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200"
+                                  className="w-full sm:w-auto px-6 py-3 bg-zinc-900 text-white rounded-2xl font-bold text-sm hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200"
                                 >
                                   Finalizar Control
                                 </button>
                               </div>
-                              <div className="p-8 space-y-3">
+                              <div className="p-4 sm:p-6 lg:p-8 space-y-3">
                                 {cl.items?.map((item) => (
                                   <button
                                     key={item.id}
                                     onClick={() => handleToggleItem(cl.id, item.id, item.completed)}
-                                    className={`w-full flex items-center gap-4 p-5 rounded-3xl border transition-all text-left ${
+                                    className={`w-full flex items-start sm:items-center gap-3 sm:gap-4 p-4 sm:p-5 rounded-2xl sm:rounded-3xl border transition-all text-left ${
                                       item.completed 
                                         ? 'bg-emerald-50 border-emerald-100 text-emerald-900' 
                                         : 'bg-white border-zinc-100 hover:border-zinc-300 text-zinc-900'
@@ -550,7 +550,7 @@ export default function ChecklistModule() {
                                     ) : (
                                       <Circle size={24} className="text-zinc-200 shrink-0" />
                                     )}
-                                    <span className={`font-bold ${item.completed ? 'line-through opacity-50' : ''}`}>
+                                    <span className={`font-bold break-words min-w-0 ${item.completed ? 'line-through opacity-50' : ''}`}>
                                       {item.task_name}
                                     </span>
                                     {item.completed && (
@@ -576,7 +576,7 @@ export default function ChecklistModule() {
               )}
 
               {todayChecklists.length === 0 && (
-                <div className="text-center py-20 bg-white rounded-[40px] border border-zinc-100 border-dashed">
+                <div className="text-center py-12 sm:py-20 px-4 bg-white rounded-3xl sm:rounded-[40px] border border-zinc-100 border-dashed">
                   <div className="w-24 h-24 bg-zinc-50 rounded-[40px] flex items-center justify-center mx-auto mb-6">
                     <ClipboardCheck size={48} className="text-zinc-200" />
                   </div>
@@ -593,10 +593,10 @@ export default function ChecklistModule() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="max-w-5xl mx-auto space-y-8"
+              className="max-w-5xl w-full mx-auto space-y-6 sm:space-y-8"
             >
               {!todayRoute ? (
-                <div className="text-center py-20 bg-white rounded-[40px] border border-zinc-100 border-dashed">
+                <div className="text-center py-12 sm:py-20 px-4 bg-white rounded-3xl sm:rounded-[40px] border border-zinc-100 border-dashed">
                   <div className="w-24 h-24 bg-zinc-50 rounded-[40px] flex items-center justify-center mx-auto mb-6 text-zinc-200">
                     <Map size={48} />
                   </div>
@@ -617,7 +617,7 @@ export default function ChecklistModule() {
 
                   <div className="bg-white rounded-[40px] border border-zinc-100 shadow-sm overflow-hidden">
                     <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse">
+                      <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left border-collapse">
                         <thead>
                           <tr className="bg-zinc-50/50">
                             <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
@@ -684,12 +684,12 @@ export default function ChecklistModule() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
             >
-              <div className="flex items-center justify-between mb-8">
-                <h3 className="text-2xl font-black text-zinc-900">Plantillas de Tareas</h3>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
+                <h3 className="text-xl sm:text-2xl font-black text-zinc-900">Plantillas de Tareas</h3>
                 {hasPermission('checklist', 'create') && (
                   <button
                     onClick={() => setShowNewTemplateModal(true)}
-                    className="flex items-center gap-2 px-6 py-3 bg-zinc-900 text-white rounded-2xl font-bold text-sm hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200"
+                    className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-zinc-900 text-white rounded-2xl font-bold text-sm hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200"
                   >
                     <Plus size={18} />
                     Nueva Plantilla
@@ -697,9 +697,9 @@ export default function ChecklistModule() {
                 )}
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6">
                 {templates.map(template => (
-                  <div key={template.id} className={`bg-white border rounded-[40px] p-8 shadow-sm flex flex-col transition-all ${template.active ? 'border-zinc-100' : 'border-zinc-200 opacity-60 grayscale'}`}>
+                  <div key={template.id} className={`bg-white border rounded-3xl sm:rounded-[40px] p-5 sm:p-8 shadow-sm flex flex-col transition-all ${template.active ? 'border-zinc-100' : 'border-zinc-200 opacity-60 grayscale'}`}>
                     <div className="flex items-start justify-between mb-4">
                       <div className="flex items-center gap-3">
                         <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${template.active ? 'bg-zinc-50 text-zinc-400' : 'bg-zinc-200 text-zinc-500'}`}>
@@ -768,12 +768,12 @@ export default function ChecklistModule() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
             >
-              <div className="bg-white rounded-[40px] border border-zinc-100 overflow-hidden shadow-sm">
-                <div className="p-8 border-b border-zinc-50">
-                  <h3 className="text-2xl font-black text-zinc-900">Historial de Check Lists</h3>
+              <div className="bg-white rounded-3xl sm:rounded-[40px] border border-zinc-100 overflow-hidden shadow-sm">
+                <div className="p-4 sm:p-6 lg:p-8 border-b border-zinc-50">
+                  <h3 className="text-xl sm:text-2xl font-black text-zinc-900">Historial de Check Lists</h3>
                   <p className="text-zinc-500 text-sm font-medium mt-1">Registro de todas las listas ejecutadas.</p>
                 </div>
-                <table className="w-full text-left border-collapse">
+                <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left border-collapse">
                   <thead>
                     <tr className="bg-zinc-50/50">
                       <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</th>
@@ -824,7 +824,7 @@ export default function ChecklistModule() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </table></div>
               </div>
             </motion.div>
           )}
@@ -833,28 +833,28 @@ export default function ChecklistModule() {
 
       {/* Checklist Detail Modal */}
       {selectedChecklistForDetail && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 bg-zinc-900/60 backdrop-blur-sm">
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-[40px] w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
+            className="bg-white rounded-2xl sm:rounded-[40px] w-full max-w-2xl max-h-[95dvh] sm:max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
           >
-            <div className="p-8 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
+            <div className="p-4 sm:p-6 lg:p-8 pr-16 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50 relative">
               <div>
-                <h2 className="text-2xl font-black text-zinc-900">{selectedChecklistForDetail.template_name}</h2>
+                <h2 className="text-lg sm:text-2xl font-black text-zinc-900">{selectedChecklistForDetail.template_name}</h2>
                 <p className="text-sm font-medium text-zinc-500">
                   {new Date(selectedChecklistForDetail.date).toLocaleDateString()} • {selectedChecklistForDetail.status}
                 </p>
               </div>
               <button
                 onClick={() => setSelectedChecklistForDetail(null)}
-                className="p-3 hover:bg-white rounded-2xl transition-all text-zinc-400 hover:text-zinc-900 shadow-sm"
+                className="absolute top-3 right-3 sm:top-5 sm:right-5 p-3 bg-white hover:bg-zinc-100 rounded-2xl transition-all text-zinc-500 hover:text-zinc-900 shadow-sm border border-zinc-100"
               >
                 <X size={24} />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-8">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
               <div className="space-y-3">
                 {selectedChecklistForDetail.items?.map((item) => (
                   <div
@@ -870,7 +870,7 @@ export default function ChecklistModule() {
                     ) : (
                       <Circle size={24} className="text-zinc-200 shrink-0" />
                     )}
-                    <span className="font-bold">
+                    <span className="font-bold break-words min-w-0">
                       {item.task_name}
                     </span>
                     {item.completed && (
@@ -893,27 +893,27 @@ export default function ChecklistModule() {
 
       {/* New Template Modal */}
       {showNewTemplateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 bg-zinc-900/60 backdrop-blur-sm">
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-[40px] w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
+            className="bg-white rounded-2xl sm:rounded-[40px] w-full max-w-2xl max-h-[95dvh] sm:max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
           >
-            <div className="p-8 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
+            <div className="p-4 sm:p-6 lg:p-8 pr-16 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50 relative">
               <div>
-                <h2 className="text-2xl font-black text-zinc-900">{editingTemplateId ? 'Editar Plantilla' : 'Nueva Plantilla'}</h2>
+                <h2 className="text-lg sm:text-2xl font-black text-zinc-900">{editingTemplateId ? 'Editar Plantilla' : 'Nueva Plantilla'}</h2>
                 <p className="text-sm font-medium text-zinc-500">Define las tareas que se realizarán.</p>
               </div>
               <button
                 onClick={resetTemplateForm}
-                className="p-3 hover:bg-white rounded-2xl transition-all text-zinc-400 hover:text-zinc-900 shadow-sm"
+                className="absolute top-3 right-3 sm:top-5 sm:right-5 p-3 bg-white hover:bg-zinc-100 rounded-2xl transition-all text-zinc-500 hover:text-zinc-900 shadow-sm border border-zinc-100"
               >
                 <X size={24} />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-8 space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-5 sm:space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
                 <div className="space-y-4">
                   <div>
                     <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2 block">Nombre de la Plantilla</label>
@@ -922,12 +922,12 @@ export default function ChecklistModule() {
                       value={newTemplateName}
                       onChange={(e) => setNewTemplateName(e.target.value)}
                       placeholder="Ej: Apertura de Local"
-                      className="w-full px-5 py-4 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-zinc-900 outline-none font-bold text-zinc-900"
+                      className="w-full px-4 sm:px-5 py-3 sm:py-4 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-zinc-900 outline-none font-bold text-zinc-900"
                     />
                   </div>
                   <div>
                     <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2 block">Tipo de Plantilla</label>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-2 gap-2">
                       {['Apertura', 'Cierre', 'Ruta', 'General'].map((type) => (
                         <button
                           key={type}
@@ -950,7 +950,7 @@ export default function ChecklistModule() {
                     value={newTemplateDesc}
                     onChange={(e) => setNewTemplateDesc(e.target.value)}
                     placeholder="Describe brevemente el propósito de esta lista..."
-                    className="w-full px-5 py-4 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm text-zinc-600 h-[148px] resize-none"
+                    className="w-full px-4 sm:px-5 py-3 sm:py-4 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm text-zinc-600 h-[120px] sm:h-[148px] resize-none"
                   />
                 </div>
               </div>
@@ -977,7 +977,7 @@ export default function ChecklistModule() {
                           setNewTemplateTasks(updated);
                         }}
                         placeholder={`Tarea #${index + 1}`}
-                        className="flex-1 px-5 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm font-medium"
+                        className="min-w-0 flex-1 px-4 sm:px-5 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm font-medium"
                       />
                       <button
                         onClick={() => {
@@ -994,7 +994,7 @@ export default function ChecklistModule() {
               </div>
             </div>
 
-            <div className="p-8 bg-zinc-50 border-t border-zinc-100 flex gap-4">
+            <div className="p-4 sm:p-6 lg:p-8 bg-zinc-50 border-t border-zinc-100 flex flex-col sm:flex-row gap-3 sm:gap-4">
               <button
                 onClick={resetTemplateForm}
                 className="flex-1 py-4 bg-white border border-zinc-200 text-zinc-600 rounded-2xl font-bold text-sm hover:bg-zinc-100 transition-all"
