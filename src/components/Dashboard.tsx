@@ -420,20 +420,20 @@ export default function Dashboard() {
       {/* Detail Modal */}
       <AnimatePresence>
         {detailModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-zinc-900/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 bg-zinc-900/60 backdrop-blur-sm">
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
               className="bg-white rounded-2xl sm:rounded-[40px] w-full max-w-4xl max-h-[95dvh] sm:max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
             >
-              <div className="p-4 sm:p-6 md:p-8 border-b border-zinc-100 flex items-center justify-between gap-3 bg-zinc-50/50">
-                <div>
-                  <h2 className="text-lg sm:text-2xl font-black text-zinc-900">{detailModal.title}</h2>
-                  <p className="text-sm font-medium text-zinc-500">Desglose detallado de indicadores.</p>
+              <div className="relative p-4 sm:p-6 md:p-8 pr-16 border-b border-zinc-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-zinc-50/50">
+                <div className="min-w-0">
+                  <h2 className="text-lg sm:text-2xl font-black text-zinc-900 leading-tight pr-2">{detailModal.title}</h2>
+                  <p className="text-xs sm:text-sm font-medium text-zinc-500">Desglose detallado de indicadores.</p>
                 </div>
                 {detailModal.type === 'cuentas-cobrar' && (
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2 w-full sm:w-auto">
                     {[7, 15, 30, 'all'].map(d => (
                       <button 
                         key={d}
@@ -441,7 +441,7 @@ export default function Dashboard() {
                           setCobrarFilter(d as any);
                           openDetail('cuentas-cobrar', 'Cuentas a Cobrar', { days: d });
                         }}
-                        className={`px-4 py-2 rounded-xl text-xs font-bold uppercase transition-all shadow-sm border ${cobrarFilter === d ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-white text-zinc-400 border-zinc-100 hover:border-zinc-300'}`}
+                        className={`flex-1 sm:flex-none px-3 sm:px-4 py-2 rounded-xl text-[10px] sm:text-xs font-bold uppercase transition-all shadow-sm border ${cobrarFilter === d ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-white text-zinc-400 border-zinc-100 hover:border-zinc-300'}`}
                       >
                         {d === 'all' ? 'Todas' : `${d}d`}
                       </button>
@@ -450,9 +450,10 @@ export default function Dashboard() {
                 )}
                 <button
                   onClick={() => setDetailModal(null)}
-                  className="p-3 hover:bg-white rounded-2xl transition-all text-zinc-400 hover:text-zinc-900 shadow-sm"
+                  aria-label="Cerrar detalle"
+                  className="absolute top-3 right-3 sm:top-5 sm:right-5 p-3 bg-white hover:bg-zinc-100 rounded-2xl transition-all text-zinc-500 hover:text-zinc-900 shadow-sm border border-zinc-100 z-10"
                 >
-                  <X size={24} />
+                  <X size={22} />
                 </button>
               </div>
 
@@ -541,32 +542,61 @@ export default function Dashboard() {
                 )}
 
                 {detailModal.type === 'cuentas-cobrar' && (
-                  <table className="w-full min-w-[640px] text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-zinc-100">
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Monto Deuda</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Fecha de Venta</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Días Vencido</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-50">
+                  <>
+                    <div className="sm:hidden space-y-3">
+                      {detailModal.data.length === 0 && (
+                        <div className="p-6 text-center text-sm text-zinc-400 bg-zinc-50 rounded-2xl border border-zinc-100">
+                          No hay cuentas a cobrar para el filtro seleccionado.
+                        </div>
+                      )}
                       {detailModal.data.map((item, i) => (
-                        <tr key={i} className="hover:bg-zinc-50/50 transition-colors">
-                          <td className="py-4 font-bold text-zinc-900">{item.cliente}</td>
-                          <td className="py-4 text-right font-black text-red-600 font-mono">{formatCurrency(item.deuda)}</td>
-                          <td className="py-4 text-right text-sm text-zinc-500">
-                            {item.fecha_venta ? new Date(item.fecha_venta).toLocaleDateString() : 'N/A'}
-                          </td>
-                          <td className="py-4 text-right">
-                            <span className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase ${item.dias_atraso > 7 ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'}`}>
+                        <div key={i} className="bg-white border border-zinc-100 rounded-2xl p-4 shadow-sm">
+                          <div className="flex items-start justify-between gap-3 mb-3">
+                            <div className="min-w-0">
+                              <p className="text-sm font-black text-zinc-900 break-words">{item.cliente}</p>
+                              <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 mt-1">
+                                {item.fecha_venta ? new Date(item.fecha_venta).toLocaleDateString() : 'Sin fecha'}
+                              </p>
+                            </div>
+                            <span className={`shrink-0 px-2 py-1 rounded-lg text-[10px] font-bold uppercase ${item.dias_atraso > 7 ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'}`}>
                               {item.dias_atraso} días
                             </span>
-                          </td>
-                        </tr>
+                          </div>
+                          <div className="pt-3 border-t border-zinc-50 flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Monto deuda</span>
+                            <span className="text-lg font-black text-red-600 font-mono">{formatCurrency(item.deuda)}</span>
+                          </div>
+                        </div>
                       ))}
-                    </tbody>
-                  </table>
+                    </div>
+
+                    <table className="hidden sm:table w-full min-w-[640px] text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-zinc-100">
+                          <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
+                          <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Monto Deuda</th>
+                          <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Fecha de Venta</th>
+                          <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Días Vencido</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-50">
+                        {detailModal.data.map((item, i) => (
+                          <tr key={i} className="hover:bg-zinc-50/50 transition-colors">
+                            <td className="py-4 font-bold text-zinc-900">{item.cliente}</td>
+                            <td className="py-4 text-right font-black text-red-600 font-mono">{formatCurrency(item.deuda)}</td>
+                            <td className="py-4 text-right text-sm text-zinc-500">
+                              {item.fecha_venta ? new Date(item.fecha_venta).toLocaleDateString() : 'N/A'}
+                            </td>
+                            <td className="py-4 text-right">
+                              <span className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase ${item.dias_atraso > 7 ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'}`}>
+                                {item.dias_atraso} días
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </>
                 )}
 
                 {detailModal.type === 'cuentas-pagar' && (
