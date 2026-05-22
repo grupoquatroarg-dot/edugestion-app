@@ -144,10 +144,10 @@ export default function Dashboard() {
     new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(val);
 
   return (
-    <div className="h-full overflow-y-auto bg-zinc-50 p-4 md:p-8 custom-scrollbar">
-      <div className="max-w-7xl mx-auto space-y-8 md:space-y-12">
+    <div className="h-full overflow-y-auto bg-zinc-50 p-4 sm:p-6 lg:p-8 custom-scrollbar">
+      <div className="max-w-7xl mx-auto space-y-6 sm:space-y-8 lg:space-y-12">
         <header>
-          <h1 className="text-3xl md:text-4xl font-black text-zinc-900 tracking-tight">DASHBOARD</h1>
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-black text-zinc-900 tracking-tight">DASHBOARD</h1>
           <p className="text-sm md:text-base text-zinc-500 font-medium">Indicadores clave del negocio en tiempo real</p>
         </header>
 
@@ -159,7 +159,7 @@ export default function Dashboard() {
             </div>
             <h2 className="text-xl font-black text-zinc-900 uppercase tracking-widest">Finanzas</h2>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6">
             <DashboardCard 
               title="Cuentas a Cobrar"
               value={formatCurrency(summary?.finanzas?.cuentasCobrar ?? 0)}
@@ -211,7 +211,7 @@ export default function Dashboard() {
             </div>
             <h2 className="text-xl font-black text-zinc-900 uppercase tracking-widest">Ventas</h2>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-6">
             <DashboardCard 
               title="Ventas del Mes"
               value={formatCurrency(summary?.ventas?.mes?.total ?? 0)}
@@ -255,14 +255,14 @@ export default function Dashboard() {
                 </div>
               }
             />
-            <div className="bg-white p-6 md:p-8 rounded-3xl md:rounded-[40px] border border-zinc-200 shadow-sm col-span-1 md:col-span-2">
+            <div className="bg-white p-4 sm:p-6 md:p-8 rounded-3xl md:rounded-[40px] border border-zinc-200 shadow-sm col-span-1 sm:col-span-2">
               <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-6">Top Clientes del Mes</h3>
               <div className="space-y-4">
                 {(summary?.ventas?.topClientes ?? []).map((c, i) => (
                   <div key={i} className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <span className="text-xs font-black text-zinc-300">0{i+1}</span>
-                      <span className="text-sm font-bold text-zinc-900">{c.nombre_cliente}</span>
+                      <span className="text-sm font-bold text-zinc-900 break-words">{c.nombre_cliente}</span>
                     </div>
                     <span className="text-sm font-black text-zinc-900 font-mono">{formatCurrency(c.total)}</span>
                   </div>
@@ -281,7 +281,7 @@ export default function Dashboard() {
             </div>
             <h2 className="text-xl font-black text-zinc-900 uppercase tracking-widest">Stock</h2>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6">
             <DashboardCard 
               title="Valor del stock"
               value={formatCurrency(summary?.stock?.valorizado ?? 0)}
@@ -305,7 +305,7 @@ export default function Dashboard() {
               onClick={() => openDetail('pedidos-pendientes', 'Pedidos Pendientes')}
               highlight={(summary?.stock?.pedidosPendientes ?? 0) > 0}
             />
-            <div className="bg-white p-6 md:p-8 rounded-3xl md:rounded-[40px] border border-zinc-200 shadow-sm">
+            <div className="bg-white p-4 sm:p-6 md:p-8 rounded-3xl md:rounded-[40px] border border-zinc-200 shadow-sm">
               <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-6">Productos Más Vendidos</h3>
               <div className="space-y-4">
                 {(summary?.ventas?.topProductos ?? []).map((p, i) => (
@@ -327,7 +327,7 @@ export default function Dashboard() {
             </div>
             <h2 className="text-xl font-black text-zinc-900 uppercase tracking-widest">Operaciones</h2>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6">
             <DashboardCard 
               title="Pedidos Pendientes"
               value={(summary?.stock?.pedidosPendientes ?? 0).toString()}
@@ -365,15 +365,15 @@ export default function Dashboard() {
             </div>
             <h2 className="text-xl font-black text-zinc-900 uppercase tracking-widest">Rentabilidad</h2>
           </div>
-          <div className="bg-white p-6 md:p-8 rounded-3xl md:rounded-[40px] border border-zinc-200 shadow-xl">
+          <div className="bg-white p-4 sm:p-6 md:p-8 rounded-3xl md:rounded-[40px] border border-zinc-200 shadow-xl">
             <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
               <div>
                 <h3 className="text-xl font-black tracking-tight text-zinc-900">Productos más rentables del mes</h3>
                 <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mt-1">Basado en costo real PEPS</p>
               </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
+            <div className="overflow-x-auto -mx-2 px-2">
+              <table className="w-full min-w-[640px] text-left border-collapse">
                 <thead>
                   <tr className="border-b border-zinc-50">
                     <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Producto</th>
@@ -420,16 +420,16 @@ export default function Dashboard() {
       {/* Detail Modal */}
       <AnimatePresence>
         {detailModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-zinc-900/60 backdrop-blur-sm">
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white rounded-[40px] w-full max-w-4xl max-h-[85vh] overflow-hidden flex flex-col shadow-2xl"
+              className="bg-white rounded-2xl sm:rounded-[40px] w-full max-w-4xl max-h-[95dvh] sm:max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
             >
-              <div className="p-8 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
+              <div className="p-4 sm:p-6 md:p-8 border-b border-zinc-100 flex items-center justify-between gap-3 bg-zinc-50/50">
                 <div>
-                  <h2 className="text-2xl font-black text-zinc-900">{detailModal.title}</h2>
+                  <h2 className="text-lg sm:text-2xl font-black text-zinc-900">{detailModal.title}</h2>
                   <p className="text-sm font-medium text-zinc-500">Desglose detallado de indicadores.</p>
                 </div>
                 {detailModal.type === 'cuentas-cobrar' && (
@@ -456,9 +456,9 @@ export default function Dashboard() {
                 </button>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+              <div className="flex-1 overflow-auto p-4 sm:p-6 md:p-8 custom-scrollbar">
                 {detailModal.type === 'stock-valorizado-detalle' && (
-                  <table className="w-full text-left border-collapse">
+                  <table className="w-full min-w-[640px] text-left border-collapse">
                     <thead>
                       <tr className="border-b border-zinc-100">
                         <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Producto</th>
@@ -483,7 +483,7 @@ export default function Dashboard() {
                 )}
 
                 {detailModal.type === 'ganancia-mes-detalle' && (
-                  <table className="w-full text-left border-collapse">
+                  <table className="w-full min-w-[640px] text-left border-collapse">
                     <thead>
                       <tr className="border-b border-zinc-100">
                         <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</th>
@@ -510,7 +510,7 @@ export default function Dashboard() {
                 )}
 
                 {detailModal.type === 'ventas-mes-detalle' && (
-                  <table className="w-full text-left border-collapse">
+                  <table className="w-full min-w-[640px] text-left border-collapse">
                     <thead>
                       <tr className="border-b border-zinc-100">
                         <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</th>
@@ -541,7 +541,7 @@ export default function Dashboard() {
                 )}
 
                 {detailModal.type === 'cuentas-cobrar' && (
-                  <table className="w-full text-left border-collapse">
+                  <table className="w-full min-w-[640px] text-left border-collapse">
                     <thead>
                       <tr className="border-b border-zinc-100">
                         <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
@@ -570,7 +570,7 @@ export default function Dashboard() {
                 )}
 
                 {detailModal.type === 'cuentas-pagar' && (
-                  <table className="w-full text-left border-collapse">
+                  <table className="w-full min-w-[640px] text-left border-collapse">
                     <thead>
                       <tr className="border-b border-zinc-100">
                         <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Proveedor</th>
@@ -597,7 +597,7 @@ export default function Dashboard() {
                 )}
 
                 {detailModal.type === 'stock-critico' && (
-                  <table className="w-full text-left border-collapse">
+                  <table className="w-full min-w-[640px] text-left border-collapse">
                     <thead>
                       <tr className="border-b border-zinc-100">
                         <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">producto</th>
@@ -638,7 +638,7 @@ export default function Dashboard() {
                 )}
 
                 {detailModal.type === 'pedidos-pendientes' && (
-                  <table className="w-full text-left border-collapse">
+                  <table className="w-full min-w-[640px] text-left border-collapse">
                     <thead>
                       <tr className="border-b border-zinc-100">
                         <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
@@ -663,7 +663,7 @@ export default function Dashboard() {
                 )}
 
                 {detailModal.type === 'deuda-vencida' && (
-                  <table className="w-full text-left border-collapse">
+                  <table className="w-full min-w-[640px] text-left border-collapse">
                     <thead>
                       <tr className="border-b border-zinc-100">
                         <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
@@ -718,7 +718,7 @@ function DashboardCard({
     <motion.div 
       whileHover={onClick ? { y: -4, scale: 1.01 } : {}}
       onClick={onClick}
-      className={`bg-white p-6 md:p-8 rounded-3xl md:rounded-[40px] border transition-all ${onClick ? 'cursor-pointer hover:shadow-xl hover:border-zinc-300' : ''} ${highlight ? 'border-red-200 bg-red-50/30' : 'border-zinc-200 shadow-sm'}`}
+      className={`bg-white p-4 sm:p-6 md:p-8 rounded-3xl md:rounded-[40px] border transition-all ${onClick ? 'cursor-pointer hover:shadow-xl hover:border-zinc-300' : ''} ${highlight ? 'border-red-200 bg-red-50/30' : 'border-zinc-200 shadow-sm'}`}
     >
       <div className="flex items-start justify-between mb-6">
         <div className="w-12 h-12 bg-zinc-50 rounded-2xl flex items-center justify-center shadow-inner">
@@ -733,7 +733,7 @@ function DashboardCard({
         {onClick && <ChevronRight size={16} className="text-zinc-300" />}
       </div>
       <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">{title}</h3>
-      <p className="text-3xl font-black text-zinc-900 font-mono tracking-tighter">{value}</p>
+      <p className="text-2xl sm:text-3xl font-black text-zinc-900 font-mono tracking-tighter break-words">{value}</p>
       <p className="text-xs font-medium text-zinc-500 mt-1">{subtitle}</p>
       {footer}
     </motion.div>
