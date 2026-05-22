@@ -249,12 +249,12 @@ export default function ConfigModule() {
     ];
 
     return (
-      <div className="flex flex-col w-64 border-r border-zinc-200 bg-zinc-50/50 p-4 gap-1">
+      <div className="flex lg:flex-col w-full lg:w-64 border-b lg:border-b-0 lg:border-r border-zinc-200 bg-zinc-50/50 p-3 sm:p-4 gap-2 lg:gap-1 overflow-x-auto lg:overflow-visible shrink-0 no-scrollbar">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as Section)}
-            className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all ${
+            className={`flex items-center gap-2 lg:gap-3 px-3 lg:px-4 py-3 rounded-xl text-xs sm:text-sm font-bold transition-all whitespace-nowrap shrink-0 ${
               activeTab === tab.id
                 ? 'bg-zinc-900 text-white shadow-lg shadow-zinc-200'
                 : 'text-zinc-500 hover:bg-zinc-200/50 hover:text-zinc-900'
@@ -280,11 +280,11 @@ export default function ConfigModule() {
     switch (activeTab) {
       case 'negocio':
         return (
-          <form onSubmit={handleSaveSettings} className="space-y-6 max-w-2xl">
+          <form onSubmit={handleSaveSettings} className="space-y-6 max-w-2xl w-full">
             <div className="grid grid-cols-1 gap-6">
-              <div className="flex items-center gap-8 p-6 bg-zinc-50 rounded-[32px] border border-zinc-200">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-5 sm:gap-8 p-4 sm:p-6 bg-zinc-50 rounded-3xl sm:rounded-[32px] border border-zinc-200">
                 <div className="relative group">
-                  <div className="w-32 h-32 bg-white rounded-2xl border-2 border-dashed border-zinc-200 flex items-center justify-center overflow-hidden transition-all group-hover:border-zinc-400">
+                  <div className="w-24 h-24 sm:w-32 sm:h-32 bg-white rounded-2xl border-2 border-dashed border-zinc-200 flex items-center justify-center overflow-hidden transition-all group-hover:border-zinc-400">
                     {settings.business_logo ? (
                       <img src={settings.business_logo} alt="Logo" className="w-full h-full object-contain" />
                     ) : (
@@ -316,13 +316,13 @@ export default function ConfigModule() {
                     </button>
                   )}
                 </div>
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                   <h4 className="font-black text-zinc-900 uppercase tracking-widest text-xs mb-1">Logo del Negocio</h4>
                   <p className="text-zinc-500 text-xs font-medium">Sube una imagen para tus comprobantes y reportes (PNG/JPG)</p>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Nombre del Negocio</label>
                   <input 
@@ -345,7 +345,7 @@ export default function ConfigModule() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-xs font-black uppercase tracking-widest text-zinc-400">CUIT</label>
                   <input 
@@ -367,7 +367,7 @@ export default function ConfigModule() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Dirección</label>
                   <input 
@@ -402,7 +402,7 @@ export default function ConfigModule() {
               <button 
                 type="submit" 
                 disabled={loading}
-                className="flex items-center gap-2 bg-zinc-900 text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50"
+                className="w-full sm:w-auto flex items-center justify-center gap-2 bg-zinc-900 text-white px-6 sm:px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50"
               >
                 <Save size={16} />
                 Guardar Cambios
@@ -413,13 +413,13 @@ export default function ConfigModule() {
 
       case 'pagos':
         return (
-          <div className="space-y-8 max-w-3xl">
-            <form onSubmit={handleSavePaymentMethod} className="bg-white p-8 rounded-[32px] border border-zinc-200 shadow-sm space-y-6">
-              <h3 className="text-lg font-black text-zinc-900 uppercase tracking-widest">
+          <div className="space-y-6 sm:space-y-8 max-w-3xl w-full">
+            <form onSubmit={handleSavePaymentMethod} className="bg-white p-4 sm:p-6 lg:p-8 rounded-3xl sm:rounded-[32px] border border-zinc-200 shadow-sm space-y-5 sm:space-y-6">
+              <h3 className="text-base sm:text-lg font-black text-zinc-900 uppercase tracking-widest">
                 {editingItem ? 'Editar Forma de Pago' : 'Nueva Forma de Pago'}
               </h3>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
                 <div className="space-y-2">
                   <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Nombre</label>
                   <input 
@@ -445,7 +445,7 @@ export default function ConfigModule() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <input 
                     type="checkbox" 
@@ -454,10 +454,10 @@ export default function ConfigModule() {
                     onChange={(e) => setPaymentForm({ ...paymentForm, activo: e.target.checked ? 1 : 0 })}
                     className="w-5 h-5 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900"
                   />
-                  <label htmlFor="pm-activo" className="text-sm font-bold text-zinc-700">Activo</label>
+                  <label htmlFor="pm-activo" className="text-sm font-bold text-zinc-700 leading-snug">Activo</label>
                 </div>
 
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
                   {editingItem && (
                     <button 
                       type="button"
@@ -465,7 +465,7 @@ export default function ConfigModule() {
                         setEditingItem(null);
                         setPaymentForm({ name: '', tipo: 'Efectivo', activo: 1 });
                       }}
-                      className="px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs text-zinc-500 hover:bg-zinc-100 transition-all"
+                      className="w-full sm:w-auto px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs text-zinc-500 hover:bg-zinc-100 transition-all"
                     >
                       Cancelar
                     </button>
@@ -474,7 +474,7 @@ export default function ConfigModule() {
                     <button 
                       type="submit"
                       disabled={loading || !paymentForm.name.trim()}
-                      className="bg-zinc-900 text-white px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50 flex items-center gap-2"
+                      className="w-full sm:w-auto bg-zinc-900 text-white px-6 sm:px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50 flex items-center gap-2"
                     >
                       {editingItem ? <Save size={16} /> : <Plus size={16} />}
                       {editingItem ? 'Actualizar' : 'Agregar'}
@@ -487,15 +487,15 @@ export default function ConfigModule() {
             <div className="grid grid-cols-1 gap-3">
               <h4 className="text-xs font-black text-zinc-400 uppercase tracking-widest px-2">Formas de Pago Registradas</h4>
               {paymentMethods.map((item) => (
-                <div key={item.id} className={`flex items-center justify-between bg-white px-6 py-4 rounded-2xl border ${item.activo ? 'border-zinc-100' : 'border-red-100 bg-red-50/30'} hover:border-zinc-200 transition-all group`}>
-                  <div className="flex items-center gap-4">
+                <div key={item.id} className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white px-4 sm:px-6 py-4 rounded-2xl border ${item.activo ? 'border-zinc-100' : 'border-red-100 bg-red-50/30'} hover:border-zinc-200 transition-all group`}>
+                  <div className="flex items-center gap-4 min-w-0">
                     <div className={`w-2 h-2 rounded-full ${item.activo ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
                     <div>
-                      <span className={`font-bold ${item.activo ? 'text-zinc-900' : 'text-zinc-400 line-through'}`}>{item.name}</span>
+                      <span className={`font-bold break-words ${item.activo ? 'text-zinc-900' : 'text-zinc-400 line-through'}`}>{item.name}</span>
                       <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">{item.tipo}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                  <div className="flex items-center gap-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all self-end sm:self-auto">
                     {hasPermission('settings', 'edit') && (
                       <button 
                         onClick={() => {
@@ -534,9 +534,9 @@ export default function ConfigModule() {
 
       case 'categorias':
         return (
-          <div className="space-y-8 max-w-3xl">
-            <form onSubmit={handleSaveCategory} className="bg-white p-8 rounded-[32px] border border-zinc-200 shadow-sm space-y-6">
-              <h3 className="text-lg font-black text-zinc-900 uppercase tracking-widest">
+          <div className="space-y-6 sm:space-y-8 max-w-3xl w-full">
+            <form onSubmit={handleSaveCategory} className="bg-white p-4 sm:p-6 lg:p-8 rounded-3xl sm:rounded-[32px] border border-zinc-200 shadow-sm space-y-5 sm:space-y-6">
+              <h3 className="text-base sm:text-lg font-black text-zinc-900 uppercase tracking-widest">
                 {editingItem ? 'Editar Categoría' : 'Nueva Categoría'}
               </h3>
               
@@ -563,7 +563,7 @@ export default function ConfigModule() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <input 
                     type="checkbox" 
@@ -572,10 +572,10 @@ export default function ConfigModule() {
                     onChange={(e) => setCategoryForm({ ...categoryForm, estado: e.target.checked ? 'activo' : 'inactivo' })}
                     className="w-5 h-5 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900"
                   />
-                  <label htmlFor="cat-activo" className="text-sm font-bold text-zinc-700">Activa</label>
+                  <label htmlFor="cat-activo" className="text-sm font-bold text-zinc-700 leading-snug">Activa</label>
                 </div>
 
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
                   {editingItem && (
                     <button 
                       type="button"
@@ -583,7 +583,7 @@ export default function ConfigModule() {
                         setEditingItem(null);
                         setCategoryForm({ name: '', description: '', estado: 'activo' });
                       }}
-                      className="px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs text-zinc-500 hover:bg-zinc-100 transition-all"
+                      className="w-full sm:w-auto px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs text-zinc-500 hover:bg-zinc-100 transition-all"
                     >
                       Cancelar
                     </button>
@@ -592,7 +592,7 @@ export default function ConfigModule() {
                     <button 
                       type="submit"
                       disabled={loading || !categoryForm.name.trim()}
-                      className="bg-zinc-900 text-white px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50 flex items-center gap-2"
+                      className="w-full sm:w-auto bg-zinc-900 text-white px-6 sm:px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50 flex items-center gap-2"
                     >
                       {editingItem ? <Save size={16} /> : <Plus size={16} />}
                       {editingItem ? 'Actualizar' : 'Agregar'}
@@ -605,17 +605,17 @@ export default function ConfigModule() {
             <div className="grid grid-cols-1 gap-3">
               <h4 className="text-xs font-black text-zinc-400 uppercase tracking-widest px-2">Categorías Registradas</h4>
               {categories.map((item) => (
-                <div key={item.id} className={`flex items-center justify-between bg-white px-6 py-4 rounded-2xl border ${item.estado === 'activo' ? 'border-zinc-100' : 'border-red-100 bg-red-50/30'} hover:border-zinc-200 transition-all group`}>
-                  <div className="flex items-center gap-4">
+                <div key={item.id} className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white px-4 sm:px-6 py-4 rounded-2xl border ${item.estado === 'activo' ? 'border-zinc-100' : 'border-red-100 bg-red-50/30'} hover:border-zinc-200 transition-all group`}>
+                  <div className="flex items-center gap-4 min-w-0">
                     <div className={`w-2 h-2 rounded-full ${item.estado === 'activo' ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
                     <div>
-                      <span className={`font-bold ${item.estado === 'activo' ? 'text-zinc-900' : 'text-zinc-400 line-through'}`}>{item.name}</span>
+                      <span className={`font-bold break-words ${item.estado === 'activo' ? 'text-zinc-900' : 'text-zinc-400 line-through'}`}>{item.name}</span>
                       {item.description && (
-                        <p className="text-[10px] font-medium text-zinc-400 line-clamp-1">{item.description}</p>
+                        <p className="text-[10px] font-medium text-zinc-400 line-clamp-2 sm:line-clamp-1">{item.description}</p>
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                  <div className="flex items-center gap-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all self-end sm:self-auto">
                     {hasPermission('settings', 'edit') && (
                       <button 
                         onClick={() => {
@@ -654,13 +654,13 @@ export default function ConfigModule() {
 
       case 'familias':
         return (
-          <div className="space-y-8 max-w-3xl">
-            <form onSubmit={handleSaveFamily} className="bg-white p-8 rounded-[32px] border border-zinc-200 shadow-sm space-y-6">
-              <h3 className="text-lg font-black text-zinc-900 uppercase tracking-widest">
+          <div className="space-y-6 sm:space-y-8 max-w-3xl w-full">
+            <form onSubmit={handleSaveFamily} className="bg-white p-4 sm:p-6 lg:p-8 rounded-3xl sm:rounded-[32px] border border-zinc-200 shadow-sm space-y-5 sm:space-y-6">
+              <h3 className="text-base sm:text-lg font-black text-zinc-900 uppercase tracking-widest">
                 {editingItem ? 'Editar Familia' : 'Nueva Familia'}
               </h3>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
                 <div className="space-y-2">
                   <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Nombre de Familia</label>
                   <input 
@@ -686,7 +686,7 @@ export default function ConfigModule() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <input 
                     type="checkbox" 
@@ -695,10 +695,10 @@ export default function ConfigModule() {
                     onChange={(e) => setFamilyForm({ ...familyForm, estado: e.target.checked ? 'activo' : 'inactivo' })}
                     className="w-5 h-5 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900"
                   />
-                  <label htmlFor="fam-activo" className="text-sm font-bold text-zinc-700">Activa</label>
+                  <label htmlFor="fam-activo" className="text-sm font-bold text-zinc-700 leading-snug">Activa</label>
                 </div>
 
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
                   {editingItem && (
                     <button 
                       type="button"
@@ -706,7 +706,7 @@ export default function ConfigModule() {
                         setEditingItem(null);
                         setFamilyForm({ name: '', category_id: null, estado: 'activo' });
                       }}
-                      className="px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs text-zinc-500 hover:bg-zinc-100 transition-all"
+                      className="w-full sm:w-auto px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs text-zinc-500 hover:bg-zinc-100 transition-all"
                     >
                       Cancelar
                     </button>
@@ -715,7 +715,7 @@ export default function ConfigModule() {
                     <button 
                       type="submit"
                       disabled={loading || !familyForm.name.trim()}
-                      className="bg-zinc-900 text-white px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50 flex items-center gap-2"
+                      className="w-full sm:w-auto bg-zinc-900 text-white px-6 sm:px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50 flex items-center gap-2"
                     >
                       {editingItem ? <Save size={16} /> : <Plus size={16} />}
                       {editingItem ? 'Actualizar' : 'Agregar'}
@@ -728,17 +728,17 @@ export default function ConfigModule() {
             <div className="grid grid-cols-1 gap-3">
               <h4 className="text-xs font-black text-zinc-400 uppercase tracking-widest px-2">Familias Registradas</h4>
               {families.map((item) => (
-                <div key={item.id} className={`flex items-center justify-between bg-white px-6 py-4 rounded-2xl border ${item.estado === 'activo' ? 'border-zinc-100' : 'border-red-100 bg-red-50/30'} hover:border-zinc-200 transition-all group`}>
-                  <div className="flex items-center gap-4">
+                <div key={item.id} className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white px-4 sm:px-6 py-4 rounded-2xl border ${item.estado === 'activo' ? 'border-zinc-100' : 'border-red-100 bg-red-50/30'} hover:border-zinc-200 transition-all group`}>
+                  <div className="flex items-center gap-4 min-w-0">
                     <div className={`w-2 h-2 rounded-full ${item.estado === 'activo' ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
                     <div>
-                      <span className={`font-bold ${item.estado === 'activo' ? 'text-zinc-900' : 'text-zinc-400 line-through'}`}>{item.name}</span>
+                      <span className={`font-bold break-words ${item.estado === 'activo' ? 'text-zinc-900' : 'text-zinc-400 line-through'}`}>{item.name}</span>
                       {item.category_name && (
                         <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">{item.category_name}</p>
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                  <div className="flex items-center gap-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all self-end sm:self-auto">
                     {hasPermission('settings', 'edit') && (
                       <button 
                         onClick={() => {
@@ -777,8 +777,8 @@ export default function ConfigModule() {
 
       case 'parametros':
         return (
-          <form onSubmit={handleSaveSettings} className="space-y-6 max-w-2xl">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <form onSubmit={handleSaveSettings} className="space-y-6 max-w-2xl w-full">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
               <div className="space-y-2">
                 <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Moneda del Sistema</label>
                 <select 
@@ -839,7 +839,7 @@ export default function ConfigModule() {
                 </select>
               </div>
             </div>
-            <div className="flex items-center gap-3 p-4 bg-zinc-100 rounded-2xl border border-zinc-200">
+            <div className="flex items-start sm:items-center gap-3 p-4 bg-zinc-100 rounded-2xl border border-zinc-200">
               <input 
                 type="checkbox" 
                 id="allow-negative-stock"
@@ -847,12 +847,12 @@ export default function ConfigModule() {
                 onChange={(e) => setSettings({...settings, allow_negative_stock: e.target.checked ? 'true' : 'false'})}
                 className="w-5 h-5 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900"
               />
-              <label htmlFor="allow-negative-stock" className="text-sm font-bold text-zinc-700">Permitir Ventas sin Stock (Stock Negativo)</label>
+              <label htmlFor="allow-negative-stock" className="text-sm font-bold text-zinc-700 leading-snug">Permitir Ventas sin Stock (Stock Negativo)</label>
             </div>
             <button 
               type="submit" 
               disabled={loading}
-              className="flex items-center gap-2 bg-zinc-900 text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50"
+              className="w-full sm:w-auto flex items-center justify-center gap-2 bg-zinc-900 text-white px-6 sm:px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50"
             >
               <Save size={16} />
               Guardar Parámetros Comerciales
@@ -862,8 +862,8 @@ export default function ConfigModule() {
 
       case 'numeraciones':
         return (
-          <form onSubmit={handleSaveSettings} className="space-y-6 max-w-2xl">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <form onSubmit={handleSaveSettings} className="space-y-6 max-w-2xl w-full">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
               <div className="space-y-2">
                 <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Próximo Número de Venta</label>
                 <input 
@@ -904,7 +904,7 @@ export default function ConfigModule() {
             <button 
               type="submit" 
               disabled={loading}
-              className="flex items-center gap-2 bg-zinc-900 text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50"
+              className="w-full sm:w-auto flex items-center justify-center gap-2 bg-zinc-900 text-white px-6 sm:px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50"
             >
               <Save size={16} />
               Guardar Numeraciones
@@ -920,10 +920,10 @@ export default function ConfigModule() {
   return (
     <div className="h-full flex flex-col bg-white overflow-hidden">
       {/* Header */}
-      <header className="bg-white border-b border-zinc-200 p-8 shrink-0">
-        <div className="flex items-center justify-between">
+      <header className="bg-white border-b border-zinc-200 p-4 sm:p-6 lg:p-8 shrink-0">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h2 className="text-3xl font-black text-zinc-900 tracking-tight flex items-center gap-3">
+            <h2 className="text-2xl sm:text-3xl font-black text-zinc-900 tracking-tight flex items-center gap-3">
               <Settings className="text-zinc-400" size={32} />
               CONFIGURACIÓN
             </h2>
@@ -931,7 +931,7 @@ export default function ConfigModule() {
           </div>
           
           {message && (
-            <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold animate-in fade-in slide-in-from-top-2 ${
+            <div className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-xl text-xs font-bold animate-in fade-in slide-in-from-top-2 w-full sm:w-auto ${
               message.type === 'success' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-red-50 text-red-600 border border-red-100'
             }`}>
               {message.type === 'success' ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
@@ -942,10 +942,10 @@ export default function ConfigModule() {
       </header>
 
       {/* Main Layout */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
         {renderTabs()}
         
-        <main className="flex-1 overflow-y-auto p-12 bg-white custom-scrollbar">
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-12 bg-white custom-scrollbar">
           {renderContent()}
         </main>
       </div>
