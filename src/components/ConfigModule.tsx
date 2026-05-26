@@ -11,7 +11,9 @@ import {
   Plus,
   Trash2,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  RotateCcw,
+  ShieldAlert
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { unwrapResponse, apiFetch } from '../utils/api';
@@ -34,6 +36,11 @@ export default function ConfigModule() {
   const [activeTab, setActiveTab] = useState<Section>('negocio');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetAdminPassword, setResetAdminPassword] = useState('');
+  const [resetConfirmation, setResetConfirmation] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
 
   // Form states
   const [settings, setSettings] = useState<Record<string, string>>({});
@@ -238,7 +245,54 @@ export default function ConfigModule() {
     setTimeout(() => setMessage(null), 3000);
   };
 
-  const renderTabs = () => {
+  
+  const handleResetAppData = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!resetAdminPassword.trim()) {
+      showStatus('Ingrese la contraseÃ±a del administrador', 'error');
+      return;
+    }
+
+    if (resetConfirmation.trim() !== 'REESTABLECER') {
+      showStatus('Debe escribir REESTABLECER para confirmar', 'error');
+      return;
+    }
+
+    setResetLoading(true);
+
+    try {
+      const res = await apiFetch('/api/config/reset-app-data', {
+        method: 'POST',
+        body: JSON.stringify({
+          adminPassword: resetAdminPassword,
+          confirmation: resetConfirmation.trim()
+        })
+      });
+
+      const body = await res.json();
+
+      if (!res.ok) {
+        throw new Error(body?.message || 'No se pudo restablecer la app');
+      }
+
+      setShowResetModal(false);
+      setResetAdminPassword('');
+      setResetConfirmation('');
+      setSettings({});
+      setPaymentMethods([]);
+      setCategories([]);
+      setFamilies([]);
+      await fetchData();
+      showStatus('Datos restablecidos correctamente', 'success');
+    } catch (error: any) {
+      showStatus(error?.message || 'Error al restablecer datos', 'error');
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+const renderTabs = () => {
     const tabs = [
       { id: 'negocio', label: 'Datos del Negocio', icon: Store },
       { id: 'pagos', label: 'Formas de Pago', icon: CreditCard },
@@ -407,6 +461,32 @@ export default function ConfigModule() {
                 <Save size={16} />
                 Guardar Cambios
               </button>
+            )}
+
+            {hasPermission('settings', 'delete') && (
+              <div className="mt-8 p-4 sm:p-6 rounded-3xl border border-red-200 bg-red-50/60 space-y-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center shrink-0">
+                    <ShieldAlert size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-red-700 uppercase tracking-widest">Zona de peligro</h3>
+                    <p className="text-xs text-red-600/80 font-bold mt-1 leading-relaxed">
+                      Restablece todos los datos operativos de la app para empezar pruebas desde cero.
+                      Se conservan usuarios, permisos, configuraciÃ³n base y formas de pago.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowResetModal(true)}
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 bg-red-600 text-white px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-red-700 transition-all"
+                >
+                  <RotateCcw size={16} />
+                  Restablecer datos de la app
+                </button>
+              </div>
             )}
           </form>
         );
@@ -949,6 +1029,87 @@ export default function ConfigModule() {
           {renderContent()}
         </main>
       </div>
+
+      {showResetModal && (
+        <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm flex items-start sm:items-center justify-center p-3 sm:p-6">
+          <form
+            onSubmit={handleResetAppData}
+            className="bg-white w-full max-w-lg rounded-3xl sm:rounded-[40px] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+          >
+            <div className="p-5 sm:p-8 bg-red-600 text-white flex items-start gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-white/15 flex items-center justify-center shrink-0">
+                <ShieldAlert size={26} />
+              </div>
+              <div>
+                <h3 className="text-xl sm:text-2xl font-black tracking-tight">Restablecer datos</h3>
+                <p className="text-xs sm:text-sm text-white/80 font-bold mt-1">
+                  Esta acciÃ³n borra datos operativos y no se puede deshacer.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-5 sm:p-8 space-y-5">
+              <div className="p-4 rounded-2xl bg-red-50 border border-red-100 text-red-700 text-xs font-bold leading-relaxed">
+                Se eliminarÃ¡n productos, clientes, ventas, compras, finanzas, rutas, checklist,
+                reportes operativos, pedidos a proveedor, proveedores, categorÃ­as y familias.
+                Se conservarÃ¡n usuarios, permisos, datos del negocio y formas de pago.
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-black uppercase tracking-widest text-zinc-400">
+                  ContraseÃ±a del administrador
+                </label>
+                <input
+                  type="password"
+                  value={resetAdminPassword}
+                  onChange={(e) => setResetAdminPassword(e.target.value)}
+                  className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-red-500 outline-none transition-all"
+                  placeholder="Ingrese la contraseÃ±a"
+                  autoComplete="current-password"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-black uppercase tracking-widest text-zinc-400">
+                  ConfirmaciÃ³n
+                </label>
+                <input
+                  type="text"
+                  value={resetConfirmation}
+                  onChange={(e) => setResetConfirmation(e.target.value)}
+                  className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-red-500 outline-none transition-all"
+                  placeholder="Escriba REESTABLECER"
+                />
+              </div>
+            </div>
+
+            <div className="p-5 sm:p-8 bg-zinc-50 border-t border-zinc-100 flex flex-col sm:flex-row gap-3 sm:justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowResetModal(false);
+                  setResetAdminPassword('');
+                  setResetConfirmation('');
+                }}
+                disabled={resetLoading}
+                className="w-full sm:w-auto px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs text-zinc-600 hover:bg-zinc-200 transition-all disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="submit"
+                disabled={resetLoading || !resetAdminPassword.trim() || resetConfirmation.trim() !== 'REESTABLECER'}
+                className="w-full sm:w-auto flex items-center justify-center gap-2 bg-red-600 text-white px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-red-700 transition-all disabled:opacity-50"
+              >
+                <RotateCcw size={16} />
+                {resetLoading ? 'Restableciendo...' : 'Confirmar reset'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
     </div>
   );
 }

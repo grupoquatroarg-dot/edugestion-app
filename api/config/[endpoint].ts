@@ -1,4 +1,4 @@
-﻿import { sendError, sendSuccess } from "../../server/utils/response.js";
+import { sendError, sendSuccess } from "../../server/utils/response.js";
 import {
   getEndpoint,
   getPoolOrFail,
@@ -57,6 +57,135 @@ export default async function handler(req: any, res: any) {
       }
 
       return sendError(res, "Endpoint de configuraciÃ³n no encontrado", 404);
+    }
+
+
+    if (req.method === "POST" && endpoint === "reset-app-data") {
+      const user = await requireSettingsPermission(req, res, "delete");
+      if (!user) return;
+
+      if (user.role !== "administrador") {
+        return sendError(res, "Solo el usuario administrador puede restablecer la app", 403);
+      }
+
+      const pool = getPoolOrFail(res);
+      if (!pool) return;
+
+      const body = getRequestBody(req);
+      const adminPassword = String(body?.adminPassword || body?.password || "").trim();
+      const confirmation = String(body?.confirmation || "").trim();
+      const expectedPassword = String(process.env.RESET_APP_PASSWORD || "admin123");
+
+      if (!adminPassword || adminPassword !== expectedPassword) {
+        return sendError(res, "ContraseÃ±a de administrador incorrecta", 403);
+      }
+
+      if (confirmation !== "REESTABLECER") {
+        return sendError(res, "Debe escribir REESTABLECER para confirmar", 400);
+      }
+
+      const resetTables = [
+        "checklist_items",
+        "checklists",
+        "checklist_template_items",
+        "checklist_templates",
+        "route_items",
+        "routes",
+        "supplier_order_items",
+        "supplier_orders",
+        "sale_items",
+        "sales",
+        "purchase_invoice_items",
+        "purchase_invoices",
+        "movimientos_financieros",
+        "cheques",
+        "price_update_history",
+        "stock_movimientos",
+        "products",
+        "proveedores",
+        "clientes",
+        "product_families",
+        "product_categories"
+      ];
+
+      const quoteIdentifier = (value: string) => `"${value.replace(/"/g, '""')}"`;
+
+      const client = await pool.connect();
+
+      try {
+        await client.query("BEGIN");
+
+        const existingTablesResult = await client.query(
+          `
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name = ANY($1::text[])
+          `,
+          [resetTables]
+        );
+
+        const existingTables = existingTablesResult.rows
+          .map((row: any) => String(row.table_name))
+          .filter((tableName: string) => resetTables.includes(tableName));
+
+        if (existingTables.length > 0) {
+          await client.query(
+            `TRUNCATE TABLE ${existingTables.map(quoteIdentifier).join(", ")} RESTART IDENTITY CASCADE`
+          );
+        }
+
+        if (existingTables.includes("clientes")) {
+          await client.query(
+            `
+              INSERT INTO clientes (
+                nombre_apellido,
+                razon_social,
+                tipo_cliente,
+                lista_precio,
+                limite_credito
+              )
+              VALUES ($1, $2, $3, $4, $5)
+            `,
+            ["Consumidor Final", "Consumidor Final", "minorista", "lista1", 0]
+          );
+        }
+
+        const counters = [
+          ["next_sale_number", "1"],
+          ["next_order_number", "1"],
+          ["next_payment_number", "1"],
+          ["next_invoice_number", "1"]
+        ];
+
+        for (const [key, value] of counters) {
+          await client.query(
+            `
+              INSERT INTO settings (key, value)
+              VALUES ($1, $2)
+              ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            `,
+            [key, value]
+          );
+        }
+
+        await client.query("COMMIT");
+
+        return sendSuccess(
+          res,
+          {
+            reset: true,
+            tablas_limpiadas: existingTables.length,
+            conservado: ["usuarios", "permisos", "settings", "formas de pago"]
+          },
+          "Datos restablecidos correctamente"
+        );
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
     }
 
     if (req.method === "POST") {
