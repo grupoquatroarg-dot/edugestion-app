@@ -96,15 +96,36 @@ export default function CustomerModule() {
     );
   }, [clientes, searchTerm]);
 
+  const getLocalArgentinaPhone = (rawPhone: string) => {
+    let digits = String(rawPhone || '').replace(/\D/g, '');
+
+    if (digits.startsWith('549')) return digits.slice(3);
+    if (digits.startsWith('54')) return digits.slice(2);
+    if (digits.startsWith('9') && digits.length === 11) return digits.slice(1);
+
+    return digits;
+  };
+
+  const normalizeArgentinaPhone = (rawPhone: string) => {
+    const localPhone = getLocalArgentinaPhone(rawPhone);
+
+    if (!localPhone) return '';
+
+    return `+549${localPhone}`;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const url = editingCliente ? `/api/clientes/${editingCliente.id}` : '/api/clientes';
+    const url = editingCliente ? `/api/clientes?id=${editingCliente.id}` : '/api/clientes';
     const method = editingCliente ? 'PUT' : 'POST';
 
     try {
       const res = await apiFetch(url, {
         method,
-        body: JSON.stringify(formData)
+        body: JSON.stringify({
+          ...formData,
+          telefono: normalizeArgentinaPhone(formData.telefono)
+        })
       });
       
       const body = await res.json();
@@ -126,7 +147,7 @@ export default function CustomerModule() {
     if (!window.confirm("¿Estás seguro de eliminar este cliente?")) return;
 
     try {
-      const res = await apiFetch(`/api/clientes/${id}`, { method: 'DELETE' });
+      const res = await apiFetch(`/api/clientes?id=${id}`, { method: 'DELETE' });
       const body = await res.json();
       unwrapResponse(body);
       fetchClientes();
@@ -145,7 +166,7 @@ export default function CustomerModule() {
         cuit: cliente.cuit || '',
         localidad: cliente.localidad || '',
         provincia: cliente.provincia || '',
-        telefono: cliente.telefono || '',
+        telefono: getLocalArgentinaPhone(cliente.telefono || ''),
         email: cliente.email || '',
         direccion: cliente.direccion || '',
         latitud: cliente.latitud || 0,
@@ -245,8 +266,8 @@ export default function CustomerModule() {
       <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredClientes.map(cliente => (
-            <div key={cliente.id} className="bg-white rounded-2xl border border-zinc-200 p-6 hover:shadow-md transition-all group relative">
-              <div className="absolute top-4 right-4 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div key={cliente.id} className="bg-white rounded-2xl border border-zinc-200 p-4 sm:p-6 hover:shadow-md transition-all group relative">
+              <div className="absolute top-3 right-3 flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity bg-white/90 backdrop-blur rounded-xl border border-zinc-100 shadow-sm">
                 <button 
                   onClick={() => {
                     setSelectedClienteId(cliente.id);
@@ -425,13 +446,23 @@ export default function CustomerModule() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-zinc-500 uppercase mb-2">Teléfono</label>
-                  <input
-                    type="text"
-                    className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none"
-                    value={formData.telefono}
-                    onChange={(e) => setFormData({ ...formData, telefono: e.target.value })}
-                  />
+                  <label className="block text-xs font-bold text-zinc-500 uppercase mb-2">WhatsApp / Teléfono</label>
+                  <div className="flex">
+                    <div className="px-3 py-2 bg-zinc-200 border border-zinc-200 rounded-l-xl text-sm font-black text-zinc-700 flex items-center">
+                      +54 9
+                    </div>
+                    <input
+                      type="tel"
+                      inputMode="numeric"
+                      placeholder="3413118580"
+                      className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 border-l-0 rounded-r-xl focus:ring-2 focus:ring-zinc-900 outline-none"
+                      value={formData.telefono}
+                      onChange={(e) => setFormData({ ...formData, telefono: e.target.value.replace(/\D/g, '') })}
+                    />
+                  </div>
+                  <p className="text-[10px] text-zinc-400 font-bold mt-1">
+                    Cargá solo código de área + celular. Ej: 3413118580
+                  </p>
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-zinc-500 uppercase mb-2">Email</label>

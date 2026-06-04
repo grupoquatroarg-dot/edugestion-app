@@ -330,24 +330,19 @@ export default function SalesModule() {
       const saleNumber = sale.numero_venta || sale.id;
       const message = `Hola ${sale.nombre_cliente || ''}, te enviamos el remito/comprobante de tu venta N° ${saleNumber}. Total: $${Number(sale.total || 0).toFixed(2)}.`;
 
-      const file = createSaleReceiptPdfFile(sale, businessSettings);
+      // Por seguridad del navegador, WhatsApp Web/App no permite adjuntar el PDF automáticamente desde una URL.
+      // Se descarga el PDF y se abre el chat directo del cliente para adjuntarlo.
+      generateSaleReceipt(sale, businessSettings);
 
-      if (
-        navigator.share &&
-        navigator.canShare &&
-        navigator.canShare({ files: [file] })
-      ) {
-        await navigator.share({
-          title: `Comprobante Venta ${saleNumber}`,
-          text: message,
-          files: [file],
-        });
-        return;
+      const whatsappUrl = `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`;
+
+      if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+        window.location.href = whatsappUrl;
+      } else {
+        window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
       }
 
-      generateSaleReceipt(sale, businessSettings);
-      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank');
-      alert('Se descargó el PDF y se abrió WhatsApp. Adjuntá el comprobante descargado en el chat del cliente.');
+      alert('Se descargó el PDF y se abrió WhatsApp directo al cliente. Adjuntá el comprobante descargado en el chat.');
     } catch (error) {
       console.error('Error sending receipt via WhatsApp:', error);
       alert('No se pudo preparar el envío por WhatsApp.');
@@ -570,7 +565,7 @@ export default function SalesModule() {
   return (
     <div className="flex flex-col h-full overflow-hidden bg-zinc-50">
       {/* Tabs Header */}
-      <div className="bg-white border-b border-zinc-200 px-4 sm:px-8 flex items-center justify-between overflow-x-auto no-scrollbar">
+      <div className="bg-white border-b border-zinc-200 px-2 sm:px-8 flex items-center justify-between overflow-x-auto no-scrollbar shrink-0">
         <div className="flex whitespace-nowrap">
           <button 
             onClick={() => setActiveTab('nueva')}
@@ -604,10 +599,10 @@ export default function SalesModule() {
 
       <div className="flex-1 overflow-hidden">
         {activeTab === 'nueva' ? (
-          <div className="flex h-full overflow-hidden flex-col xl:flex-row">
+          <div className="flex h-full overflow-y-auto xl:overflow-hidden flex-col xl:flex-row">
             {/* Product Selection */}
-            <div className="flex-1 flex flex-col p-4 lg:p-6 xl:p-8 xl:border-r border-zinc-200 overflow-hidden">
-              <div className="mb-6 lg:mb-8 flex flex-col sm:flex-row items-start justify-between gap-4">
+            <div className="shrink-0 xl:flex-1 flex flex-col p-4 lg:p-6 xl:p-8 xl:border-r border-zinc-200 overflow-visible xl:overflow-hidden">
+              <div className="mb-4 lg:mb-6 flex flex-col sm:flex-row items-start justify-between gap-4">
                 <div>
                   <h1 className="text-2xl lg:text-3xl font-black text-zinc-900 tracking-tight">Nueva Venta</h1>
                   <p className="text-zinc-500 mt-1 text-sm">Selecciona productos para el pedido</p>
@@ -640,7 +635,7 @@ export default function SalesModule() {
                 </div>
               </div>
 
-              <div className="relative mb-6 lg:mb-8">
+              <div className="relative mb-4 lg:mb-6">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={20} />
                 <input
                   type="text"
@@ -651,7 +646,7 @@ export default function SalesModule() {
                 />
               </div>
 
-              <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+              <div className="shrink-0 xl:flex-1 overflow-y-auto pr-2 custom-scrollbar max-h-[44dvh] xl:max-h-none">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-6">
                   {filteredProducts.map(product => (
                     <button
@@ -699,7 +694,7 @@ export default function SalesModule() {
             </div>
 
             {/* Cart / Order Summary */}
-            <div className="w-full xl:w-[560px] 2xl:w-[600px] bg-white flex flex-col shadow-2xl z-10 border-t xl:border-t-0 xl:border-l border-zinc-200 min-h-0">
+            <div className="w-full xl:w-[560px] 2xl:w-[600px] bg-white flex flex-col shadow-2xl z-10 border-t xl:border-t-0 xl:border-l border-zinc-200 min-h-0 shrink-0">
               <div className="p-3 lg:p-4 border-b border-zinc-100 flex items-center justify-between gap-3 shrink-0">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="w-10 h-10 bg-zinc-900 text-white rounded-xl flex items-center justify-center shrink-0">

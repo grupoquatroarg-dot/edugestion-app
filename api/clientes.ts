@@ -147,8 +147,33 @@ const getEndpoint = (req: any) => {
   return String(rawEndpoint || "");
 };
 
+const normalizeArgentinaPhone = (rawPhone: any) => {
+  let digits = String(rawPhone || "").replace(/\D/g, "");
+
+  if (!digits) return null;
+
+  if (digits.startsWith("00")) {
+    digits = digits.slice(2);
+  }
+
+  if (digits.startsWith("549")) {
+    return `+${digits}`;
+  }
+
+  if (digits.startsWith("54")) {
+    return `+54${digits.slice(2)}`;
+  }
+
+  if (digits.startsWith("9") && digits.length === 11) {
+    return `+54${digits}`;
+  }
+
+  return `+549${digits}`;
+};
+
 const normalizeClientBody = (body: any) => ({
   ...body,
+  telefono: normalizeArgentinaPhone(body.telefono),
   tipo_cliente: body.tipo_cliente || "minorista",
   limite_credito: Number(body.limite_credito || 0),
 });
