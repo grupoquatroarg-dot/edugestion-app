@@ -19,6 +19,25 @@ const safeText = (value: any) => {
   return String(value);
 };
 
+const sanitizeFileName = (value: any) => {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9-_ ]/g, '')
+    .trim()
+    .replace(/\s+/g, '_');
+};
+
+const getReceiptFileName = (sale: any) => {
+  const clientName = sanitizeFileName(sale.nombre_cliente || 'Cliente');
+  const rawDate = sale.fecha ? new Date(sale.fecha) : new Date();
+  const dateText = Number.isNaN(rawDate.getTime())
+    ? new Date().toISOString().split('T')[0]
+    : rawDate.toISOString().split('T')[0];
+
+  return `${clientName}_${dateText}.pdf`;
+};
+
 const getDiscountText = (item: any) => {
   const tipo = item.bonificacion_tipo || 'none';
   const valor = Number(item.bonificacion_valor || 0);
@@ -187,11 +206,11 @@ const buildSaleReceiptDoc = (sale: any, businessSettings: Record<string, string>
 
 export const generateSaleReceipt = (sale: any, businessSettings: Record<string, string> = {}) => {
   const doc = buildSaleReceiptDoc(sale, businessSettings);
-  doc.save(`Comprobante_Venta_${sale.numero_venta || sale.id}.pdf`);
+  doc.save(getReceiptFileName(sale));
 };
 
 export const createSaleReceiptPdfFile = (sale: any, businessSettings: Record<string, string> = {}) => {
   const doc = buildSaleReceiptDoc(sale, businessSettings);
   const blob = doc.output('blob');
-  return new File([blob], `Comprobante_Venta_${sale.numero_venta || sale.id}.pdf`, { type: 'application/pdf' });
+  return new File([blob], getReceiptFileName(sale), { type: 'application/pdf' });
 };
