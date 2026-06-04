@@ -329,20 +329,30 @@ export default function SalesModule() {
 
       const saleNumber = sale.numero_venta || sale.id;
       const message = `Hola ${sale.nombre_cliente || ''}, te enviamos el remito/comprobante de tu venta N° ${saleNumber}. Total: $${Number(sale.total || 0).toFixed(2)}.`;
+      const file = createSaleReceiptPdfFile(sale, businessSettings);
 
-      // Por seguridad del navegador, WhatsApp Web/App no permite adjuntar el PDF automáticamente desde una URL.
-      // Se descarga el PDF y se abre el chat directo del cliente para adjuntarlo.
-      generateSaleReceipt(sale, businessSettings);
-
-      const whatsappUrl = `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`;
-
-      if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-        window.location.href = whatsappUrl;
-      } else {
-        window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+      // Mejor opción sin WhatsApp Business API:
+      // En celular abre el compartidor nativo con el PDF adjunto + texto.
+      // El usuario elige WhatsApp y toca enviar manualmente.
+      if (
+        navigator.share &&
+        navigator.canShare &&
+        navigator.canShare({ files: [file] })
+      ) {
+        await navigator.share({
+          title: `Comprobante Venta ${saleNumber}`,
+          text: message,
+          files: [file],
+        });
+        return;
       }
 
-      alert('Se descargó el PDF y se abrió WhatsApp directo al cliente. Adjuntá el comprobante descargado en el chat.');
+      // Fallback PC / navegadores sin compartir archivos:
+      // descarga el PDF y abre el chat directo con texto.
+      generateSaleReceipt(sale, businessSettings);
+      const whatsappUrl = `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`;
+      window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+      alert('Tu navegador no permite adjuntar el PDF automáticamente. Se descargó el PDF y se abrió WhatsApp directo al cliente para adjuntarlo manualmente.');
     } catch (error) {
       console.error('Error sending receipt via WhatsApp:', error);
       alert('No se pudo preparar el envío por WhatsApp.');

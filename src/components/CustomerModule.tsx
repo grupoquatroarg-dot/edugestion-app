@@ -454,14 +454,14 @@ export default function CustomerModule() {
                     <input
                       type="tel"
                       inputMode="numeric"
-                      placeholder="3413118580"
+                      placeholder="3413111555"
                       className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 border-l-0 rounded-r-xl focus:ring-2 focus:ring-zinc-900 outline-none"
                       value={formData.telefono}
                       onChange={(e) => setFormData({ ...formData, telefono: e.target.value.replace(/\D/g, '') })}
                     />
                   </div>
                   <p className="text-[10px] text-zinc-400 font-bold mt-1">
-                    Cargá solo código de área + celular. Ej: 3413118580
+                    Cargá solo código de área + celular. Ej: 3413111555
                   </p>
                 </div>
                 <div>
