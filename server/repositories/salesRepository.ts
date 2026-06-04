@@ -10,6 +10,10 @@ export interface SaleItem {
   cantidad: number;
   precio_venta: number;
   costo_total_peps: number;
+  precio_unitario_original?: number;
+  bonificacion_tipo?: 'none' | 'percentage' | 'fixed' | string | null;
+  bonificacion_valor?: number;
+  precio_unitario_bonificado?: number;
 }
 
 export interface Sale {
@@ -53,6 +57,9 @@ const mapSale = (row: any) => {
     notes: row.notes ?? null,
     usuario: row.usuario ?? null,
     estado: row.estado ?? null,
+    cliente_localidad: row.cliente_localidad ?? row.localidad ?? null,
+    cliente_direccion: row.cliente_direccion ?? row.direccion ?? null,
+    cliente_telefono: row.cliente_telefono ?? row.telefono ?? null,
   };
 };
 
@@ -63,7 +70,12 @@ const mapSaleItem = (row: any) => ({
   cantidad: toNumber(row.cantidad),
   precio_venta: toNumber(row.precio_venta),
   costo_total_peps: toNumber(row.costo_total_peps),
+  precio_unitario_original: toNumber(row.precio_unitario_original, toNumber(row.precio_venta)),
+  bonificacion_tipo: row.bonificacion_tipo ?? 'none',
+  bonificacion_valor: toNumber(row.bonificacion_valor),
+  precio_unitario_bonificado: toNumber(row.precio_unitario_bonificado, toNumber(row.precio_venta)),
   product_name: row.product_name ?? null,
+  company: row.company ?? null,
   codigo_unico: row.codigo_unico ?? null,
 });
 
@@ -94,7 +106,10 @@ export const salesRepository = {
   getById(id: number, executor?: Queryable) {
     if (!isPostgresConfigured()) {
       const sale = db.prepare(`
-        SELECT s.*, COALESCE(c.nombre_apellido, s.nombre_cliente) as nombre_cliente
+        SELECT s.*, COALESCE(c.nombre_apellido, s.nombre_cliente) as nombre_cliente,
+               c.localidad as cliente_localidad,
+               c.direccion as cliente_direccion,
+               c.telefono as cliente_telefono
         FROM sales s
         LEFT JOIN clientes c ON s.cliente_id = c.id
         WHERE s.id = ?
@@ -103,7 +118,7 @@ export const salesRepository = {
       if (!sale) return null;
 
       const items = db.prepare(`
-        SELECT si.*, p.name as product_name, p.codigo_unico
+        SELECT si.*, p.name as product_name, p.company, p.codigo_unico
         FROM sale_items si
         JOIN products p ON si.product_id = p.id
         WHERE si.sale_id = ?
@@ -115,7 +130,10 @@ export const salesRepository = {
     const queryable = getExecutor(executor);
     return queryable
       .query(
-        `SELECT s.*, COALESCE(c.nombre_apellido, s.nombre_cliente) AS nombre_cliente
+        `SELECT s.*, COALESCE(c.nombre_apellido, s.nombre_cliente) AS nombre_cliente,
+                c.localidad AS cliente_localidad,
+                c.direccion AS cliente_direccion,
+                c.telefono AS cliente_telefono
          FROM sales s
          LEFT JOIN clientes c ON s.cliente_id = c.id
          WHERE s.id = $1
@@ -126,7 +144,7 @@ export const salesRepository = {
         if (!saleResult.rowCount) return null;
 
         const itemsResult = await queryable.query(
-          `SELECT si.*, p.name AS product_name, p.codigo_unico
+          `SELECT si.*, p.name AS product_name, p.company, p.codigo_unico
            FROM sale_items si
            JOIN products p ON si.product_id = p.id
            WHERE si.sale_id = $1
@@ -164,12 +182,25 @@ export const salesRepository = {
 
         const saleId = Number(info.lastInsertRowid);
         const insertItem = db.prepare(`
-          INSERT INTO sale_items (sale_id, product_id, cantidad, precio_venta, costo_total_peps)
-          VALUES (?, ?, ?, ?, ?)
+          INSERT INTO sale_items (
+            sale_id, product_id, cantidad, precio_venta, costo_total_peps,
+            precio_unitario_original, bonificacion_tipo, bonificacion_valor, precio_unitario_bonificado
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
         for (const item of items) {
-          insertItem.run(saleId, item.product_id, item.cantidad, item.precio_venta, item.costo_total_peps);
+          insertItem.run(
+            saleId,
+            item.product_id,
+            item.cantidad,
+            item.precio_venta,
+            item.costo_total_peps,
+            item.precio_unitario_original ?? item.precio_venta,
+            item.bonificacion_tipo || 'none',
+            item.bonificacion_valor || 0,
+            item.precio_unitario_bonificado ?? item.precio_venta
+          );
         }
 
         return saleId;
@@ -205,9 +236,22 @@ export const salesRepository = {
 
         for (const item of items) {
           await queryable.query(
-            `INSERT INTO sale_items (sale_id, product_id, cantidad, precio_venta, costo_total_peps)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [saleId, item.product_id, item.cantidad, item.precio_venta, item.costo_total_peps]
+            `INSERT INTO sale_items (
+               sale_id, product_id, cantidad, precio_venta, costo_total_peps,
+               precio_unitario_original, bonificacion_tipo, bonificacion_valor, precio_unitario_bonificado
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [
+              saleId,
+              item.product_id,
+              item.cantidad,
+              item.precio_venta,
+              item.costo_total_peps,
+              item.precio_unitario_original ?? item.precio_venta,
+              item.bonificacion_tipo || 'none',
+              item.bonificacion_valor || 0,
+              item.precio_unitario_bonificado ?? item.precio_venta,
+            ]
           );
         }
 

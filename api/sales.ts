@@ -17,6 +17,10 @@ const saleSchema = z.object({
     product_id: z.number(),
     cantidad: z.number().positive(),
     precio_venta: z.number().nonnegative(),
+    precio_unitario_original: z.number().nonnegative().optional(),
+    bonificacion_tipo: z.enum(["none", "percentage", "fixed"]).optional(),
+    bonificacion_valor: z.number().nonnegative().optional(),
+    precio_unitario_bonificado: z.number().nonnegative().optional(),
   })).min(1, "Debe incluir al menos un producto"),
   total: z.number().nonnegative(),
 });
@@ -166,20 +170,38 @@ const mapSupplierItem = (row: any) => ({
   proveedor: row.proveedor || "",
   codigo_unico: row.codigo_unico || "",
   cantidad: toNumber(row.cantidad),
+  precio_venta: toNumber(row.precio_venta),
+  importe: toNumber(row.cantidad) * toNumber(row.precio_venta),
 });
 
-const mapSupplierOrder = (row: any, items: any[] = []) => ({
-  id: toNumber(row.id),
-  numero_pedido: toNumber(row.numero_pedido),
-  cliente: row.cliente || "",
-  cliente_id: row.cliente_id === null || row.cliente_id === undefined ? null : toNumber(row.cliente_id),
-  sale_id: row.sale_id === null || row.sale_id === undefined ? null : toNumber(row.sale_id),
-  fecha: row.fecha,
-  estado: row.estado || "pendiente",
-  notes: row.notes || "",
-  stock_actualizado: toNumber(row.stock_actualizado),
-  productos: items.map(mapSupplierItem),
-});
+const mapSupplierOrder = (row: any, items: any[] = []) => {
+  const productos = items.map(mapSupplierItem);
+  const totalPedido = productos.reduce((sum: number, item: any) => sum + item.importe, 0);
+  const saleTotal = toNumber(row.sale_total);
+  const salePaid = toNumber(row.sale_monto_pagado);
+  const ratio = saleTotal > 0 ? Math.min(1, totalPedido / saleTotal) : 1;
+  const cobradoPedido = Math.min(totalPedido, salePaid * ratio);
+  const ctaCtePedido = Math.max(0, totalPedido - cobradoPedido);
+
+  return {
+    id: toNumber(row.id),
+    numero_pedido: toNumber(row.numero_pedido),
+    cliente: row.cliente || "",
+    cliente_id: row.cliente_id === null || row.cliente_id === undefined ? null : toNumber(row.cliente_id),
+    sale_id: row.sale_id === null || row.sale_id === undefined ? null : toNumber(row.sale_id),
+    fecha: row.fecha,
+    estado: row.estado || "pendiente",
+    notes: row.notes || "",
+    stock_actualizado: toNumber(row.stock_actualizado),
+    total_pedido: totalPedido,
+    cobrado_pedido: cobradoPedido,
+    cta_cte_pedido: ctaCtePedido,
+    sale_total: saleTotal,
+    sale_monto_pagado: salePaid,
+    sale_monto_pendiente: toNumber(row.sale_monto_pendiente),
+    productos,
+  };
+};
 
 const fetchSupplierOrderItems = async (queryable: any, orderId: number) => {
   const itemsResult = await queryable.query(
@@ -191,9 +213,18 @@ const fetchSupplierOrderItems = async (queryable: any, orderId: number) => {
         soi.cantidad,
         p.name AS product_name,
         COALESCE(p.company, '') AS proveedor,
-        COALESCE(p.codigo_unico, p.code, '') AS codigo_unico
+        COALESCE(p.codigo_unico, p.code, '') AS codigo_unico,
+        COALESCE(si.precio_venta, p.sale_price, 0) AS precio_venta
       FROM supplier_order_items soi
+      JOIN supplier_orders so ON so.id = soi.order_id
       JOIN products p ON soi.product_id = p.id
+      LEFT JOIN LATERAL (
+        SELECT precio_venta
+        FROM sale_items
+        WHERE sale_id = so.sale_id AND product_id = soi.product_id
+        ORDER BY id ASC
+        LIMIT 1
+      ) si ON true
       WHERE soi.order_id = $1
       ORDER BY soi.id ASC
     `,
@@ -215,9 +246,14 @@ const handleSupplierOrders = async (req: any, res: any) => {
     try {
       const ordersResult = await pool.query(
         `
-          SELECT id, numero_pedido, cliente, cliente_id, sale_id, fecha, estado, notes, stock_actualizado
-          FROM supplier_orders
-          ORDER BY fecha DESC, id DESC
+          SELECT
+            so.id, so.numero_pedido, so.cliente, so.cliente_id, so.sale_id, so.fecha, so.estado, so.notes, so.stock_actualizado,
+            s.total AS sale_total,
+            s.monto_pagado AS sale_monto_pagado,
+            s.monto_pendiente AS sale_monto_pendiente
+          FROM supplier_orders so
+          LEFT JOIN sales s ON s.id = so.sale_id
+          ORDER BY so.fecha DESC, so.id DESC
         `
       );
 
@@ -241,9 +277,14 @@ const handleSupplierOrders = async (req: any, res: any) => {
     try {
       const orderResult = await pool.query(
         `
-          SELECT id, numero_pedido, cliente, cliente_id, sale_id, fecha, estado, notes, stock_actualizado
-          FROM supplier_orders
-          WHERE id = $1
+          SELECT
+            so.id, so.numero_pedido, so.cliente, so.cliente_id, so.sale_id, so.fecha, so.estado, so.notes, so.stock_actualizado,
+            s.total AS sale_total,
+            s.monto_pagado AS sale_monto_pagado,
+            s.monto_pendiente AS sale_monto_pendiente
+          FROM supplier_orders so
+          LEFT JOIN sales s ON s.id = so.sale_id
+          WHERE so.id = $1
           LIMIT 1
         `,
         [id]
@@ -462,11 +503,6 @@ const handleSupplierOrders = async (req: any, res: any) => {
         return sendError(res, "El pedido debe estar en estado Auditar Pedido para completar la entrega", 400);
       }
 
-      if (order.sale_id) {
-        await client.query("ROLLBACK");
-        return sendError(res, "El pedido ya tiene una venta asociada", 400);
-      }
-
       const itemResult = await client.query(
         `
           SELECT
@@ -490,7 +526,16 @@ const handleSupplierOrders = async (req: any, res: any) => {
 
       let totalVenta = 0;
       let totalCosto = 0;
-      const saleItems: Array<{ product_id: number; cantidad: number; precio_venta: number; costo_total_peps: number }> = [];
+      const saleItems: Array<{
+        product_id: number;
+        cantidad: number;
+        precio_venta: number;
+        costo_total_peps: number;
+        precio_unitario_original?: number;
+        bonificacion_tipo?: string;
+        bonificacion_valor?: number;
+        precio_unitario_bonificado?: number;
+      }> = [];
 
       for (const item of itemResult.rows) {
         const productId = toNumber(item.product_id);
@@ -507,6 +552,10 @@ const handleSupplierOrders = async (req: any, res: any) => {
           cantidad,
           precio_venta: precioVenta,
           costo_total_peps: costoTotalItem,
+          precio_unitario_original: precioVenta,
+          bonificacion_tipo: "none",
+          bonificacion_valor: 0,
+          precio_unitario_bonificado: precioVenta,
         });
 
         await client.query(
@@ -536,11 +585,57 @@ const handleSupplierOrders = async (req: any, res: any) => {
             -cantidad,
             costoUnitario,
             0,
-            `Venta desde Pedido #${order.numero_pedido || order.id}`,
+            `Entrega pendiente desde Pedido #${order.numero_pedido || order.id}`,
             "egreso",
             "venta",
             user.userName || "Sistema",
           ]
+        );
+
+        if (order.sale_id) {
+          await client.query(
+            `
+              UPDATE sale_items
+              SET costo_total_peps = COALESCE(costo_total_peps, 0) + $1
+              WHERE id = (
+                SELECT id
+                FROM sale_items
+                WHERE sale_id = $2 AND product_id = $3
+                ORDER BY id ASC
+                LIMIT 1
+              )
+            `,
+            [costoTotalItem, order.sale_id, productId]
+          );
+        }
+      }
+
+      if (order.sale_id) {
+        await client.query(
+          `
+            UPDATE sales
+            SET costo_total = COALESCE(costo_total, 0) + $1,
+                ganancia = COALESCE(total, 0) - (COALESCE(costo_total, 0) + $1)
+            WHERE id = $2
+          `,
+          [totalCosto, order.sale_id]
+        );
+
+        await client.query(
+          `
+            UPDATE supplier_orders
+            SET estado = $1,
+                stock_actualizado = 1
+            WHERE id = $2
+          `,
+          ["entregado", id]
+        );
+
+        await client.query("COMMIT");
+        return sendSuccess(
+          res,
+          { success: true, saleId: toNumber(order.sale_id), linkedSale: true },
+          "Pedido entregado y costo actualizado en la venta original"
         );
       }
 

@@ -38,103 +38,55 @@ const getAndIncrementSetting = async (client: TransactionClient, key: string, de
 
 export const salesService = {
   async createSale(saleData: any) {
-    const { items, total, cliente_id, nombre_cliente, metodo_pago, monto_pagado, notes, cheque_data, usuario } = saleData;
+    const { items, cliente_id, nombre_cliente, metodo_pago, monto_pagado, notes, cheque_data, usuario } = saleData;
+
+    const normalizeSaleItem = (item: any) => {
+      const cantidad = toNumber(item.cantidad);
+      const precioOriginal = toNumber(
+        item.precio_unitario_original ?? item.precio_original ?? item.precio_venta ?? item.precio_unitario ?? item.price
+      );
+      const bonificacionTipo = String(item.bonificacion_tipo || 'none');
+      const bonificacionValor = toNumber(item.bonificacion_valor);
+
+      let precioBonificado = toNumber(item.precio_venta, precioOriginal);
+
+      if (bonificacionTipo === 'percentage') {
+        precioBonificado = precioOriginal * (1 - Math.min(Math.max(bonificacionValor, 0), 100) / 100);
+      }
+
+      if (bonificacionTipo === 'fixed') {
+        precioBonificado = Math.max(0, precioOriginal - Math.max(bonificacionValor, 0));
+      }
+
+      return {
+        product_id: Number(item.product_id),
+        cantidad,
+        precio_unitario_original: precioOriginal,
+        bonificacion_tipo: bonificacionTipo,
+        bonificacion_valor: bonificacionValor,
+        precio_unitario_bonificado: precioBonificado,
+        precio_venta: precioBonificado,
+      };
+    };
+
+    const normalizedItems = items.map(normalizeSaleItem);
+    const totalVenta = normalizedItems.reduce((sum: number, item: any) => sum + item.cantidad * item.precio_venta, 0);
 
     if (!isPostgresConfigured()) {
+      // Flujo local de respaldo: conserva el comportamiento anterior para desarrollo local.
       return db.transaction(() => {
-        const aggregatedQuantities: Record<number, number> = {};
-        for (const item of items) {
-          aggregatedQuantities[item.product_id] = (aggregatedQuantities[item.product_id] || 0) + item.cantidad;
-        }
-
-        const insufficientStockItems = [];
-        for (const [productId, totalRequested] of Object.entries(aggregatedQuantities)) {
-          const product = db.prepare('SELECT stock, name FROM products WHERE id = ?').get(productId) as { stock: number; name: string };
-          if (!product || product.stock < (totalRequested as number)) {
-            insufficientStockItems.push({
-              product_id: parseInt(productId, 10),
-              name: product?.name || 'Producto desconocido',
-              requested: totalRequested,
-              available: product?.stock || 0,
-            });
-          }
-        }
-
-        if (insufficientStockItems.length > 0) {
-          const nextOrderNum = parseInt(db.prepare("SELECT value FROM settings WHERE key = 'next_order_number'").get()?.value || '1', 10);
-          db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('next_order_number', '1')").run();
-          db.prepare("UPDATE settings SET value = ? WHERE key = 'next_order_number'").run(String(nextOrderNum + 1));
-
-          const info = db.prepare('INSERT INTO supplier_orders (numero_pedido, cliente, cliente_id, estado, notes) VALUES (?, ?, ?, ?, ?)')
-            .run(nextOrderNum, nombre_cliente || 'Consumidor Final', cliente_id || null, 'pendiente', notes || null);
-          const newOrderId = Number(info.lastInsertRowid);
-
-          const insertOrderItem = db.prepare('INSERT INTO supplier_order_items (order_id, product_id, cantidad) VALUES (?, ?, ?)');
-          for (const [productId, totalRequested] of Object.entries(aggregatedQuantities)) {
-            insertOrderItem.run(newOrderId, parseInt(productId, 10), totalRequested);
-          }
-
-          return {
-            insufficientStock: true,
-            items: insufficientStockItems,
-            orderId: newOrderId,
-            orderNumber: nextOrderNum,
-          };
-        }
-
-        let totalSaleCost = 0;
-        const processedItems: SaleItem[] = [];
-
-        for (const item of items) {
-          const productId = item.product_id;
-          const cantidad = item.cantidad;
-          const precioVenta = item.precio_venta || item.precio_unitario || item.price || 0;
-          let itemCost = 0;
-          let remainingToConsume = cantidad;
-
-          const movements = db.prepare(
-            'SELECT * FROM purchase_invoice_items WHERE product_id = ? AND cantidad_restante > 0 ORDER BY id ASC'
-          ).all(productId) as any[];
-
-          for (const move of movements) {
-            if (remainingToConsume <= 0) break;
-            const consume = Math.min(remainingToConsume, move.cantidad_restante);
-            itemCost += consume * move.costo_unitario;
-            db.prepare('UPDATE purchase_invoice_items SET cantidad_restante = cantidad_restante - ? WHERE id = ?').run(consume, move.id);
-            remainingToConsume -= consume;
-          }
-
-          if (remainingToConsume > 0) {
-            const product = db.prepare('SELECT cost FROM products WHERE id = ?').get(productId) as { cost: number };
-            itemCost += remainingToConsume * (product?.cost || 0);
-          }
-
-          totalSaleCost += itemCost;
-          processedItems.push({
-            product_id: productId,
-            cantidad,
-            precio_venta: precioVenta,
-            costo_total_peps: itemCost,
-          });
-
-          db.prepare('UPDATE products SET stock = stock - ? WHERE id = ?').run(cantidad, productId);
-          db.prepare(
-            'INSERT INTO stock_movimientos (product_id, cantidad, costo_unitario, cantidad_restante, descripcion, tipo_movimiento, motivo, usuario) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-          ).run(productId, -cantidad, cantidad > 0 ? itemCost / cantidad : 0, 0, `Venta #${cliente_id ? cliente_id : 'Mostrador'}`, 'egreso', 'venta', usuario || 'Sistema');
-        }
-
         const nextSaleNum = parseInt(db.prepare("SELECT value FROM settings WHERE key = 'next_sale_number'").get()?.value || '1', 10);
         db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('next_sale_number', '1')").run();
         db.prepare("UPDATE settings SET value = ? WHERE key = 'next_sale_number'").run(String(nextSaleNum + 1));
 
         const realPayment = toNumber(monto_pagado);
-        const montoPendiente = Math.max(0, toNumber(total) - realPayment);
+        const montoPendiente = Math.max(0, totalVenta - realPayment);
 
         const saleDataToInsert: Sale = {
           numero_venta: String(nextSaleNum),
-          total,
-          costo_total: totalSaleCost,
-          ganancia: toNumber(total) - totalSaleCost,
+          total: totalVenta,
+          costo_total: 0,
+          ganancia: totalVenta,
           cliente_id,
           nombre_cliente,
           metodo_pago,
@@ -145,38 +97,18 @@ export const salesService = {
           estado: montoPendiente > 0 ? 'Pendiente' : 'Pagada',
         };
 
+        const processedItems: SaleItem[] = normalizedItems.map((item: any) => ({
+          product_id: item.product_id,
+          cantidad: item.cantidad,
+          precio_venta: item.precio_venta,
+          costo_total_peps: 0,
+          precio_unitario_original: item.precio_unitario_original,
+          bonificacion_tipo: item.bonificacion_tipo,
+          bonificacion_valor: item.bonificacion_valor,
+          precio_unitario_bonificado: item.precio_unitario_bonificado,
+        }));
+
         const saleId = salesRepository.create(saleDataToInsert, processedItems) as unknown as number;
-
-        if (realPayment > 0) {
-          const nextPaymentNum = parseInt(db.prepare("SELECT value FROM settings WHERE key = 'next_payment_number'").get()?.value || '1', 10);
-          db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('next_payment_number', '1')").run();
-          db.prepare("UPDATE settings SET value = ? WHERE key = 'next_payment_number'").run(String(nextPaymentNum + 1));
-
-          db.prepare(`
-            INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, cliente_id, venta_id, usuario, numero_pago)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run('ingreso', 'venta', `Venta N° ${nextSaleNum}`, 'Ventas', metodo_pago, realPayment, cliente_id || null, saleId, usuario || 'Sistema', nextPaymentNum);
-        }
-
-        if (cliente_id && montoPendiente > 0) {
-          db.prepare('UPDATE clientes SET saldo_cta_cte = saldo_cta_cte + ? WHERE id = ?').run(montoPendiente, cliente_id);
-        }
-
-        if (metodo_pago.toLowerCase().includes('cheque') && cheque_data) {
-          db.prepare(`
-            INSERT INTO cheques (numero_cheque, banco, importe, fecha_vencimiento, cliente_id, venta_id, estado)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-          `).run(
-            cheque_data.numero_cheque || cheque_data.numero,
-            cheque_data.banco,
-            cheque_data.importe || total,
-            cheque_data.fecha_vencimiento || cheque_data.vencimiento,
-            cliente_id,
-            saleId,
-            'en_cartera'
-          );
-        }
-
         return { success: true, saleId, saleNumber: nextSaleNum };
       })();
     }
@@ -187,12 +119,7 @@ export const salesService = {
     try {
       await client.query('BEGIN');
 
-      const aggregatedQuantities: Record<number, number> = {};
-      for (const item of items) {
-        aggregatedQuantities[item.product_id] = (aggregatedQuantities[item.product_id] || 0) + item.cantidad;
-      }
-
-      const productIds = Object.keys(aggregatedQuantities).map((id) => Number(id));
+      const productIds = Array.from(new Set(normalizedItems.map((item: any) => item.product_id)));
       const productResult = await client.query(
         `SELECT id, name, stock, cost
          FROM products
@@ -201,91 +128,99 @@ export const salesService = {
       );
 
       const productMap = new Map<number, any>();
+      const availableStockByProduct = new Map<number, number>();
+
       for (const row of productResult.rows) {
-        productMap.set(toNumber(row.id), row);
-      }
-
-      const insufficientStockItems = [];
-      for (const [productIdRaw, totalRequested] of Object.entries(aggregatedQuantities)) {
-        const productId = Number(productIdRaw);
-        const product = productMap.get(productId);
-        const available = toNumber(product?.stock);
-        if (!product || available < totalRequested) {
-          insufficientStockItems.push({
-            product_id: productId,
-            name: product?.name || 'Producto desconocido',
-            requested: totalRequested,
-            available,
-          });
-        }
-      }
-
-      if (insufficientStockItems.length > 0) {
-        const nextOrderNum = await getAndIncrementSetting(client, 'next_order_number');
-        const orderResult = await client.query(
-          `INSERT INTO supplier_orders (numero_pedido, cliente, cliente_id, estado, notes)
-           VALUES ($1, $2, $3, $4, $5)
-           RETURNING id`,
-          [nextOrderNum, nombre_cliente || 'Consumidor Final', cliente_id || null, 'pendiente', notes || null]
-        );
-
-        const newOrderId = toNumber(orderResult.rows[0]?.id);
-
-        for (const [productIdRaw, totalRequested] of Object.entries(aggregatedQuantities)) {
-          await client.query(
-            `INSERT INTO supplier_order_items (order_id, product_id, cantidad)
-             VALUES ($1, $2, $3)`,
-            [newOrderId, Number(productIdRaw), totalRequested]
-          );
-        }
-
-        await client.query('COMMIT');
-        return {
-          insufficientStock: true,
-          items: insufficientStockItems,
-          orderId: newOrderId,
-          orderNumber: nextOrderNum,
-        };
+        const productId = toNumber(row.id);
+        productMap.set(productId, row);
+        availableStockByProduct.set(productId, Math.max(0, toNumber(row.stock)));
       }
 
       let totalSaleCost = 0;
       const processedItems: SaleItem[] = [];
+      const supplierShortageMap = new Map<number, { product_id: number; cantidad: number; name: string; requested: number; available: number }>();
 
-      for (const item of items) {
+      for (const item of normalizedItems) {
         const productId = Number(item.product_id);
         const cantidad = toNumber(item.cantidad);
-        const precioVenta = toNumber(item.precio_venta || item.precio_unitario || item.price);
-        let itemCost = 0;
-        let remainingToConsume = cantidad;
+        const precioVenta = toNumber(item.precio_venta);
+        const product = productMap.get(productId);
 
-        const fifoResult = await client.query(
-          `SELECT id, cantidad_restante, costo_unitario
-           FROM purchase_invoice_items
-           WHERE product_id = $1 AND cantidad_restante > 0
-           ORDER BY id ASC`,
-          [productId]
-        );
-
-        for (const move of fifoResult.rows) {
-          if (remainingToConsume <= 0) break;
-
-          const availableInMove = toNumber(move.cantidad_restante);
-          const consume = Math.min(remainingToConsume, availableInMove);
-          itemCost += consume * toNumber(move.costo_unitario);
-
-          await client.query(
-            `UPDATE purchase_invoice_items
-             SET cantidad_restante = cantidad_restante - $1
-             WHERE id = $2`,
-            [consume, move.id]
-          );
-
-          remainingToConsume -= consume;
+        if (!product) {
+          throw new AppError(`Producto inválido: ${productId}`, 400);
         }
 
+        const availableBeforeLine = Math.max(0, toNumber(availableStockByProduct.get(productId)));
+        const stockToConsume = Math.min(cantidad, availableBeforeLine);
+        const shortage = Math.max(0, cantidad - stockToConsume);
+
+        availableStockByProduct.set(productId, Math.max(0, availableBeforeLine - stockToConsume));
+
+        if (shortage > 0) {
+          const existing = supplierShortageMap.get(productId);
+          supplierShortageMap.set(productId, {
+            product_id: productId,
+            cantidad: (existing?.cantidad || 0) + shortage,
+            name: product?.name || 'Producto desconocido',
+            requested: (existing?.requested || 0) + cantidad,
+            available: (existing?.available || 0) + stockToConsume,
+          });
+        }
+
+        let itemCost = 0;
+        let remainingToConsume = stockToConsume;
+
         if (remainingToConsume > 0) {
-          const product = productMap.get(productId);
-          itemCost += remainingToConsume * toNumber(product?.cost);
+          const fifoResult = await client.query(
+            `SELECT id, cantidad_restante, costo_unitario
+             FROM purchase_invoice_items
+             WHERE product_id = $1 AND cantidad_restante > 0
+             ORDER BY id ASC`,
+            [productId]
+          );
+
+          for (const move of fifoResult.rows) {
+            if (remainingToConsume <= 0) break;
+
+            const availableInMove = toNumber(move.cantidad_restante);
+            const consume = Math.min(remainingToConsume, availableInMove);
+            itemCost += consume * toNumber(move.costo_unitario);
+
+            await client.query(
+              `UPDATE purchase_invoice_items
+               SET cantidad_restante = cantidad_restante - $1
+               WHERE id = $2`,
+              [consume, move.id]
+            );
+
+            remainingToConsume -= consume;
+          }
+
+          if (remainingToConsume > 0) {
+            itemCost += remainingToConsume * toNumber(product?.cost);
+          }
+
+          await client.query(
+            `UPDATE products
+             SET stock = GREATEST(0, COALESCE(stock, 0) - $1)
+             WHERE id = $2`,
+            [stockToConsume, productId]
+          );
+
+          await client.query(
+            `INSERT INTO stock_movimientos (product_id, cantidad, costo_unitario, cantidad_restante, descripcion, tipo_movimiento, motivo, usuario)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [
+              productId,
+              -stockToConsume,
+              stockToConsume > 0 ? itemCost / stockToConsume : 0,
+              0,
+              `Venta con stock disponible`,
+              'egreso',
+              'venta',
+              usuario || 'Sistema',
+            ]
+          );
         }
 
         totalSaleCost += itemCost;
@@ -294,40 +229,22 @@ export const salesService = {
           cantidad,
           precio_venta: precioVenta,
           costo_total_peps: itemCost,
+          precio_unitario_original: item.precio_unitario_original,
+          bonificacion_tipo: item.bonificacion_tipo,
+          bonificacion_valor: item.bonificacion_valor,
+          precio_unitario_bonificado: item.precio_unitario_bonificado,
         });
-
-        await client.query(
-          `UPDATE products
-           SET stock = stock - $1
-           WHERE id = $2`,
-          [cantidad, productId]
-        );
-
-        await client.query(
-          `INSERT INTO stock_movimientos (product_id, cantidad, costo_unitario, cantidad_restante, descripcion, tipo_movimiento, motivo, usuario)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [
-            productId,
-            -cantidad,
-            cantidad > 0 ? itemCost / cantidad : 0,
-            0,
-            `Venta #${cliente_id ? cliente_id : 'Mostrador'}`,
-            'egreso',
-            'venta',
-            usuario || 'Sistema',
-          ]
-        );
       }
 
       const nextSaleNum = await getAndIncrementSetting(client, 'next_sale_number');
       const realPayment = toNumber(monto_pagado);
-      const montoPendiente = Math.max(0, toNumber(total) - realPayment);
+      const montoPendiente = Math.max(0, totalVenta - realPayment);
 
       const saleDataToInsert: Sale = {
         numero_venta: String(nextSaleNum),
-        total: toNumber(total),
+        total: totalVenta,
         costo_total: totalSaleCost,
-        ganancia: toNumber(total) - totalSaleCost,
+        ganancia: totalVenta - totalSaleCost,
         cliente_id,
         nombre_cliente,
         metodo_pago,
@@ -339,6 +256,37 @@ export const salesService = {
       };
 
       const saleId = await salesRepository.create(saleDataToInsert, processedItems, client);
+
+      let supplierOrderId: number | null = null;
+      let supplierOrderNumber: number | null = null;
+      const shortageItems = Array.from(supplierShortageMap.values()).filter((item) => item.cantidad > 0);
+
+      if (shortageItems.length > 0) {
+        supplierOrderNumber = await getAndIncrementSetting(client, 'next_order_number');
+        const orderResult = await client.query(
+          `INSERT INTO supplier_orders (numero_pedido, cliente, cliente_id, sale_id, estado, notes)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id`,
+          [
+            supplierOrderNumber,
+            nombre_cliente || 'Consumidor Final',
+            cliente_id || null,
+            saleId,
+            'pendiente',
+            notes || `Faltante generado por Venta N° ${nextSaleNum}`,
+          ]
+        );
+
+        supplierOrderId = toNumber(orderResult.rows[0]?.id);
+
+        for (const shortageItem of shortageItems) {
+          await client.query(
+            `INSERT INTO supplier_order_items (order_id, product_id, cantidad)
+             VALUES ($1, $2, $3)`,
+            [supplierOrderId, shortageItem.product_id, shortageItem.cantidad]
+          );
+        }
+      }
 
       if (realPayment > 0) {
         const nextPaymentNum = await getAndIncrementSetting(client, 'next_payment_number');
@@ -365,7 +313,7 @@ export const salesService = {
           [
             cheque_data.numero_cheque || cheque_data.numero || null,
             cheque_data.banco || null,
-            toNumber(cheque_data.importe, toNumber(total)),
+            toNumber(cheque_data.importe, totalVenta),
             cheque_data.fecha_vencimiento || cheque_data.vencimiento || null,
             cliente_id || null,
             saleId,
@@ -375,7 +323,15 @@ export const salesService = {
       }
 
       await client.query('COMMIT');
-      return { success: true, saleId, saleNumber: nextSaleNum };
+      return {
+        success: true,
+        saleId,
+        saleNumber: nextSaleNum,
+        supplierOrderGenerated: shortageItems.length > 0,
+        orderId: supplierOrderId,
+        orderNumber: supplierOrderNumber,
+        shortageItems,
+      };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;

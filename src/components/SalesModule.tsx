@@ -48,7 +48,7 @@ export default function SalesModule() {
     importe: ''
   });
   const [clientes, setClientes] = useState<any[]>([]);
-  const [cart, setCart] = useState<{ product: Product; quantity: number }[]>([]);
+  const [cart, setCart] = useState<{ product: Product; quantity: number; discountType: 'none' | 'percentage' | 'fixed'; discountValue: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [lastSaleData, setLastSaleData] = useState<any>(null);
@@ -287,6 +287,44 @@ export default function SalesModule() {
     }
   };
 
+  const calculateDiscountedUnitPrice = (item: { product: Product; discountType: 'none' | 'percentage' | 'fixed'; discountValue: number }) => {
+    const originalPrice = Number(item.product.sale_price || 0);
+    const discountValue = Number(item.discountValue || 0);
+
+    if (item.discountType === 'percentage') {
+      return Math.max(0, originalPrice * (1 - Math.min(Math.max(discountValue, 0), 100) / 100));
+    }
+
+    if (item.discountType === 'fixed') {
+      return Math.max(0, originalPrice - Math.max(discountValue, 0));
+    }
+
+    return originalPrice;
+  };
+
+  const updateCartDiscount = (
+    productId: number,
+    field: 'discountType' | 'discountValue',
+    value: 'none' | 'percentage' | 'fixed' | number
+  ) => {
+    setCart(prev => prev.map(item => {
+      if (item.product.id !== productId) return item;
+
+      if (field === 'discountType') {
+        return {
+          ...item,
+          discountType: value as 'none' | 'percentage' | 'fixed',
+          discountValue: value === 'none' ? 0 : item.discountValue,
+        };
+      }
+
+      return {
+        ...item,
+        discountValue: Number(value || 0),
+      };
+    }));
+  };
+
   const filteredProducts = useMemo(() => {
     const query = searchTerm.toLowerCase().trim();
     if (!query) return products;
@@ -310,7 +348,7 @@ export default function SalesModule() {
             : item
         );
       }
-      return [...prev, { product, quantity: 1 }];
+      return [...prev, { product, quantity: 1, discountType: 'none', discountValue: 0 }];
     });
   };
 
@@ -328,7 +366,7 @@ export default function SalesModule() {
     setCart(prev => prev.filter(item => item.product.id !== productId));
   };
 
-  const total = cart.reduce((sum, item) => sum + (item.product.sale_price * item.quantity), 0);
+  const total = cart.reduce((sum, item) => sum + (calculateDiscountedUnitPrice(item) * item.quantity), 0);
 
   const selectedCliente = useMemo(() => 
     clientes.find(c => c.id === selectedClienteId) || { id: 1, nombre_apellido: 'Consumidor Final', saldo_cta_cte: 0, limite_credito: 0, tiene_deuda_vencida: 0 }
@@ -360,11 +398,19 @@ export default function SalesModule() {
           ...chequeData,
           importe: parseFloat(chequeData.importe) || total
         } : null,
-        items: cart.map(item => ({
-          product_id: item.product.id,
-          cantidad: item.quantity,
-          precio_venta: item.product.sale_price
-        }))
+        items: cart.map(item => {
+          const precioBonificado = calculateDiscountedUnitPrice(item);
+
+          return {
+            product_id: item.product.id,
+            cantidad: item.quantity,
+            precio_venta: precioBonificado,
+            precio_unitario_original: item.product.sale_price,
+            bonificacion_tipo: item.discountType,
+            bonificacion_valor: item.discountValue,
+            precio_unitario_bonificado: precioBonificado
+          };
+        })
       };
 
       const res = await apiFetch('/api/sales', {
@@ -375,25 +421,11 @@ export default function SalesModule() {
       const body = await res.json();
       const data = unwrapResponse(body);
       
-      if (data.insufficientStock) {
-        alert(`Stock insuficiente para algunos productos. Se ha generado el Pedido a Proveedor N° ${data.orderNumber} automáticamente.`);
-        setCart([]);
-        setSelectedClienteId(1);
-        setMetodoPago(paymentMethods.length > 0 ? paymentMethods[0].name : '');
-        setMetodoPagoParcial(paymentMethods.length > 0 ? paymentMethods[0].name : '');
-        setMontoPagado('');
-        setNotes('');
-        setChequeData({
-          banco: '',
-          numero_cheque: '',
-          fecha_vencimiento: new Date().toISOString().split('T')[0],
-          importe: ''
-        });
-        await Promise.all([fetchSalesHistory(), fetchActiveProducts(), fetchClientes()]);
-        return;
+      if (data.supplierOrderGenerated) {
+        alert(`Venta registrada. Se generó el Pedido a Proveedor N° ${data.orderNumber} solo por las unidades faltantes.`);
       }
 
-      const saleRes = await apiFetch(`/api/sales/${data.saleId}`);
+      const saleRes = await apiFetch(`/api/sales?id=${data.saleId}`);
       const saleBody = await saleRes.json();
       const fullSale = unwrapResponse(saleBody);
       setLastSaleData({ ...fullSale, results: data.results });
@@ -571,7 +603,35 @@ export default function SalesModule() {
                   <div key={item.product.id} className="flex items-center gap-4 bg-zinc-50 p-4 rounded-2xl border border-zinc-100 group">
                     <div className="flex-1 min-w-0">
                       <h4 className="font-bold text-zinc-900 truncate text-sm">{item.product.name}</h4>
-                      <p className="text-xs text-zinc-500 font-mono">${item.product.sale_price.toFixed(2)} c/u</p>
+                      <p className="text-xs text-zinc-500 font-mono">
+                        ${calculateDiscountedUnitPrice(item).toFixed(2)} c/u
+                        {item.discountType !== 'none' && (
+                          <span className="block text-[10px] text-emerald-600 font-bold">
+                            Lista: ${item.product.sale_price.toFixed(2)}
+                          </span>
+                        )}
+                      </p>
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <select
+                          value={item.discountType}
+                          onChange={(e) => updateCartDiscount(item.product.id, 'discountType', e.target.value as any)}
+                          className="px-2 py-2 bg-white border border-zinc-200 rounded-lg text-[10px] font-bold outline-none"
+                        >
+                          <option value="none">Sin bonif.</option>
+                          <option value="percentage">% OFF</option>
+                          <option value="fixed">$ OFF</option>
+                        </select>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          disabled={item.discountType === 'none'}
+                          value={item.discountValue || ''}
+                          onChange={(e) => updateCartDiscount(item.product.id, 'discountValue', Number(e.target.value))}
+                          className="px-2 py-2 bg-white border border-zinc-200 rounded-lg text-[10px] font-bold outline-none disabled:bg-zinc-100"
+                          placeholder="Bonif."
+                        />
+                      </div>
                     </div>
                     <div className="flex items-center gap-2 bg-white rounded-xl border border-zinc-200 p-1 shadow-sm">
                       <button 
@@ -1056,7 +1116,7 @@ export default function SalesModule() {
               <div className="space-y-4">
                 {hasPermission('sales', 'view') && (
                   <button 
-                    onClick={() => generateSaleReceipt(lastSaleData)}
+                    onClick={() => generateSaleReceipt(lastSaleData, businessSettings)}
                     className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-emerald-700 transition-all shadow-xl shadow-emerald-100"
                   >
                     <Download size={20} />

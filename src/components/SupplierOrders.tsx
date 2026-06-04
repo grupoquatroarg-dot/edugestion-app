@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Clock, CheckCircle2, Package, AlertCircle, User, Trash2, Send, Download, Edit2, Plus, Minus, X, Search } from 'lucide-react';
+import { Clock, CheckCircle2, Package, AlertCircle, User, Trash2, Send, Download, Edit2, Plus, Minus, X, Search, Calendar, BarChart3 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { useAuth } from '../contexts/AuthContext';
@@ -13,6 +13,8 @@ interface SupplierOrderItem {
   proveedor: string;
   codigo_unico: string;
   cantidad: number;
+  precio_venta?: number;
+  importe?: number;
 }
 
 interface SupplierOrder {
@@ -24,6 +26,13 @@ interface SupplierOrder {
   productos: SupplierOrderItem[];
   notes?: string;
   stock_actualizado?: number;
+  sale_id?: number | null;
+  total_pedido?: number;
+  cobrado_pedido?: number;
+  cta_cte_pedido?: number;
+  sale_total?: number;
+  sale_monto_pagado?: number;
+  sale_monto_pendiente?: number;
 }
 
 export default function SupplierOrders() {
@@ -44,6 +53,8 @@ export default function SupplierOrders() {
   const [filterProducto, setFilterProducto] = useState('');
   const [filterEstado, setFilterEstado] = useState('todos');
   const [filterFecha, setFilterFecha] = useState('');
+  const [reportDateFrom, setReportDateFrom] = useState('');
+  const [reportDateTo, setReportDateTo] = useState('');
 
   useEffect(() => {
     fetchOrders();
@@ -87,7 +98,7 @@ export default function SupplierOrders() {
   };
 
   const handleCompleteSale = async (id: number) => {
-    if (!window.confirm("¿Deseas completar la venta para este cliente? Esto generará un registro de venta y consumirá el stock recién ingresado.")) return;
+    if (!window.confirm("¿Deseas completar la entrega del pedido? Si el pedido viene de una venta ya registrada, no duplicará la venta: solo actualizará costos y marcará la entrega.")) return;
 
     try {
       const res = await apiFetch(`/api/sales?endpoint=supplier-order-complete&id=${id}`, {
@@ -96,7 +107,7 @@ export default function SupplierOrders() {
       
       await unwrapResponse(res);
       
-      alert("Venta completada correctamente.");
+      alert("Pedido completado correctamente.");
       // Find the order to generate the remito
       const order = orders.find(o => o.id === id);
       if (order) {
@@ -193,21 +204,29 @@ export default function SupplierOrders() {
       p.product_name,
       p.proveedor,
       p.cantidad.toString(),
-      p.codigo_unico
+      p.codigo_unico,
+      `$${Number(p.importe || 0).toFixed(2)}`
     ]);
 
     autoTable(doc, {
       startY: 100,
-      head: [['Producto', 'Proveedor', 'Cantidad', 'Código']],
+      head: [['Producto', 'Proveedor', 'Cantidad', 'Código', 'Importe']],
       body: tableData,
       theme: 'grid',
       headStyles: { fillColor: [20, 20, 20], textColor: [255, 255, 255], fontStyle: 'bold' },
       styles: { fontSize: 9, cellPadding: 4 },
       columnStyles: {
         2: { halign: 'center' },
-        3: { halign: 'right' }
+        3: { halign: 'right' },
+        4: { halign: 'right' }
       }
     });
+
+    const totalPedido = order.productos.reduce((sum, item) => sum + Number(item.importe || 0), 0);
+    const finalTableY = (doc as any).lastAutoTable.finalY || 150;
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Total pedido proveedor: $${totalPedido.toFixed(2)}`, 190, finalTableY + 8, { align: 'right' });
 
     // Observations
     const finalY = (doc as any).lastAutoTable.finalY || 150;
@@ -434,6 +453,98 @@ export default function SupplierOrders() {
     });
   }, [orders, filterCliente, filterEstado, filterFecha, filterProducto]);
 
+
+  const supplierReport = useMemo(() => {
+    const filtered = orders.filter(order => {
+      const orderDate = order.fecha ? order.fecha.slice(0, 10) : '';
+      const fromOk = !reportDateFrom || orderDate >= reportDateFrom;
+      const toOk = !reportDateTo || orderDate <= reportDateTo;
+      return fromOk && toOk;
+    });
+
+    const map = new Map<string, {
+      cliente: string;
+      total: number;
+      cobrado: number;
+      ctaCte: number;
+      cantidadPedidos: number;
+      productos: number;
+    }>();
+
+    filtered.forEach(order => {
+      const key = order.cliente || 'Sin cliente';
+      const total = Number(order.total_pedido || order.productos.reduce((sum, item) => sum + Number(item.importe || 0), 0));
+      const cobrado = Number(order.cobrado_pedido || 0);
+      const ctaCte = Number(order.cta_cte_pedido ?? Math.max(0, total - cobrado));
+
+      if (!map.has(key)) {
+        map.set(key, {
+          cliente: key,
+          total: 0,
+          cobrado: 0,
+          ctaCte: 0,
+          cantidadPedidos: 0,
+          productos: 0,
+        });
+      }
+
+      const entry = map.get(key)!;
+      entry.total += total;
+      entry.cobrado += cobrado;
+      entry.ctaCte += ctaCte;
+      entry.cantidadPedidos += 1;
+      entry.productos += order.productos.reduce((sum, item) => sum + Number(item.cantidad || 0), 0);
+    });
+
+    const clientes = Array.from(map.values()).sort((a, b) => b.total - a.total);
+
+    return {
+      clientes,
+      total: clientes.reduce((sum, row) => sum + row.total, 0),
+      cobrado: clientes.reduce((sum, row) => sum + row.cobrado, 0),
+      ctaCte: clientes.reduce((sum, row) => sum + row.ctaCte, 0),
+      pedidos: filtered.length,
+    };
+  }, [orders, reportDateFrom, reportDateTo]);
+
+  const generateSupplierReportPDF = () => {
+    const doc = new jsPDF();
+
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text('REPORTE PEDIDOS A PROVEEDOR', 105, 18, { align: 'center' });
+
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Desde: ${reportDateFrom || 'Inicio'}  Hasta: ${reportDateTo || 'Hoy'}`, 14, 30);
+    doc.text(`Pedidos incluidos: ${supplierReport.pedidos}`, 14, 36);
+
+    autoTable(doc, {
+      startY: 45,
+      head: [['Cliente', 'Pedidos', 'Unidades', 'Total', 'Cobrado', 'Cuenta Corriente']],
+      body: supplierReport.clientes.map(row => [
+        row.cliente,
+        row.cantidadPedidos.toString(),
+        row.productos.toString(),
+        `$${row.total.toFixed(2)}`,
+        `$${row.cobrado.toFixed(2)}`,
+        `$${row.ctaCte.toFixed(2)}`,
+      ]),
+      theme: 'grid',
+      headStyles: { fillColor: [20, 20, 20], textColor: [255, 255, 255] },
+      styles: { fontSize: 8 },
+    });
+
+    const finalY = (doc as any).lastAutoTable?.finalY || 80;
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`TOTAL GENERAL: $${supplierReport.total.toFixed(2)}`, 14, finalY + 12);
+    doc.text(`COBRADO: $${supplierReport.cobrado.toFixed(2)}`, 14, finalY + 19);
+    doc.text(`CTA CTE: $${supplierReport.ctaCte.toFixed(2)}`, 14, finalY + 26);
+
+    doc.save('Reporte_Pedidos_Proveedor.pdf');
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -506,6 +617,106 @@ export default function SupplierOrders() {
           </div>
         </div>
       </div>
+      <div className="mb-8 p-6 bg-white rounded-2xl border border-zinc-200 shadow-sm">
+        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <BarChart3 size={18} className="text-zinc-500" />
+              <h2 className="text-lg font-black text-zinc-900">Reporte de Pedidos a Proveedor</h2>
+            </div>
+            <p className="text-sm text-zinc-500">
+              Totaliza por cliente los pedidos generados, cuánto se cobró, cuánto quedó en cuenta corriente y el total.
+            </p>
+          </div>
+
+          <button
+            onClick={generateSupplierReportPDF}
+            className="w-full lg:w-auto px-5 py-3 bg-zinc-900 text-white rounded-xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all flex items-center justify-center gap-2"
+          >
+            <Download size={16} />
+            Descargar reporte
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mt-5">
+          <div className="space-y-2">
+            <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Desde</label>
+            <div className="relative">
+              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
+              <input
+                type="date"
+                value={reportDateFrom}
+                onChange={(e) => setReportDateFrom(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Hasta</label>
+            <div className="relative">
+              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
+              <input
+                type="date"
+                value={reportDateTo}
+                onChange={(e) => setReportDateTo(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all"
+              />
+            </div>
+          </div>
+
+          <div className="bg-zinc-50 border border-zinc-100 rounded-xl p-4">
+            <p className="text-[10px] font-bold uppercase text-zinc-400 tracking-widest">Total</p>
+            <p className="text-xl font-black font-mono text-zinc-900">${supplierReport.total.toFixed(2)}</p>
+          </div>
+
+          <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4">
+            <p className="text-[10px] font-bold uppercase text-emerald-600 tracking-widest">Cobrado</p>
+            <p className="text-xl font-black font-mono text-emerald-700">${supplierReport.cobrado.toFixed(2)}</p>
+          </div>
+
+          <div className="bg-red-50 border border-red-100 rounded-xl p-4">
+            <p className="text-[10px] font-bold uppercase text-red-600 tracking-widest">Cta Cte</p>
+            <p className="text-xl font-black font-mono text-red-700">${supplierReport.ctaCte.toFixed(2)}</p>
+          </div>
+        </div>
+
+        <div className="mt-5 overflow-x-auto border border-zinc-100 rounded-xl">
+          <table className="w-full min-w-[720px] text-left border-collapse">
+            <thead className="bg-zinc-50">
+              <tr>
+                <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-zinc-400">Cliente</th>
+                <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-zinc-400 text-right">Pedidos</th>
+                <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-zinc-400 text-right">Unidades</th>
+                <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-zinc-400 text-right">Total</th>
+                <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-zinc-400 text-right">Cobrado</th>
+                <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-zinc-400 text-right">Cta Cte</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-50">
+              {supplierReport.clientes.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-center text-sm text-zinc-400">
+                    No hay pedidos a proveedor para el rango seleccionado.
+                  </td>
+                </tr>
+              )}
+              {supplierReport.clientes.map((row) => (
+                <tr key={row.cliente}>
+                  <td className="px-4 py-3 text-sm font-bold text-zinc-900">{row.cliente}</td>
+                  <td className="px-4 py-3 text-sm font-mono text-zinc-600 text-right">{row.cantidadPedidos}</td>
+                  <td className="px-4 py-3 text-sm font-mono text-zinc-600 text-right">{row.productos}</td>
+                  <td className="px-4 py-3 text-sm font-black font-mono text-zinc-900 text-right">${row.total.toFixed(2)}</td>
+                  <td className="px-4 py-3 text-sm font-black font-mono text-emerald-600 text-right">${row.cobrado.toFixed(2)}</td>
+                  <td className="px-4 py-3 text-sm font-black font-mono text-red-600 text-right">${row.ctaCte.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+
 
       <div className="grid grid-cols-1 gap-6">
         {filteredOrders.map((order) => (
@@ -527,6 +738,7 @@ export default function SupplierOrders() {
                   <div className="flex items-center gap-3 text-xs text-zinc-400 mt-0.5">
                     <span className="flex items-center gap-1"><Clock size={12} /> {order.fecha ? new Date(order.fecha).toLocaleString() : ''}</span>
                     <span className="flex items-center gap-1"><Package size={12} /> {order.productos.length} productos</span>
+                <span className="flex items-center gap-1 font-black text-zinc-700">Total: ${Number(order.total_pedido || 0).toFixed(2)}</span>
                   </div>
                 </div>
               </div>
