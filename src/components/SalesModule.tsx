@@ -20,11 +20,12 @@ import {
   TrendingDown,
   ArrowRight,
   CreditCard,
-  XCircle
+  XCircle,
+  MessageCircle
 } from 'lucide-react';
 import { Product } from '../types';
 import { getSocket } from '../utils/socket';
-import { generateSaleReceipt } from '../utils/pdfGenerator';
+import { generateSaleReceipt, createSaleReceiptPdfFile } from '../utils/pdfGenerator';
 import CustomerDetail from './CustomerDetail';
 import { useAuth } from '../contexts/AuthContext';
 import { unwrapResponse, apiFetch } from '../utils/api';
@@ -57,6 +58,7 @@ export default function SalesModule() {
   const [salesHistory, setSalesHistory] = useState<any[]>([]);
   const [selectedSale, setSelectedSale] = useState<any>(null);
   const [downloadingSaleId, setDownloadingSaleId] = useState<number | null>(null);
+  const [whatsAppSendingSaleId, setWhatsAppSendingSaleId] = useState<number | null>(null);
   const [businessSettings, setBusinessSettings] = useState<Record<string, string>>({});
   const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
 
@@ -255,6 +257,102 @@ export default function SalesModule() {
       alert("No se pudo generar el PDF de la venta");
     } finally {
       setDownloadingSaleId(null);
+    }
+  };
+
+  const normalizeWhatsAppPhone = (rawPhone: any) => {
+    let digits = String(rawPhone || '').replace(/\D/g, '');
+
+    if (!digits) return '';
+
+    if (digits.startsWith('00')) {
+      digits = digits.slice(2);
+    }
+
+    while (digits.startsWith('0')) {
+      digits = digits.slice(1);
+    }
+
+    if (digits.startsWith('54')) {
+      return digits;
+    }
+
+    // Argentina: si cargan el celular local con característica + número, intentamos armar formato WhatsApp internacional.
+    if (digits.length >= 10 && digits.length <= 11) {
+      return `549${digits}`;
+    }
+
+    return digits;
+  };
+
+  const enrichSaleWithClientData = async (sale: any) => {
+    const existingPhone = sale.cliente_telefono || sale.telefono || sale.customer_phone || sale.phone;
+
+    if (existingPhone || !sale.cliente_id) {
+      return sale;
+    }
+
+    try {
+      const res = await apiFetch(`/api/clientes?id=${sale.cliente_id}`);
+      const body = await res.json();
+      const cliente = unwrapResponse(body);
+
+      return {
+        ...sale,
+        cliente_telefono: cliente?.telefono || cliente?.phone || '',
+        cliente_localidad: cliente?.localidad || sale.cliente_localidad,
+        cliente_direccion: cliente?.direccion || sale.cliente_direccion,
+      };
+    } catch (error) {
+      console.error('Error fetching client data for WhatsApp:', error);
+      return sale;
+    }
+  };
+
+  const handleSendReceiptWhatsApp = async (saleId: number) => {
+    try {
+      setWhatsAppSendingSaleId(saleId);
+
+      const res = await apiFetch(`/api/sales?id=${saleId}`);
+      const body = await res.json();
+      const rawSale = unwrapResponse(body);
+      const sale = await enrichSaleWithClientData(rawSale);
+
+      const phone = normalizeWhatsAppPhone(
+        sale.cliente_telefono || sale.telefono || sale.customer_phone || sale.phone
+      );
+
+      if (!phone || phone.length < 10) {
+        alert('El cliente no tiene un teléfono válido cargado para WhatsApp.');
+        return;
+      }
+
+      const saleNumber = sale.numero_venta || sale.id;
+      const message = `Hola ${sale.nombre_cliente || ''}, te enviamos el remito/comprobante de tu venta N° ${saleNumber}. Total: $${Number(sale.total || 0).toFixed(2)}.`;
+
+      const file = createSaleReceiptPdfFile(sale, businessSettings);
+
+      if (
+        navigator.share &&
+        navigator.canShare &&
+        navigator.canShare({ files: [file] })
+      ) {
+        await navigator.share({
+          title: `Comprobante Venta ${saleNumber}`,
+          text: message,
+          files: [file],
+        });
+        return;
+      }
+
+      generateSaleReceipt(sale, businessSettings);
+      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank');
+      alert('Se descargó el PDF y se abrió WhatsApp. Adjuntá el comprobante descargado en el chat del cliente.');
+    } catch (error) {
+      console.error('Error sending receipt via WhatsApp:', error);
+      alert('No se pudo preparar el envío por WhatsApp.');
+    } finally {
+      setWhatsAppSendingSaleId(null);
     }
   };
 
@@ -1021,6 +1119,20 @@ export default function SalesModule() {
                                   )}
                                 </button>
                               )}
+                              {hasPermission('sales', 'view') && (
+                                <button 
+                                  onClick={() => handleSendReceiptWhatsApp(sale.id)}
+                                  disabled={whatsAppSendingSaleId === sale.id}
+                                  className="p-2.5 text-zinc-400 hover:text-green-600 hover:bg-green-50 rounded-xl transition-all disabled:opacity-50"
+                                  title="Enviar por WhatsApp"
+                                >
+                                  {whatsAppSendingSaleId === sale.id ? (
+                                    <div className="w-4 h-4 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
+                                  ) : (
+                                    <MessageCircle size={18} />
+                                  )}
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -1196,6 +1308,16 @@ export default function SalesModule() {
                     Descargar Comprobante
                   </button>
                 )}
+                {hasPermission('sales', 'view') && (
+                  <button 
+                    onClick={() => handleSendReceiptWhatsApp(lastSaleData.id)}
+                    disabled={whatsAppSendingSaleId === lastSaleData.id}
+                    className="w-full py-4 bg-green-600 text-white rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-green-700 transition-all shadow-xl shadow-green-100 disabled:opacity-50"
+                  >
+                    <MessageCircle size={20} />
+                    {whatsAppSendingSaleId === lastSaleData.id ? 'Preparando...' : 'Enviar por WhatsApp'}
+                  </button>
+                )}
                 <button 
                   onClick={() => setShowSuccessModal(false)}
                   className="w-full py-4 bg-zinc-100 text-zinc-900 rounded-2xl font-black uppercase tracking-widest hover:bg-zinc-200 transition-all"
@@ -1292,6 +1414,16 @@ export default function SalesModule() {
                 >
                   <Download size={18} />
                   Descargar PDF
+                </button>
+              )}
+              {hasPermission('sales', 'view') && (
+                <button 
+                  onClick={() => handleSendReceiptWhatsApp(selectedSale.id)}
+                  disabled={whatsAppSendingSaleId === selectedSale.id}
+                  className="flex items-center justify-center gap-3 px-6 sm:px-8 py-3 bg-green-600 text-white rounded-xl sm:rounded-2xl font-black uppercase tracking-widest hover:bg-green-700 transition-all shadow-xl shadow-green-100 text-sm disabled:opacity-50"
+                >
+                  <MessageCircle size={18} />
+                  {whatsAppSendingSaleId === selectedSale.id ? 'Preparando...' : 'WhatsApp'}
                 </button>
               )}
               <button 

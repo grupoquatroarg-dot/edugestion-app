@@ -37,7 +37,7 @@ const getDiscountedUnitPrice = (item: any) => {
   return Number(item.precio_unitario_bonificado ?? item.precio_venta ?? getOriginalUnitPrice(item));
 };
 
-export const generateSaleReceipt = (sale: any, businessSettings: Record<string, string> = {}) => {
+const buildSaleReceiptDoc = (sale: any, businessSettings: Record<string, string> = {}) => {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 12;
@@ -182,5 +182,16 @@ export const generateSaleReceipt = (sale: any, businessSettings: Record<string, 
   doc.setFont('helvetica', 'normal');
   doc.text(`Gracias por su compra - ${businessName}`, pageWidth / 2, 195, { align: 'center' });
 
+  return doc;
+};
+
+export const generateSaleReceipt = (sale: any, businessSettings: Record<string, string> = {}) => {
+  const doc = buildSaleReceiptDoc(sale, businessSettings);
   doc.save(`Comprobante_Venta_${sale.numero_venta || sale.id}.pdf`);
+};
+
+export const createSaleReceiptPdfFile = (sale: any, businessSettings: Record<string, string> = {}) => {
+  const doc = buildSaleReceiptDoc(sale, businessSettings);
+  const blob = doc.output('blob');
+  return new File([blob], `Comprobante_Venta_${sale.numero_venta || sale.id}.pdf`, { type: 'application/pdf' });
 };
