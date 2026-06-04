@@ -179,6 +179,7 @@ const mapSupplierOrder = (row: any, items: any[] = []) => {
   const totalPedido = productos.reduce((sum: number, item: any) => sum + item.importe, 0);
   const saleTotal = toNumber(row.sale_total);
   const salePaid = toNumber(row.sale_monto_pagado);
+  const saleMetodoPago = row.sale_metodo_pago || "";
   const ratio = saleTotal > 0 ? Math.min(1, totalPedido / saleTotal) : 1;
   const cobradoPedido = Math.min(totalPedido, salePaid * ratio);
   const ctaCtePedido = Math.max(0, totalPedido - cobradoPedido);
@@ -199,6 +200,7 @@ const mapSupplierOrder = (row: any, items: any[] = []) => {
     sale_total: saleTotal,
     sale_monto_pagado: salePaid,
     sale_monto_pendiente: toNumber(row.sale_monto_pendiente),
+    sale_metodo_pago: saleMetodoPago,
     productos,
   };
 };
@@ -250,7 +252,8 @@ const handleSupplierOrders = async (req: any, res: any) => {
             so.id, so.numero_pedido, so.cliente, so.cliente_id, so.sale_id, so.fecha, so.estado, so.notes, so.stock_actualizado,
             s.total AS sale_total,
             s.monto_pagado AS sale_monto_pagado,
-            s.monto_pendiente AS sale_monto_pendiente
+            s.monto_pendiente AS sale_monto_pendiente,
+            s.metodo_pago AS sale_metodo_pago
           FROM supplier_orders so
           LEFT JOIN sales s ON s.id = so.sale_id
           ORDER BY so.fecha DESC, so.id DESC
@@ -281,7 +284,8 @@ const handleSupplierOrders = async (req: any, res: any) => {
             so.id, so.numero_pedido, so.cliente, so.cliente_id, so.sale_id, so.fecha, so.estado, so.notes, so.stock_actualizado,
             s.total AS sale_total,
             s.monto_pagado AS sale_monto_pagado,
-            s.monto_pendiente AS sale_monto_pendiente
+            s.monto_pendiente AS sale_monto_pendiente,
+            s.metodo_pago AS sale_metodo_pago
           FROM supplier_orders so
           LEFT JOIN sales s ON s.id = so.sale_id
           WHERE so.id = $1

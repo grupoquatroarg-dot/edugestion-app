@@ -33,6 +33,7 @@ interface SupplierOrder {
   sale_total?: number;
   sale_monto_pagado?: number;
   sale_monto_pendiente?: number;
+  sale_metodo_pago?: string;
 }
 
 export default function SupplierOrders() {
@@ -454,6 +455,65 @@ export default function SupplierOrders() {
   }, [orders, filterCliente, filterEstado, filterFecha, filterProducto]);
 
 
+
+  const normalizePaymentMethod = (value: string) => {
+    const raw = (value || '').trim();
+    const normalized = raw
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/_/g, ' ')
+      .trim();
+
+    if (!normalized) return 'Sin método';
+    if (normalized.includes('cta') || normalized.includes('cuenta corriente') || normalized.includes('credito')) return 'Cuenta Corriente';
+    if (normalized.includes('efectivo')) return 'Efectivo';
+    if (normalized.includes('transfer')) return 'Transferencia';
+    if (normalized.includes('mercado') || normalized === 'mp') return 'Mercado Pago';
+    if (normalized.includes('cheque')) return 'Cheque';
+    if (normalized.includes('tarjeta') || normalized.includes('debito') || normalized.includes('credito tarjeta')) return 'Tarjeta';
+
+    return raw
+      .split(' ')
+      .filter(Boolean)
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+      .join(' ');
+  };
+
+  const getPaymentBreakdown = (method: string | undefined, total: number, cobrado: number, ctaCte: number) => {
+    const breakdown: Record<string, number> = {};
+    const rawMethod = method || '';
+    const methodLower = rawMethod.toLowerCase();
+
+    if (methodLower.includes('mixto')) {
+      const partialMethodRaw = rawMethod.match(/\((.*?)\)/)?.[1]?.split('+')?.[0]?.trim() || 'Pago parcial';
+      const partialMethod = normalizePaymentMethod(partialMethodRaw);
+
+      if (partialMethod === 'Cuenta Corriente') {
+        return { breakdown, ctaCte: total };
+      }
+
+      if (cobrado > 0) {
+        breakdown[partialMethod] = (breakdown[partialMethod] || 0) + cobrado;
+      }
+
+      return { breakdown, ctaCte };
+    }
+
+    const methodName = normalizePaymentMethod(rawMethod);
+
+    if (methodName === 'Cuenta Corriente') {
+      return { breakdown, ctaCte: total };
+    }
+
+    const amount = cobrado > 0 ? cobrado : Math.max(0, total - ctaCte);
+    if (amount > 0) {
+      breakdown[methodName] = (breakdown[methodName] || 0) + amount;
+    }
+
+    return { breakdown, ctaCte };
+  };
+
   const supplierReport = useMemo(() => {
     const filtered = orders.filter(order => {
       const orderDate = order.fecha ? order.fecha.slice(0, 10) : '';
@@ -469,13 +529,19 @@ export default function SupplierOrders() {
       ctaCte: number;
       cantidadPedidos: number;
       productos: number;
+      metodos: Record<string, number>;
     }>();
+
+    const methodSet = new Set<string>();
 
     filtered.forEach(order => {
       const key = order.cliente || 'Sin cliente';
       const total = Number(order.total_pedido || order.productos.reduce((sum, item) => sum + Number(item.importe || 0), 0));
-      const cobrado = Number(order.cobrado_pedido || 0);
-      const ctaCte = Number(order.cta_cte_pedido ?? Math.max(0, total - cobrado));
+      const baseCobrado = Number(order.cobrado_pedido || 0);
+      const baseCtaCte = Number(order.cta_cte_pedido ?? Math.max(0, total - baseCobrado));
+      const paymentData = getPaymentBreakdown(order.sale_metodo_pago, total, baseCobrado, baseCtaCte);
+      const cobrado = Object.values(paymentData.breakdown).reduce((sum, amount) => sum + Number(amount || 0), 0);
+      const ctaCte = Number(paymentData.ctaCte || 0);
 
       if (!map.has(key)) {
         map.set(key, {
@@ -485,6 +551,7 @@ export default function SupplierOrders() {
           ctaCte: 0,
           cantidadPedidos: 0,
           productos: 0,
+          metodos: {},
         });
       }
 
@@ -494,12 +561,30 @@ export default function SupplierOrders() {
       entry.ctaCte += ctaCte;
       entry.cantidadPedidos += 1;
       entry.productos += order.productos.reduce((sum, item) => sum + Number(item.cantidad || 0), 0);
+
+      Object.entries(paymentData.breakdown).forEach(([methodName, amount]) => {
+        entry.metodos[methodName] = (entry.metodos[methodName] || 0) + Number(amount || 0);
+        methodSet.add(methodName);
+      });
     });
 
     const clientes = Array.from(map.values()).sort((a, b) => b.total - a.total);
+    const preferredOrder = ['Efectivo', 'Transferencia', 'Mercado Pago', 'Cheque', 'Tarjeta'];
+    const paymentMethods = Array.from(methodSet).sort((a, b) => {
+      const ia = preferredOrder.indexOf(a);
+      const ib = preferredOrder.indexOf(b);
+      if (ia !== -1 || ib !== -1) return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+      return a.localeCompare(b);
+    });
+    const totalsByMethod = paymentMethods.reduce((acc, methodName) => {
+      acc[methodName] = clientes.reduce((sum, row) => sum + Number(row.metodos[methodName] || 0), 0);
+      return acc;
+    }, {} as Record<string, number>);
 
     return {
       clientes,
+      paymentMethods,
+      totalsByMethod,
       total: clientes.reduce((sum, row) => sum + row.total, 0),
       cobrado: clientes.reduce((sum, row) => sum + row.cobrado, 0),
       ctaCte: clientes.reduce((sum, row) => sum + row.ctaCte, 0),
@@ -521,18 +606,27 @@ export default function SupplierOrders() {
 
     autoTable(doc, {
       startY: 45,
-      head: [['Cliente', 'Pedidos', 'Unidades', 'Total', 'Cobrado', 'Cuenta Corriente']],
+      head: [[
+        'Cliente',
+        'Pedidos',
+        'Unidades',
+        'Total',
+        ...supplierReport.paymentMethods,
+        'Cobrado',
+        'Cuenta Corriente'
+      ]],
       body: supplierReport.clientes.map(row => [
         row.cliente,
         row.cantidadPedidos.toString(),
         row.productos.toString(),
         `$${row.total.toFixed(2)}`,
+        ...supplierReport.paymentMethods.map(methodName => `$${Number(row.metodos[methodName] || 0).toFixed(2)}`),
         `$${row.cobrado.toFixed(2)}`,
         `$${row.ctaCte.toFixed(2)}`,
       ]),
       theme: 'grid',
       headStyles: { fillColor: [20, 20, 20], textColor: [255, 255, 255] },
-      styles: { fontSize: 8 },
+      styles: { fontSize: supplierReport.paymentMethods.length > 3 ? 6 : 8 },
     });
 
     const finalY = (doc as any).lastAutoTable?.finalY || 80;
@@ -681,14 +775,28 @@ export default function SupplierOrders() {
           </div>
         </div>
 
+        {supplierReport.paymentMethods.length > 0 && (
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {supplierReport.paymentMethods.map((methodName) => (
+              <div key={methodName} className="bg-white border border-zinc-100 rounded-xl p-4">
+                <p className="text-[10px] font-bold uppercase text-zinc-400 tracking-widest">{methodName}</p>
+                <p className="text-lg font-black font-mono text-zinc-900">${Number(supplierReport.totalsByMethod[methodName] || 0).toFixed(2)}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="mt-5 overflow-x-auto border border-zinc-100 rounded-xl">
-          <table className="w-full min-w-[720px] text-left border-collapse">
+          <table className="w-full min-w-[900px] text-left border-collapse">
             <thead className="bg-zinc-50">
               <tr>
                 <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-zinc-400">Cliente</th>
                 <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-zinc-400 text-right">Pedidos</th>
                 <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-zinc-400 text-right">Unidades</th>
                 <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-zinc-400 text-right">Total</th>
+                {supplierReport.paymentMethods.map((methodName) => (
+                  <th key={methodName} className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-zinc-400 text-right">{methodName}</th>
+                ))}
                 <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-zinc-400 text-right">Cobrado</th>
                 <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-zinc-400 text-right">Cta Cte</th>
               </tr>
@@ -696,7 +804,7 @@ export default function SupplierOrders() {
             <tbody className="divide-y divide-zinc-50">
               {supplierReport.clientes.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-6 text-center text-sm text-zinc-400">
+                  <td colSpan={6 + supplierReport.paymentMethods.length} className="px-4 py-6 text-center text-sm text-zinc-400">
                     No hay pedidos a proveedor para el rango seleccionado.
                   </td>
                 </tr>
@@ -707,6 +815,11 @@ export default function SupplierOrders() {
                   <td className="px-4 py-3 text-sm font-mono text-zinc-600 text-right">{row.cantidadPedidos}</td>
                   <td className="px-4 py-3 text-sm font-mono text-zinc-600 text-right">{row.productos}</td>
                   <td className="px-4 py-3 text-sm font-black font-mono text-zinc-900 text-right">${row.total.toFixed(2)}</td>
+                  {supplierReport.paymentMethods.map((methodName) => (
+                    <td key={methodName} className="px-4 py-3 text-sm font-black font-mono text-zinc-700 text-right">
+                      ${Number(row.metodos[methodName] || 0).toFixed(2)}
+                    </td>
+                  ))}
                   <td className="px-4 py-3 text-sm font-black font-mono text-emerald-600 text-right">${row.cobrado.toFixed(2)}</td>
                   <td className="px-4 py-3 text-sm font-black font-mono text-red-600 text-right">${row.ctaCte.toFixed(2)}</td>
                 </tr>
