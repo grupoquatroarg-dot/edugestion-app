@@ -252,6 +252,7 @@ export default function SalesModule() {
       generateSaleReceipt(sale, businessSettings);
     } catch (error) {
       console.error("Error generating receipt:", error);
+      alert("No se pudo generar el PDF de la venta");
     } finally {
       setDownloadingSaleId(null);
     }
@@ -360,6 +361,16 @@ export default function SalesModule() {
       }
       return item;
     }));
+  };
+
+  const setQuantity = (productId: number, quantity: number) => {
+    const safeQuantity = Math.max(1, Math.floor(Number(quantity) || 1));
+
+    setCart(prev => prev.map(item => (
+      item.product.id === productId
+        ? { ...item, quantity: safeQuantity }
+        : item
+    )));
   };
 
   const removeFromCart = (productId: number) => {
@@ -495,9 +506,9 @@ export default function SalesModule() {
 
       <div className="flex-1 overflow-hidden">
         {activeTab === 'nueva' ? (
-          <div className="flex h-full overflow-hidden flex-col lg:flex-row">
+          <div className="flex h-full overflow-hidden flex-col xl:flex-row">
             {/* Product Selection */}
-            <div className="flex-1 flex flex-col p-4 lg:p-8 border-r border-zinc-200 overflow-hidden">
+            <div className="flex-1 flex flex-col p-4 lg:p-6 xl:p-8 xl:border-r border-zinc-200 overflow-hidden">
               <div className="mb-6 lg:mb-8 flex flex-col sm:flex-row items-start justify-between gap-4">
                 <div>
                   <h1 className="text-2xl lg:text-3xl font-black text-zinc-900 tracking-tight">Nueva Venta</h1>
@@ -590,81 +601,145 @@ export default function SalesModule() {
             </div>
 
             {/* Cart / Order Summary */}
-            <div className="w-full lg:w-[400px] bg-white flex flex-col shadow-2xl z-10 border-t lg:border-t-0 lg:border-l border-zinc-200">
-              <div className="p-4 lg:p-8 border-b border-zinc-100 flex items-center gap-3">
-                <div className="w-10 h-10 bg-zinc-900 text-white rounded-xl flex items-center justify-center">
-                  <ShoppingCart size={20} />
+            <div className="w-full xl:w-[620px] bg-white flex flex-col shadow-2xl z-10 border-t xl:border-t-0 xl:border-l border-zinc-200">
+              <div className="p-4 lg:p-6 border-b border-zinc-100 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 bg-zinc-900 text-white rounded-xl flex items-center justify-center shrink-0">
+                    <ShoppingCart size={22} />
+                  </div>
+                  <div>
+                    <h2 className="text-lg lg:text-xl font-black text-zinc-900 uppercase tracking-tight">Carrito de Venta</h2>
+                    <p className="text-xs text-zinc-400 font-bold uppercase tracking-widest">{cart.length} productos cargados</p>
+                  </div>
                 </div>
-                <h2 className="text-lg lg:text-xl font-black text-zinc-900 uppercase tracking-tight">Resumen</h2>
+                <div className="hidden sm:block text-right">
+                  <p className="text-[10px] text-zinc-400 font-black uppercase tracking-widest">Total</p>
+                  <p className="text-2xl font-black text-zinc-900 font-mono">${total.toFixed(2)}</p>
+                </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-4 lg:p-8 space-y-4 lg:space-y-6 max-h-[40vh] lg:max-h-none">
-                {cart.map(item => (
-                  <div key={item.product.id} className="flex items-center gap-4 bg-zinc-50 p-4 rounded-2xl border border-zinc-100 group">
-                    <div className="flex-1 min-w-0">
-                      <h4 className="font-bold text-zinc-900 truncate text-sm">{item.product.name}</h4>
-                      <p className="text-xs text-zinc-500 font-mono">
-                        ${calculateDiscountedUnitPrice(item).toFixed(2)} c/u
-                        {item.discountType !== 'none' && (
-                          <span className="block text-[10px] text-emerald-600 font-bold">
-                            Lista: ${item.product.sale_price.toFixed(2)}
-                          </span>
-                        )}
-                      </p>
-                      <div className="mt-3 grid grid-cols-2 gap-2">
-                        <select
-                          value={item.discountType}
-                          onChange={(e) => updateCartDiscount(item.product.id, 'discountType', e.target.value as any)}
-                          className="px-2 py-2 bg-white border border-zinc-200 rounded-lg text-[10px] font-bold outline-none"
+              <div className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-4 max-h-[52vh] xl:max-h-none custom-scrollbar">
+                {cart.map(item => {
+                  const discountedUnitPrice = calculateDiscountedUnitPrice(item);
+                  const itemSubtotal = discountedUnitPrice * item.quantity;
+                  const missingUnits = Math.max(0, item.quantity - Number(item.product.stock || 0));
+
+                  return (
+                    <div key={item.product.id} className="bg-zinc-50 p-4 sm:p-5 rounded-3xl border border-zinc-100 group space-y-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h4 className="font-black text-zinc-900 text-base leading-tight break-words">{item.product.name}</h4>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            {item.product.code && (
+                              <span className="text-[10px] font-mono text-zinc-400 bg-white px-2 py-1 rounded-lg border border-zinc-100">
+                                {item.product.code}
+                              </span>
+                            )}
+                            <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded-lg border ${
+                              missingUnits > 0 ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                            }`}>
+                              Stock: {item.product.stock} {missingUnits > 0 ? `| Faltan: ${missingUnits}` : ''}
+                            </span>
+                          </div>
+                        </div>
+
+                        <button 
+                          onClick={() => removeFromCart(item.product.id)}
+                          className="shrink-0 text-zinc-300 hover:text-red-600 hover:bg-red-50 transition-colors p-2 rounded-xl"
+                          title="Quitar producto"
                         >
-                          <option value="none">Sin bonif.</option>
-                          <option value="percentage">% OFF</option>
-                          <option value="fixed">$ OFF</option>
-                        </select>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          disabled={item.discountType === 'none'}
-                          value={item.discountValue || ''}
-                          onChange={(e) => updateCartDiscount(item.product.id, 'discountValue', Number(e.target.value))}
-                          className="px-2 py-2 bg-white border border-zinc-200 rounded-lg text-[10px] font-bold outline-none disabled:bg-zinc-100"
-                          placeholder="Bonif."
-                        />
+                          <Trash2 size={20} />
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[10px] font-black text-zinc-400 uppercase mb-1.5 tracking-widest">Cantidad</label>
+                          <div className="flex items-center gap-2">
+                            <button 
+                              type="button"
+                              onClick={() => updateQuantity(item.product.id, -1)}
+                              className="h-11 w-11 bg-white border border-zinc-200 hover:bg-zinc-100 rounded-xl transition-colors flex items-center justify-center shrink-0"
+                            >
+                              <Minus size={16} />
+                            </button>
+                            <input
+                              type="number"
+                              min="1"
+                              step="1"
+                              inputMode="numeric"
+                              value={item.quantity}
+                              onChange={(e) => setQuantity(item.product.id, Number(e.target.value))}
+                              className="w-full h-11 text-center bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-lg font-black font-mono"
+                            />
+                            <button 
+                              type="button"
+                              onClick={() => updateQuantity(item.product.id, 1)}
+                              className="h-11 w-11 bg-white border border-zinc-200 hover:bg-zinc-100 rounded-xl transition-colors flex items-center justify-center shrink-0"
+                            >
+                              <Plus size={16} />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-black text-zinc-400 uppercase mb-1.5 tracking-widest">Precio unitario</label>
+                          <div className="h-11 px-4 bg-white border border-zinc-200 rounded-xl flex items-center justify-between gap-2">
+                            <span className="text-sm font-black text-zinc-900 font-mono">${discountedUnitPrice.toFixed(2)}</span>
+                            {item.discountType !== 'none' && (
+                              <span className="text-[10px] text-emerald-600 font-bold uppercase">Lista ${item.product.sale_price.toFixed(2)}</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-black text-zinc-400 uppercase mb-1.5 tracking-widest">Bonificación</label>
+                          <div className="grid grid-cols-[1fr_1fr] gap-2">
+                            <select
+                              value={item.discountType}
+                              onChange={(e) => updateCartDiscount(item.product.id, 'discountType', e.target.value as any)}
+                              className="h-11 px-3 bg-white border border-zinc-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-zinc-900"
+                            >
+                              <option value="none">Sin bonif.</option>
+                              <option value="percentage">% OFF</option>
+                              <option value="fixed">$ OFF</option>
+                            </select>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              inputMode="decimal"
+                              disabled={item.discountType === 'none'}
+                              value={item.discountValue || ''}
+                              onChange={(e) => updateCartDiscount(item.product.id, 'discountValue', Number(e.target.value))}
+                              className="h-11 px-3 bg-white border border-zinc-200 rounded-xl text-sm font-black outline-none focus:ring-2 focus:ring-zinc-900 disabled:bg-zinc-100"
+                              placeholder="Valor"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-black text-zinc-400 uppercase mb-1.5 tracking-widest">Importe</label>
+                          <div className="h-11 px-4 bg-zinc-900 text-white rounded-xl flex items-center justify-between">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-white/50">Subtotal</span>
+                            <span className="text-lg font-black font-mono">${itemSubtotal.toFixed(2)}</span>
+                          </div>
+                        </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 bg-white rounded-xl border border-zinc-200 p-1 shadow-sm">
-                      <button 
-                        onClick={() => updateQuantity(item.product.id, -1)}
-                        className="p-1.5 hover:bg-zinc-100 rounded-lg transition-colors"
-                      >
-                        <Minus size={14} />
-                      </button>
-                      <span className="w-8 text-center text-sm font-black">{item.quantity}</span>
-                      <button 
-                        onClick={() => updateQuantity(item.product.id, 1)}
-                        className="p-1.5 hover:bg-zinc-100 rounded-lg transition-colors"
-                      >
-                        <Plus size={14} />
-                      </button>
-                    </div>
-                    <button 
-                      onClick={() => removeFromCart(item.product.id)}
-                      className="text-zinc-300 hover:text-red-600 transition-colors p-1"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
+
                 {cart.length === 0 && (
-                  <div className="flex flex-col items-center justify-center py-12 lg:py-24 text-zinc-300">
-                    <ShoppingCart size={48} className="mb-4 opacity-10" />
+                  <div className="flex flex-col items-center justify-center py-12 lg:py-24 text-zinc-300 border-2 border-dashed border-zinc-100 rounded-3xl">
+                    <ShoppingCart size={56} className="mb-4 opacity-10" />
                     <p className="text-xs font-bold uppercase tracking-widest">Carrito Vacío</p>
+                    <p className="text-xs text-zinc-400 mt-2 text-center">Seleccioná productos para armar la venta</p>
                   </div>
                 )}
               </div>
 
-              <div className="p-4 lg:p-8 bg-zinc-50 border-t border-zinc-200 space-y-4 lg:space-y-6">
+              <div className="p-4 lg:p-6 bg-zinc-50 border-t border-zinc-200 space-y-4 lg:space-y-5">
                 <div className="space-y-4">
                   <div>
                     <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1.5 tracking-widest">Forma de Pago</label>
@@ -723,7 +798,7 @@ export default function SalesModule() {
                         <CreditCard className="w-4 h-4 text-zinc-400" />
                         <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Datos del Cheque</span>
                       </div>
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                           <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1.5 tracking-widest">Banco</label>
                           <input
@@ -780,17 +855,17 @@ export default function SalesModule() {
                       value={notes}
                       onChange={(e) => setNotes(e.target.value)}
                       placeholder="Notas adicionales..."
-                      className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm font-medium shadow-sm min-h-[80px] resize-none"
+                      className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm font-medium shadow-sm min-h-[70px] resize-none"
                     />
                   </div>
                 </div>
 
                 <div className="pt-4 border-t border-zinc-200">
-                  <div className="flex justify-between items-center mb-1">
+                  <div className="flex justify-between items-center mb-1 gap-4">
                     <span className="text-zinc-500 font-bold text-xs uppercase tracking-widest">Total a cobrar</span>
-                    <span className="text-4xl font-black text-zinc-900 font-mono tracking-tighter">${total.toFixed(2)}</span>
+                    <span className="text-3xl sm:text-4xl font-black text-zinc-900 font-mono tracking-tighter">${total.toFixed(2)}</span>
                   </div>
-                  
+
                   {metodoPago === 'mixto' && parseFloat(montoPagado) > 0 && (
                     <div className="flex justify-between items-center text-[10px] font-black text-red-600 uppercase tracking-widest">
                       <span>Saldo a Cta Cte:</span>

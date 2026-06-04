@@ -1,5 +1,5 @@
 import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 
 const formatCurrency = (value: any) => {
   const numberValue = Number(value || 0);
@@ -11,7 +11,12 @@ const formatCurrency = (value: any) => {
 
 const formatDate = (value: any) => {
   if (!value) return '-';
-  return new Date(value).toLocaleString('es-AR');
+  return new Date(value).toLocaleDateString('es-AR');
+};
+
+const safeText = (value: any) => {
+  if (value === null || value === undefined || value === '') return '-';
+  return String(value);
 };
 
 const getDiscountText = (item: any) => {
@@ -24,73 +29,77 @@ const getDiscountText = (item: any) => {
   return '-';
 };
 
-export const generateSaleReceipt = (sale: any, businessSettings: Record<string, string> = {}) => {
-  const doc = new jsPDF({ orientation: 'landscape' });
+const getOriginalUnitPrice = (item: any) => {
+  return Number(item.precio_unitario_original ?? item.precio_original ?? item.precio_lista ?? item.precio_venta ?? 0);
+};
 
+const getDiscountedUnitPrice = (item: any) => {
+  return Number(item.precio_unitario_bonificado ?? item.precio_venta ?? getOriginalUnitPrice(item));
+};
+
+export const generateSaleReceipt = (sale: any, businessSettings: Record<string, string> = {}) => {
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
+  const margin = 12;
+
+  const businessName = businessSettings.business_name || 'EDUGESTIÓN';
 
   if (businessSettings.business_logo) {
     try {
-      doc.addImage(businessSettings.business_logo, 'PNG', 14, 10, 24, 24);
+      doc.addImage(businessSettings.business_logo, 'PNG', margin, 9, 24, 24);
     } catch (e) {
       console.error('Error adding logo to PDF', e);
     }
   }
 
-  doc.setFontSize(14);
+  doc.setTextColor(24, 24, 27);
+  doc.setFontSize(15);
   doc.setFont('helvetica', 'bold');
-  doc.text(businessSettings.business_name || 'EDUGESTIÓN', 42, 16);
+  doc.text(businessName, 42, 15);
 
   doc.setFontSize(8);
   doc.setFont('helvetica', 'normal');
-  doc.setTextColor(100);
-  doc.text(`Razón Social: ${businessSettings.business_razon_social || '-'}`, 42, 21);
-  doc.text(`CUIT: ${businessSettings.business_cuit || '-'}`, 42, 25);
-  doc.text(`Dirección: ${businessSettings.business_address || '-'}, ${businessSettings.business_localidad || '-'}`, 42, 29);
-  doc.text(`Tel: ${businessSettings.business_phone || '-'} | Email: ${businessSettings.business_email || '-'}`, 42, 33);
+  doc.setTextColor(82, 82, 91);
+  doc.text(`Razón Social: ${safeText(businessSettings.business_razon_social)}`, 42, 20);
+  doc.text(`CUIT: ${safeText(businessSettings.business_cuit)}`, 42, 24);
+  doc.text(`Dirección: ${safeText(businessSettings.business_address)}, ${safeText(businessSettings.business_localidad)}`, 42, 28);
+  doc.text(`Tel: ${safeText(businessSettings.business_phone)} | Email: ${safeText(businessSettings.business_email)}`, 42, 32);
 
-  doc.setTextColor(0);
-  doc.setDrawColor(200);
-  doc.line(14, 39, pageWidth - 14, 39);
+  doc.setDrawColor(212, 212, 216);
+  doc.line(margin, 38, pageWidth - margin, 38);
 
-  doc.setFontSize(15);
+  doc.setTextColor(24, 24, 27);
+  doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.text('COMPROBANTE DE VENTA', pageWidth / 2, 49, { align: 'center' });
 
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Venta N°: ${(sale.numero_venta || sale.id || '').toString().padStart(6, '0')}`, 14, 59);
-  doc.text(`Fecha: ${formatDate(sale.fecha)}`, 14, 64);
+  doc.text(`Venta N°: ${safeText(sale.numero_venta || sale.id).toString().padStart(6, '0')}`, margin, 59);
+  doc.text(`Fecha: ${formatDate(sale.fecha)}`, margin, 64);
 
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
-  doc.text('DATOS DEL CLIENTE', 14, 76);
+  doc.text('DATOS DEL CLIENTE', margin, 76);
 
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Cliente: ${sale.nombre_cliente || '-'}`, 14, 83);
-  doc.text(`Localidad: ${sale.cliente_localidad || sale.localidad || '-'}`, 14, 88);
-  doc.text(`Domicilio: ${sale.cliente_direccion || sale.direccion || '-'}`, 110, 83);
-  doc.text(`Teléfono: ${sale.cliente_telefono || sale.telefono || '-'}`, 110, 88);
+  doc.text(`Cliente: ${safeText(sale.nombre_cliente)}`, margin, 83);
+  doc.text(`Localidad: ${safeText(sale.cliente_localidad || sale.localidad)}`, margin, 88);
+  doc.text(`Domicilio: ${safeText(sale.cliente_direccion || sale.direccion)}`, 120, 83);
+  doc.text(`Teléfono: ${safeText(sale.cliente_telefono || sale.telefono)}`, 120, 88);
 
-  const tableColumn = [
-    'Cant.',
-    'Producto',
-    'Precio Unit.',
-    'Bonificación',
-    'Unit. Bonificado',
-    'Importe',
-  ];
+  const items = Array.isArray(sale.items) ? sale.items : [];
 
-  const tableRows = (sale.items || []).map((item: any) => {
+  const tableRows = items.map((item: any) => {
     const cantidad = Number(item.cantidad || 0);
-    const precioOriginal = Number(item.precio_unitario_original ?? item.precio_venta ?? 0);
-    const precioBonificado = Number(item.precio_unitario_bonificado ?? item.precio_venta ?? precioOriginal);
+    const precioOriginal = getOriginalUnitPrice(item);
+    const precioBonificado = getDiscountedUnitPrice(item);
     const importe = cantidad * precioBonificado;
 
     return [
       cantidad.toLocaleString('es-AR'),
-      item.product_name || item.name || '-',
+      safeText(item.product_name || item.name || item.producto),
       formatCurrency(precioOriginal),
       getDiscountText(item),
       formatCurrency(precioBonificado),
@@ -98,50 +107,80 @@ export const generateSaleReceipt = (sale: any, businessSettings: Record<string, 
     ];
   });
 
-  (doc as any).autoTable({
-    head: [tableColumn],
-    body: tableRows,
+  autoTable(doc, {
+    head: [[
+      'Cantidad',
+      'Producto',
+      'Precio unitario',
+      'Bonificación',
+      'Precio unit. bonificado',
+      'Importe',
+    ]],
+    body: tableRows.length > 0 ? tableRows : [['-', 'Sin productos', '-', '-', '-', '-']],
     startY: 96,
     theme: 'grid',
-    headStyles: { fillColor: [24, 24, 27], textColor: [255, 255, 255] },
-    styles: { fontSize: 8, cellPadding: 2.5, valign: 'middle' },
-    columnStyles: {
-      0: { halign: 'center', cellWidth: 18 },
-      1: { cellWidth: 105 },
-      2: { halign: 'right', cellWidth: 32 },
-      3: { halign: 'center', cellWidth: 28 },
-      4: { halign: 'right', cellWidth: 34 },
-      5: { halign: 'right', cellWidth: 34 },
+    headStyles: {
+      fillColor: [24, 24, 27],
+      textColor: [255, 255, 255],
+      fontStyle: 'bold',
+      halign: 'center',
     },
+    styles: {
+      fontSize: 8,
+      cellPadding: 2.4,
+      valign: 'middle',
+      overflow: 'linebreak',
+    },
+    columnStyles: {
+      0: { halign: 'center', cellWidth: 20 },
+      1: { cellWidth: 110 },
+      2: { halign: 'right', cellWidth: 34 },
+      3: { halign: 'center', cellWidth: 32 },
+      4: { halign: 'right', cellWidth: 42 },
+      5: { halign: 'right', cellWidth: 32 },
+    },
+    margin: { left: margin, right: margin },
   });
 
   const finalY = ((doc as any).lastAutoTable?.finalY || 120) + 8;
 
-  const subtotal = (sale.items || []).reduce((sum: number, item: any) => {
+  const totalCalculado = items.reduce((sum: number, item: any) => {
     const cantidad = Number(item.cantidad || 0);
-    const precioBonificado = Number(item.precio_unitario_bonificado ?? item.precio_venta ?? 0);
-    return sum + cantidad * precioBonificado;
+    return sum + cantidad * getDiscountedUnitPrice(item);
   }, 0);
 
-  doc.setFontSize(10);
+  const total = Number(sale.total ?? totalCalculado);
+
+  doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Forma de Pago: ${String(sale.metodo_pago || '-').toUpperCase()}`, 14, finalY);
-  doc.text(`Pagado: ${formatCurrency(sale.monto_pagado)}`, 14, finalY + 6);
+  doc.setTextColor(82, 82, 91);
+  doc.text(`Forma de pago: ${safeText(sale.metodo_pago).toUpperCase()}`, margin, finalY);
+  doc.text(`Pagado: ${formatCurrency(sale.monto_pagado)}`, margin, finalY + 6);
 
   if (Number(sale.monto_pendiente || 0) > 0) {
     doc.setTextColor(220, 38, 38);
-    doc.text(`SALDO PENDIENTE: ${formatCurrency(sale.monto_pendiente)}`, 14, finalY + 12);
-    doc.setTextColor(0);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Saldo pendiente: ${formatCurrency(sale.monto_pendiente)}`, margin, finalY + 12);
   }
 
-  doc.setFontSize(12);
+  const boxX = pageWidth - 86;
+  const boxY = finalY - 6;
+  doc.setFillColor(24, 24, 27);
+  doc.roundedRect(boxX, boxY, 74, 24, 3, 3, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
-  doc.text(`TOTAL: ${formatCurrency(sale.total ?? subtotal)}`, pageWidth - 14, finalY, { align: 'right' });
+  doc.text('TOTAL OPERACIÓN', boxX + 5, boxY + 8);
+
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text(formatCurrency(total), boxX + 69, boxY + 18, { align: 'right' });
 
   doc.setTextColor(150);
   doc.setFontSize(8);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Gracias por su compra - ${businessSettings.business_name || 'EDUGESTIÓN'}`, pageWidth / 2, 195, { align: 'center' });
+  doc.text(`Gracias por su compra - ${businessName}`, pageWidth / 2, 195, { align: 'center' });
 
   doc.save(`Comprobante_Venta_${sale.numero_venta || sale.id}.pdf`);
 };
