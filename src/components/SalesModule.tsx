@@ -309,6 +309,16 @@ export default function SalesModule() {
     }
   };
 
+  const copyTextToClipboard = async (text: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      }
+    } catch (error) {
+      console.warn('No se pudo copiar el texto al portapapeles:', error);
+    }
+  };
+
   const handleSendReceiptWhatsApp = async (saleId: number) => {
     try {
       setWhatsAppSendingSaleId(saleId);
@@ -330,15 +340,20 @@ export default function SalesModule() {
       const saleNumber = sale.numero_venta || sale.id;
       const message = `Hola ${sale.nombre_cliente || ''}, te enviamos el remito/comprobante de tu venta N° ${saleNumber}. Total: $${Number(sale.total || 0).toFixed(2)}.`;
       const file = createSaleReceiptPdfFile(sale, businessSettings);
+      await copyTextToClipboard(message);
 
-      // Mejor opción sin WhatsApp Business API:
-      // En celular abre el compartidor nativo con el PDF adjunto + texto.
-      // El usuario elige WhatsApp y toca enviar manualmente.
+      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
       if (
+        isMobile &&
         navigator.share &&
         navigator.canShare &&
         navigator.canShare({ files: [file] })
       ) {
+        alert(
+          `Se va a abrir el menú de compartir con el PDF adjunto. Elegí WhatsApp y seleccioná el chat del cliente.\n\nEl texto ya quedó copiado para pegarlo si WhatsApp no lo completa automáticamente.`
+        );
+
         await navigator.share({
           title: `Comprobante Venta ${saleNumber}`,
           text: message,
@@ -347,12 +362,17 @@ export default function SalesModule() {
         return;
       }
 
-      // Fallback PC / navegadores sin compartir archivos:
-      // descarga el PDF y abre el chat directo con texto.
+      // PC / fallback: abre WhatsApp Web directo al número y descarga el PDF.
       generateSaleReceipt(sale, businessSettings);
-      const whatsappUrl = `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`;
-      window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
-      alert('Tu navegador no permite adjuntar el PDF automáticamente. Se descargó el PDF y se abrió WhatsApp directo al cliente para adjuntarlo manualmente.');
+
+      const webUrl = `https://web.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`;
+      const opened = window.open(webUrl, '_blank', 'noopener,noreferrer');
+
+      if (!opened) {
+        window.location.href = webUrl;
+      }
+
+      alert('Se descargó el PDF y se abrió WhatsApp Web directo al cliente. El texto también quedó copiado por si necesitás pegarlo.');
     } catch (error) {
       console.error('Error sending receipt via WhatsApp:', error);
       alert('No se pudo preparar el envío por WhatsApp.');
@@ -1129,7 +1149,7 @@ export default function SalesModule() {
                                   onClick={() => handleSendReceiptWhatsApp(sale.id)}
                                   disabled={whatsAppSendingSaleId === sale.id}
                                   className="p-2.5 text-zinc-400 hover:text-green-600 hover:bg-green-50 rounded-xl transition-all disabled:opacity-50"
-                                  title="Enviar por WhatsApp"
+                                  title="Preparar envío por WhatsApp"
                                 >
                                   {whatsAppSendingSaleId === sale.id ? (
                                     <div className="w-4 h-4 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
