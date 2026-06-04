@@ -601,41 +601,41 @@ export default function SalesModule() {
             </div>
 
             {/* Cart / Order Summary */}
-            <div className="w-full xl:w-[620px] bg-white flex flex-col shadow-2xl z-10 border-t xl:border-t-0 xl:border-l border-zinc-200">
-              <div className="p-4 lg:p-6 border-b border-zinc-100 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-11 h-11 bg-zinc-900 text-white rounded-xl flex items-center justify-center shrink-0">
-                    <ShoppingCart size={22} />
+            <div className="w-full xl:w-[560px] 2xl:w-[600px] bg-white flex flex-col shadow-2xl z-10 border-t xl:border-t-0 xl:border-l border-zinc-200 min-h-0">
+              <div className="p-3 lg:p-4 border-b border-zinc-100 flex items-center justify-between gap-3 shrink-0">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 bg-zinc-900 text-white rounded-xl flex items-center justify-center shrink-0">
+                    <ShoppingCart size={20} />
                   </div>
-                  <div>
-                    <h2 className="text-lg lg:text-xl font-black text-zinc-900 uppercase tracking-tight">Carrito de Venta</h2>
-                    <p className="text-xs text-zinc-400 font-bold uppercase tracking-widest">{cart.length} productos cargados</p>
+                  <div className="min-w-0">
+                    <h2 className="text-base lg:text-lg font-black text-zinc-900 uppercase tracking-tight">Carrito de Venta</h2>
+                    <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">{cart.length} productos cargados</p>
                   </div>
                 </div>
-                <div className="hidden sm:block text-right">
-                  <p className="text-[10px] text-zinc-400 font-black uppercase tracking-widest">Total</p>
-                  <p className="text-2xl font-black text-zinc-900 font-mono">${total.toFixed(2)}</p>
+                <div className="text-right shrink-0">
+                  <p className="text-[9px] text-zinc-400 font-black uppercase tracking-widest">Total</p>
+                  <p className="text-xl lg:text-2xl font-black text-zinc-900 font-mono">${total.toFixed(2)}</p>
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-4 max-h-[52vh] xl:max-h-none custom-scrollbar">
+              <div className="shrink-0 overflow-y-auto p-3 lg:p-4 space-y-3 max-h-[28dvh] xl:max-h-[30dvh] custom-scrollbar border-b border-zinc-100">
                 {cart.map(item => {
                   const discountedUnitPrice = calculateDiscountedUnitPrice(item);
                   const itemSubtotal = discountedUnitPrice * item.quantity;
                   const missingUnits = Math.max(0, item.quantity - Number(item.product.stock || 0));
 
                   return (
-                    <div key={item.product.id} className="bg-zinc-50 p-4 sm:p-5 rounded-3xl border border-zinc-100 group space-y-4">
+                    <div key={item.product.id} className="bg-zinc-50 p-3 lg:p-4 rounded-2xl border border-zinc-100 group space-y-3">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <h4 className="font-black text-zinc-900 text-base leading-tight break-words">{item.product.name}</h4>
+                          <h4 className="font-black text-zinc-900 text-sm lg:text-base leading-tight break-words">{item.product.name}</h4>
                           <div className="mt-2 flex flex-wrap items-center gap-2">
                             {item.product.code && (
-                              <span className="text-[10px] font-mono text-zinc-400 bg-white px-2 py-1 rounded-lg border border-zinc-100">
+                              <span className="text-[9px] font-mono text-zinc-400 bg-white px-2 py-0.5 rounded-lg border border-zinc-100">
                                 {item.product.code}
                               </span>
                             )}
-                            <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded-lg border ${
+                            <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-lg border ${
                               missingUnits > 0 ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'
                             }`}>
                               Stock: {item.product.stock} {missingUnits > 0 ? `| Faltan: ${missingUnits}` : ''}
@@ -648,20 +648,20 @@ export default function SalesModule() {
                           className="shrink-0 text-zinc-300 hover:text-red-600 hover:bg-red-50 transition-colors p-2 rounded-xl"
                           title="Quitar producto"
                         >
-                          <Trash2 size={20} />
+                          <Trash2 size={18} />
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         <div>
-                          <label className="block text-[10px] font-black text-zinc-400 uppercase mb-1.5 tracking-widest">Cantidad</label>
+                          <label className="block text-[9px] font-black text-zinc-400 uppercase mb-1 tracking-widest">Cantidad</label>
                           <div className="flex items-center gap-2">
                             <button 
                               type="button"
                               onClick={() => updateQuantity(item.product.id, -1)}
-                              className="h-11 w-11 bg-white border border-zinc-200 hover:bg-zinc-100 rounded-xl transition-colors flex items-center justify-center shrink-0"
+                              className="h-10 w-10 bg-white border border-zinc-200 hover:bg-zinc-100 rounded-xl transition-colors flex items-center justify-center shrink-0"
                             >
-                              <Minus size={16} />
+                              <Minus size={15} />
                             </button>
                             <input
                               type="number"
@@ -670,35 +670,35 @@ export default function SalesModule() {
                               inputMode="numeric"
                               value={item.quantity}
                               onChange={(e) => setQuantity(item.product.id, Number(e.target.value))}
-                              className="w-full h-11 text-center bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-lg font-black font-mono"
+                              className="w-full h-10 text-center bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-base font-black font-mono"
                             />
                             <button 
                               type="button"
                               onClick={() => updateQuantity(item.product.id, 1)}
-                              className="h-11 w-11 bg-white border border-zinc-200 hover:bg-zinc-100 rounded-xl transition-colors flex items-center justify-center shrink-0"
+                              className="h-10 w-10 bg-white border border-zinc-200 hover:bg-zinc-100 rounded-xl transition-colors flex items-center justify-center shrink-0"
                             >
-                              <Plus size={16} />
+                              <Plus size={15} />
                             </button>
                           </div>
                         </div>
 
                         <div>
-                          <label className="block text-[10px] font-black text-zinc-400 uppercase mb-1.5 tracking-widest">Precio unitario</label>
-                          <div className="h-11 px-4 bg-white border border-zinc-200 rounded-xl flex items-center justify-between gap-2">
+                          <label className="block text-[9px] font-black text-zinc-400 uppercase mb-1 tracking-widest">Precio unitario</label>
+                          <div className="h-10 px-3 bg-white border border-zinc-200 rounded-xl flex items-center justify-between gap-2">
                             <span className="text-sm font-black text-zinc-900 font-mono">${discountedUnitPrice.toFixed(2)}</span>
                             {item.discountType !== 'none' && (
-                              <span className="text-[10px] text-emerald-600 font-bold uppercase">Lista ${item.product.sale_price.toFixed(2)}</span>
+                              <span className="text-[9px] text-emerald-600 font-bold uppercase">Lista ${item.product.sale_price.toFixed(2)}</span>
                             )}
                           </div>
                         </div>
 
                         <div>
-                          <label className="block text-[10px] font-black text-zinc-400 uppercase mb-1.5 tracking-widest">Bonificación</label>
+                          <label className="block text-[9px] font-black text-zinc-400 uppercase mb-1 tracking-widest">Bonificación</label>
                           <div className="grid grid-cols-[1fr_1fr] gap-2">
                             <select
                               value={item.discountType}
                               onChange={(e) => updateCartDiscount(item.product.id, 'discountType', e.target.value as any)}
-                              className="h-11 px-3 bg-white border border-zinc-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-zinc-900"
+                              className="h-10 px-2 bg-white border border-zinc-200 rounded-xl text-[11px] font-bold outline-none focus:ring-2 focus:ring-zinc-900"
                             >
                               <option value="none">Sin bonif.</option>
                               <option value="percentage">% OFF</option>
@@ -712,17 +712,17 @@ export default function SalesModule() {
                               disabled={item.discountType === 'none'}
                               value={item.discountValue || ''}
                               onChange={(e) => updateCartDiscount(item.product.id, 'discountValue', Number(e.target.value))}
-                              className="h-11 px-3 bg-white border border-zinc-200 rounded-xl text-sm font-black outline-none focus:ring-2 focus:ring-zinc-900 disabled:bg-zinc-100"
+                              className="h-10 px-2 bg-white border border-zinc-200 rounded-xl text-sm font-black outline-none focus:ring-2 focus:ring-zinc-900 disabled:bg-zinc-100"
                               placeholder="Valor"
                             />
                           </div>
                         </div>
 
                         <div>
-                          <label className="block text-[10px] font-black text-zinc-400 uppercase mb-1.5 tracking-widest">Importe</label>
-                          <div className="h-11 px-4 bg-zinc-900 text-white rounded-xl flex items-center justify-between">
-                            <span className="text-[10px] font-black uppercase tracking-widest text-white/50">Subtotal</span>
-                            <span className="text-lg font-black font-mono">${itemSubtotal.toFixed(2)}</span>
+                          <label className="block text-[9px] font-black text-zinc-400 uppercase mb-1 tracking-widest">Importe</label>
+                          <div className="h-10 px-3 bg-zinc-900 text-white rounded-xl flex items-center justify-between">
+                            <span className="text-[9px] font-black uppercase tracking-widest text-white/50">Subtotal</span>
+                            <span className="text-base font-black font-mono">${itemSubtotal.toFixed(2)}</span>
                           </div>
                         </div>
                       </div>
@@ -731,156 +731,154 @@ export default function SalesModule() {
                 })}
 
                 {cart.length === 0 && (
-                  <div className="flex flex-col items-center justify-center py-12 lg:py-24 text-zinc-300 border-2 border-dashed border-zinc-100 rounded-3xl">
-                    <ShoppingCart size={56} className="mb-4 opacity-10" />
+                  <div className="flex flex-col items-center justify-center py-10 text-zinc-300 border-2 border-dashed border-zinc-100 rounded-3xl">
+                    <ShoppingCart size={48} className="mb-4 opacity-10" />
                     <p className="text-xs font-bold uppercase tracking-widest">Carrito Vacío</p>
                     <p className="text-xs text-zinc-400 mt-2 text-center">Seleccioná productos para armar la venta</p>
                   </div>
                 )}
               </div>
 
-              <div className="p-4 lg:p-6 bg-zinc-50 border-t border-zinc-200 space-y-4 lg:space-y-5">
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1.5 tracking-widest">Forma de Pago</label>
-                    <select
-                      className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm font-bold shadow-sm"
-                      value={metodoPago}
-                      onChange={(e) => setMetodoPago(e.target.value)}
-                    >
-                      {paymentMethods.map(pm => (
-                        <option key={pm.id} value={pm.name}>{pm.name}</option>
-                      ))}
-                      <option value="mixto">Mixto (Pago Parcial)</option>
-                    </select>
-                  </div>
-
-                  {metodoPago === 'mixto' && (
-                    <div className="space-y-4 p-4 bg-white border border-zinc-100 rounded-2xl shadow-sm">
-                      <div>
-                        <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1.5 tracking-widest">Monto Pagado</label>
-                        <div className="relative">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 font-bold">$</span>
-                          <input
-                            type="number"
-                            placeholder="0.00"
-                            className="w-full pl-8 pr-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm font-black"
-                            value={montoPagado}
-                            onChange={(e) => setMontoPagado(e.target.value)}
-                          />
-                        </div>
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1.5 tracking-widest">Método del Pago Parcial</label>
-                        <select
-                          className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm font-bold"
-                          value={metodoPagoParcial}
-                          onChange={(e) => setMetodoPagoParcial(e.target.value)}
-                        >
-                          {paymentMethods.filter(pm => pm.tipo !== 'Crédito').map(pm => (
-                            <option key={pm.id} value={pm.name}>{pm.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  )}
-
-                  {metodoPago === 'cta_cte' && selectedClienteId === 1 && (
-                    <div className="flex items-center gap-3 p-3 bg-amber-50 text-amber-600 rounded-xl text-[10px] font-bold border border-amber-100">
-                      <AlertCircle size={16} />
-                      No se recomienda usar Cta Cte con Consumidor Final
-                    </div>
-                  )}
-
-                  {metodoPago === 'Cheque' && (
-                    <div className="space-y-4 p-4 bg-white border border-zinc-100 rounded-2xl shadow-sm">
-                      <div className="flex items-center gap-2 mb-1">
-                        <CreditCard className="w-4 h-4 text-zinc-400" />
-                        <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Datos del Cheque</span>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1.5 tracking-widest">Banco</label>
-                          <input
-                            type="text"
-                            value={chequeData.banco}
-                            onChange={(e) => setChequeData({ ...chequeData, banco: e.target.value })}
-                            className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm font-bold"
-                            placeholder="Ej: Banco Nación"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1.5 tracking-widest">N° Cheque</label>
-                          <input
-                            type="text"
-                            value={chequeData.numero_cheque}
-                            onChange={(e) => setChequeData({ ...chequeData, numero_cheque: e.target.value })}
-                            className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm font-bold"
-                            placeholder="00000000"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1.5 tracking-widest">Vencimiento</label>
-                          <input
-                            type="date"
-                            value={chequeData.fecha_vencimiento}
-                            onChange={(e) => setChequeData({ ...chequeData, fecha_vencimiento: e.target.value })}
-                            className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm font-bold"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1.5 tracking-widest">Importe</label>
-                          <input
-                            type="number"
-                            value={chequeData.importe}
-                            onChange={(e) => setChequeData({ ...chequeData, importe: e.target.value })}
-                            className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm font-black"
-                            placeholder={total.toFixed(2)}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {isExceedingLimit && (
-                    <div className="flex items-center gap-3 p-4 bg-red-50 text-red-600 rounded-2xl text-[11px] font-bold border border-red-100 animate-pulse">
-                      <AlertCircle size={20} />
-                      El cliente está excediendo su límite de crédito.
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1.5 tracking-widest">Observaciones</label>
-                    <textarea
-                      value={notes}
-                      onChange={(e) => setNotes(e.target.value)}
-                      placeholder="Notas adicionales..."
-                      className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm font-medium shadow-sm min-h-[70px] resize-none"
-                    />
-                  </div>
+              <div className="flex-1 min-h-0 overflow-y-auto p-3 lg:p-4 bg-zinc-50 space-y-3 custom-scrollbar">
+                <div>
+                  <label className="block text-[9px] font-bold text-zinc-400 uppercase mb-1 tracking-widest">Forma de Pago</label>
+                  <select
+                    className="w-full px-3 py-2.5 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm font-bold shadow-sm"
+                    value={metodoPago}
+                    onChange={(e) => setMetodoPago(e.target.value)}
+                  >
+                    {paymentMethods.map(pm => (
+                      <option key={pm.id} value={pm.name}>{pm.name}</option>
+                    ))}
+                    <option value="mixto">Mixto (Pago Parcial)</option>
+                  </select>
                 </div>
 
-                <div className="pt-4 border-t border-zinc-200">
-                  <div className="flex justify-between items-center mb-1 gap-4">
-                    <span className="text-zinc-500 font-bold text-xs uppercase tracking-widest">Total a cobrar</span>
-                    <span className="text-3xl sm:text-4xl font-black text-zinc-900 font-mono tracking-tighter">${total.toFixed(2)}</span>
-                  </div>
-
-                  {metodoPago === 'mixto' && parseFloat(montoPagado) > 0 && (
-                    <div className="flex justify-between items-center text-[10px] font-black text-red-600 uppercase tracking-widest">
-                      <span>Saldo a Cta Cte:</span>
-                      <span>${(total - (parseFloat(montoPagado) || 0)).toFixed(2)}</span>
+                {metodoPago === 'mixto' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-white border border-zinc-100 rounded-2xl shadow-sm">
+                    <div>
+                      <label className="block text-[9px] font-bold text-zinc-400 uppercase mb-1 tracking-widest">Monto Pagado</label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 font-bold">$</span>
+                        <input
+                          type="number"
+                          placeholder="0.00"
+                          className="w-full pl-8 pr-3 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm font-black"
+                          value={montoPagado}
+                          onChange={(e) => setMontoPagado(e.target.value)}
+                        />
+                      </div>
                     </div>
-                  )}
+                    <div>
+                      <label className="block text-[9px] font-bold text-zinc-400 uppercase mb-1 tracking-widest">Método parcial</label>
+                      <select
+                        className="w-full px-3 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm font-bold"
+                        value={metodoPagoParcial}
+                        onChange={(e) => setMetodoPagoParcial(e.target.value)}
+                      >
+                        {paymentMethods.filter(pm => pm.tipo !== 'Crédito').map(pm => (
+                          <option key={pm.id} value={pm.name}>{pm.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                {metodoPago === 'cta_cte' && selectedClienteId === 1 && (
+                  <div className="flex items-center gap-3 p-3 bg-amber-50 text-amber-600 rounded-xl text-[10px] font-bold border border-amber-100">
+                    <AlertCircle size={16} />
+                    No se recomienda usar Cta Cte con Consumidor Final
+                  </div>
+                )}
+
+                {metodoPago === 'Cheque' && (
+                  <div className="space-y-2.5 p-3 bg-white border border-zinc-100 rounded-2xl shadow-sm">
+                    <div className="flex items-center gap-2">
+                      <CreditCard className="w-4 h-4 text-zinc-400" />
+                      <span className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest">Datos del Cheque</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block text-[9px] font-bold text-zinc-400 uppercase mb-1 tracking-widest">Banco</label>
+                        <input
+                          type="text"
+                          value={chequeData.banco}
+                          onChange={(e) => setChequeData({ ...chequeData, banco: e.target.value })}
+                          className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-xs font-bold"
+                          placeholder="Banco"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-bold text-zinc-400 uppercase mb-1 tracking-widest">N° Cheque</label>
+                        <input
+                          type="text"
+                          value={chequeData.numero_cheque}
+                          onChange={(e) => setChequeData({ ...chequeData, numero_cheque: e.target.value })}
+                          className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-xs font-bold"
+                          placeholder="00000000"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-bold text-zinc-400 uppercase mb-1 tracking-widest">Venc.</label>
+                        <input
+                          type="date"
+                          value={chequeData.fecha_vencimiento}
+                          onChange={(e) => setChequeData({ ...chequeData, fecha_vencimiento: e.target.value })}
+                          className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-xs font-bold"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-bold text-zinc-400 uppercase mb-1 tracking-widest">Importe</label>
+                        <input
+                          type="number"
+                          value={chequeData.importe}
+                          onChange={(e) => setChequeData({ ...chequeData, importe: e.target.value })}
+                          className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-xs font-black"
+                          placeholder={total.toFixed(2)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {isExceedingLimit && (
+                  <div className="flex items-center gap-3 p-3 bg-red-50 text-red-600 rounded-2xl text-[10px] font-bold border border-red-100 animate-pulse">
+                    <AlertCircle size={18} />
+                    El cliente está excediendo su límite de crédito.
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-[9px] font-bold text-zinc-400 uppercase mb-1 tracking-widest">Observaciones</label>
+                  <textarea
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="Notas adicionales..."
+                    className="w-full px-3 py-2.5 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm font-medium shadow-sm min-h-[56px] resize-none"
+                  />
+                </div>
+              </div>
+
+              <div className="shrink-0 p-3 lg:p-4 bg-white border-t border-zinc-200 space-y-3">
+                <div className="flex justify-between items-end gap-4">
+                  <div>
+                    <span className="block text-zinc-500 font-bold text-[10px] uppercase tracking-widest">Total a cobrar</span>
+                    {metodoPago === 'mixto' && parseFloat(montoPagado) > 0 && (
+                      <span className="block text-[10px] font-black text-red-600 uppercase tracking-widest mt-1">
+                        Saldo Cta Cte: ${(total - (parseFloat(montoPagado) || 0)).toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-3xl lg:text-4xl font-black text-zinc-900 font-mono tracking-tighter">${total.toFixed(2)}</span>
                 </div>
 
                 {hasPermission('sales', 'create') && (
                   <button
                     disabled={cart.length === 0 || (metodoPago === 'mixto' && !montoPagado)}
                     onClick={handleConfirmOrder}
-                    className="w-full py-5 bg-zinc-900 text-white rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-2xl shadow-zinc-200"
+                    className="w-full py-4 bg-zinc-900 text-white rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-xl shadow-zinc-200"
                   >
-                    <CheckCircle2 size={24} />
+                    <CheckCircle2 size={22} />
                     Confirmar Venta
                   </button>
                 )}
