@@ -80,6 +80,15 @@ const customerOrderUpdateSchema = z.object({
   admin_notes: z.string().optional().nullable(),
 });
 
+const customerOrderPaymentSchema = z.object({
+  payments: z.array(z.object({
+    metodo_pago: z.string().min(1, "Método de pago requerido"),
+    monto: z.number().positive("El monto debe ser mayor a cero"),
+  })).min(1, "Debe incluir al menos un medio de pago"),
+  fecha: z.string().optional(),
+  observaciones: z.string().optional().nullable(),
+});
+
 const calculateCustomerOrderDiscount = (subtotal: number, discountType: string, discountValue: number) => {
   if (discountType === "percentage") {
     return subtotal * Math.min(discountValue, 100) / 100;
@@ -812,27 +821,44 @@ const handleSupplierOrders = async (req: any, res: any) => {
 };
 
 
-const mapCustomerOrderAdmin = (row: any, items: any[] = []) => ({
-  id: toNumber(row.id),
-  numero_pedido: toNumber(row.numero_pedido),
-  cliente_id: toNumber(row.cliente_id),
-  cliente: row.cliente || "",
-  cliente_telefono: row.cliente_telefono || row.telefono || "",
-  fecha: row.fecha,
-  estado: row.estado || "pendiente_aprobacion",
-  subtotal: toNumber(row.subtotal),
-  descuento_tipo: row.descuento_tipo || "none",
-  descuento_valor: toNumber(row.descuento_valor),
-  descuento_monto: toNumber(row.descuento_monto),
-  total_final: toNumber(row.total_final),
-  sale_id: row.sale_id === null || row.sale_id === undefined ? null : toNumber(row.sale_id),
-  admin_notes: row.admin_notes || "",
-  rejection_reason: row.rejection_reason || "",
-  cancel_reason: row.cancel_reason || "",
-  rejected_at: row.rejected_at || null,
-  cancelled_at: row.cancelled_at || null,
-  items,
-});
+const mapCustomerOrderAdmin = (row: any, items: any[] = []) => {
+  const estado = row.estado || "pendiente_aprobacion";
+  const hasShortage = items.some((item: any) => toNumber(item.faltante) > 0);
+  const stockStatus =
+    estado === "aprobado_pendiente_entrega"
+      ? (hasShortage ? "esperando_stock" : "listo_entrega")
+      : null;
+
+  return {
+    id: toNumber(row.id),
+    numero_pedido: toNumber(row.numero_pedido),
+    cliente_id: toNumber(row.cliente_id),
+    cliente: row.cliente || "",
+    cliente_telefono: row.cliente_telefono || row.telefono || "",
+    fecha: row.fecha,
+    estado,
+    stock_status: stockStatus,
+    subtotal: toNumber(row.subtotal),
+    descuento_tipo: row.descuento_tipo || "none",
+    descuento_valor: toNumber(row.descuento_valor),
+    descuento_monto: toNumber(row.descuento_monto),
+    total_final: toNumber(row.total_final),
+    sale_id: row.sale_id === null || row.sale_id === undefined ? null : toNumber(row.sale_id),
+    numero_venta: row.numero_venta || null,
+    sale_total: toNumber(row.sale_total),
+    sale_monto_pagado: toNumber(row.sale_monto_pagado),
+    sale_monto_pendiente: toNumber(row.sale_monto_pendiente),
+    sale_estado: row.sale_estado || null,
+    admin_notes: row.admin_notes || "",
+    rejection_reason: row.rejection_reason || "",
+    cancel_reason: row.cancel_reason || "",
+    aprobado_at: row.aprobado_at || null,
+    entregado_at: row.entregado_at || null,
+    rejected_at: row.rejected_at || null,
+    cancelled_at: row.cancelled_at || null,
+    items,
+  };
+};
 
 const fetchCustomerOrderItems = async (queryable: any, orderIds: number[]) => {
   if (!orderIds.length) return new Map<number, any[]>();
@@ -995,9 +1021,18 @@ const handleCustomerOrders = async (req: any, res: any) => {
 
     const ordersResult = await pool.query(
       `
-        SELECT co.*, c.nombre_apellido AS cliente, c.telefono AS cliente_telefono
+        SELECT
+          co.*,
+          c.nombre_apellido AS cliente,
+          c.telefono AS cliente_telefono,
+          s.numero_venta,
+          s.total AS sale_total,
+          s.monto_pagado AS sale_monto_pagado,
+          s.monto_pendiente AS sale_monto_pendiente,
+          s.estado AS sale_estado
         FROM customer_orders co
         JOIN clientes c ON c.id = co.cliente_id
+        LEFT JOIN sales s ON s.id = co.sale_id
         ${where}
         ORDER BY
           CASE co.estado
@@ -1279,6 +1314,169 @@ const handleCustomerOrders = async (req: any, res: any) => {
     return sendSuccess(res, { ...saleResult, orderId: id }, "Pedido entregado y agregado a cuenta corriente");
   }
 
+
+  if (endpoint === "customer-order-payment" && req.method === "POST") {
+    if (!id) return sendError(res, "ID de pedido inválido", 400);
+
+    const parsed = customerOrderPaymentSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(
+        res,
+        "Validation failed",
+        400,
+        parsed.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        }))
+      );
+    }
+
+    const payments = parsed.data.payments
+      .map((payment) => ({
+        metodo_pago: String(payment.metodo_pago || "").trim(),
+        monto: Math.round(toNumber(payment.monto) * 100) / 100,
+      }))
+      .filter((payment) => payment.metodo_pago && payment.monto > 0);
+
+    const totalPayment = Math.round(
+      payments.reduce((sum, payment) => sum + payment.monto, 0) * 100
+    ) / 100;
+
+    if (!payments.length || totalPayment <= 0) {
+      return sendError(res, "Ingresá al menos un pago válido", 400);
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const orderResult = await client.query(
+        `SELECT
+           co.*,
+           c.nombre_apellido AS cliente,
+           COALESCE(c.saldo_cta_cte, 0) AS saldo_cliente
+         FROM customer_orders co
+         JOIN clientes c ON c.id = co.cliente_id
+         WHERE co.id = $1
+         FOR UPDATE OF co, c`,
+        [id]
+      );
+
+      if (!orderResult.rowCount) {
+        throw new Error("Pedido no encontrado");
+      }
+
+      const order = orderResult.rows[0];
+
+      if (order.estado !== "entregado" || !order.sale_id) {
+        throw new Error("Solo se pueden cobrar pedidos entregados");
+      }
+
+      const saleResult = await client.query(
+        `SELECT id, numero_venta, total, monto_pagado, monto_pendiente, estado
+         FROM sales
+         WHERE id = $1
+         FOR UPDATE`,
+        [order.sale_id]
+      );
+
+      if (!saleResult.rowCount) {
+        throw new Error("La venta asociada al pedido no existe");
+      }
+
+      const sale = saleResult.rows[0];
+      const pendingAmount = Math.round(toNumber(sale.monto_pendiente) * 100) / 100;
+      const customerBalance = Math.round(toNumber(order.saldo_cliente) * 100) / 100;
+
+      if (pendingAmount <= 0) {
+        throw new Error("Este pedido ya está completamente pagado");
+      }
+
+      if (totalPayment > pendingAmount + 0.001) {
+        throw new Error("El cobro supera el saldo pendiente del pedido");
+      }
+
+      if (totalPayment > customerBalance + 0.001) {
+        throw new Error("El cobro supera el saldo pendiente del cliente");
+      }
+
+      const newPaid = Math.round((toNumber(sale.monto_pagado) + totalPayment) * 100) / 100;
+      const newPending = Math.max(0, Math.round((pendingAmount - totalPayment) * 100) / 100);
+      const newStatus = newPending <= 0 ? "Pagada" : "Pendiente";
+      const paymentDate = parsed.data.fecha || new Date().toISOString();
+      const observations = String(parsed.data.observaciones || "").trim();
+
+      await client.query(
+        `UPDATE sales
+         SET monto_pagado = $1,
+             monto_pendiente = $2,
+             estado = $3
+         WHERE id = $4`,
+        [newPaid, newPending, newStatus, sale.id]
+      );
+
+      await client.query(
+        `UPDATE clientes
+         SET saldo_cta_cte = GREATEST(0, COALESCE(saldo_cta_cte, 0) - $1)
+         WHERE id = $2`,
+        [totalPayment, order.cliente_id]
+      );
+
+      const movementIds: number[] = [];
+
+      for (const payment of payments) {
+        const nextPaymentNum = await getAndIncrementSetting(client, "next_payment_number");
+        const movementResult = await client.query(
+          `INSERT INTO movimientos_financieros
+             (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cliente_id, venta_id)
+           VALUES
+             ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           RETURNING id`,
+          [
+            "ingreso",
+            "cobranza",
+            `Cobranza Pedido Cliente #${order.numero_pedido} / Venta N° ${sale.numero_venta}${observations ? ` - ${observations}` : ""}`,
+            "Cobranzas",
+            payment.metodo_pago,
+            payment.monto,
+            paymentDate,
+            user.userName || "Sistema",
+            nextPaymentNum,
+            order.cliente_id,
+            sale.id,
+          ]
+        );
+
+        movementIds.push(toNumber(movementResult.rows[0]?.id));
+      }
+
+      await client.query("COMMIT");
+
+      return sendSuccess(
+        res,
+        {
+          order_id: id,
+          sale_id: toNumber(sale.id),
+          numero_venta: sale.numero_venta,
+          total_cobrado: totalPayment,
+          monto_pagado: newPaid,
+          monto_pendiente: newPending,
+          estado: newStatus,
+          payments,
+          movement_ids: movementIds,
+        },
+        newPending <= 0
+          ? "Pedido cobrado completamente"
+          : "Pago parcial registrado correctamente"
+      );
+    } catch (error: any) {
+      await client.query("ROLLBACK");
+      return sendError(res, error?.message || "No se pudo registrar el cobro", 400);
+    } finally {
+      client.release();
+    }
+  }
+
   return sendError(res, "Endpoint de pedidos de clientes no encontrado", 404);
 };
 
@@ -1286,7 +1484,7 @@ export default async function handler(req: any, res: any) {
   const id = getId(req);
   const endpoint = getEndpoint(req);
 
-  if (["customer-orders", "customer-order-approve", "customer-order-deliver", "customer-order-reject", "customer-order-update"].includes(endpoint)) {
+  if (["customer-orders", "customer-order-approve", "customer-order-deliver", "customer-order-reject", "customer-order-update", "customer-order-payment"].includes(endpoint)) {
     return handleCustomerOrders(req, res);
   }
 

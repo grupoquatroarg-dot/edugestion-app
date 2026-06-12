@@ -18,14 +18,26 @@ const sanitizeFileName = (value: any) => {
     .replace(/\s+/g, '_');
 };
 
-const getStatusLabel = (status: string) => {
-  switch (status) {
+const getStatusLabel = (order: any) => {
+  if (order?.estado === 'aprobado_pendiente_entrega' && order?.stock_status === 'esperando_stock') {
+    return 'Esperando reposición';
+  }
+
+  if (order?.estado === 'aprobado_pendiente_entrega' && order?.stock_status === 'listo_entrega') {
+    return 'Listo para entregar';
+  }
+
+  if (order?.estado === 'entregado' && order?.sale_estado === 'Pagada') {
+    return 'Entregado y pagado';
+  }
+
+  switch (order?.estado) {
     case 'pendiente_aprobacion': return 'Pendiente de aprobación';
     case 'aprobado_pendiente_entrega': return 'Aprobado - pendiente de entrega';
     case 'entregado': return 'Entregado';
     case 'rechazado': return 'Rechazado';
     case 'cancelado': return 'Cancelado';
-    default: return status || 'Pendiente';
+    default: return order?.estado || 'Pendiente';
   }
 };
 
@@ -56,7 +68,7 @@ export const generateCustomerOrderPdf = (order: any, businessSettings: Record<st
   doc.setFontSize(9);
   doc.text(`Cliente: ${order?.cliente || '-'}`, margin, 39);
   doc.text(`Fecha: ${order?.fecha ? new Date(order.fecha).toLocaleDateString('es-AR') : '-'}`, margin, 45);
-  doc.text(`Estado: ${getStatusLabel(order?.estado)}`, margin, 51);
+  doc.text(`Estado: ${getStatusLabel(order)}`, margin, 51);
 
   const rows = (order?.items || []).map((item: any) => [
     item.product_name || item.name || 'Producto',
@@ -91,6 +103,13 @@ export const generateCustomerOrderPdf = (order: any, businessSettings: Record<st
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(12);
   doc.text(`Total: ${formatCurrency(order?.total_final)}`, boxX, boxY + 15);
+
+  if (order?.estado === 'entregado') {
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Pagado: ${formatCurrency(order?.sale_monto_pagado)}`, margin, boxY + 15);
+    doc.text(`Saldo pendiente: ${formatCurrency(order?.sale_monto_pendiente)}`, margin, boxY + 21);
+  }
 
   if (order?.admin_notes) {
     doc.setFontSize(9);

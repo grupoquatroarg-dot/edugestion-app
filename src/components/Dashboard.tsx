@@ -38,6 +38,8 @@ interface DashboardSummary {
     topProductos: { name: string; total_qty: number }[];
     topProductosRentables: { producto: string; ventas: number; costo: number; ganancia: number; margen: number }[];
     pedidosClientesPendientes: number;
+    pedidosClientesEsperandoStock: number;
+    pedidosClientesListosEntrega: number;
   };
   stock: {
     valorizado: number;
@@ -233,11 +235,35 @@ export default function Dashboard() {
             />
             <DashboardCard 
               title="Pedidos de Clientes"
-              value={(summary?.ventas?.pedidosClientesPendientes ?? 0).toString()}
-              subtitle="Pendientes de aprobación"
+              value={(
+                (summary?.ventas?.pedidosClientesPendientes ?? 0) +
+                (summary?.ventas?.pedidosClientesEsperandoStock ?? 0) +
+                (summary?.ventas?.pedidosClientesListosEntrega ?? 0)
+              ).toString()}
+              subtitle="Pedidos activos del portal"
               icon={<ShoppingCart className="text-emerald-600" />}
-              onClick={() => openDetail('pedidos-clientes', 'Pedidos de Clientes Pendientes')}
-              highlight={(summary?.ventas?.pedidosClientesPendientes ?? 0) > 0}
+              onClick={() => openDetail('pedidos-clientes', 'Seguimiento de Pedidos de Clientes')}
+              highlight={
+                (summary?.ventas?.pedidosClientesPendientes ?? 0) +
+                (summary?.ventas?.pedidosClientesEsperandoStock ?? 0) +
+                (summary?.ventas?.pedidosClientesListosEntrega ?? 0) > 0
+              }
+              footer={
+                <div className="grid grid-cols-3 gap-2 mt-4 text-center">
+                  <div>
+                    <p className="text-[9px] font-black text-zinc-400 uppercase">Aprobar</p>
+                    <p className="text-sm font-black text-amber-600">{summary?.ventas?.pedidosClientesPendientes ?? 0}</p>
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-black text-zinc-400 uppercase">Stock</p>
+                    <p className="text-sm font-black text-orange-600">{summary?.ventas?.pedidosClientesEsperandoStock ?? 0}</p>
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-black text-zinc-400 uppercase">Entregar</p>
+                    <p className="text-sm font-black text-blue-600">{summary?.ventas?.pedidosClientesListosEntrega ?? 0}</p>
+                  </div>
+                </div>
+              }
             />
             <DashboardCard 
               title="Comparativo Mensual"
@@ -521,18 +547,37 @@ export default function Dashboard() {
 
                 {detailModal.type === 'pedidos-clientes' && (
                   <div className="space-y-3">
-                    {detailModal.data.map((item, i) => (
-                      <div key={i} className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-black text-zinc-900">Pedido #{item.numero_pedido} · {item.cliente}</p>
-                          <p className="text-xs text-zinc-400 font-bold">{new Date(item.fecha).toLocaleString('es-AR')} · {item.items} productos</p>
+                    {detailModal.data.map((item, i) => {
+                      const statusLabel =
+                        item.estado === 'pendiente_aprobacion'
+                          ? 'Pendiente de aprobación'
+                          : item.stock_status === 'esperando_stock'
+                          ? 'Esperando reposición'
+                          : 'Listo para entregar';
+
+                      const statusClass =
+                        item.estado === 'pendiente_aprobacion'
+                          ? 'text-amber-600'
+                          : item.stock_status === 'esperando_stock'
+                          ? 'text-orange-600'
+                          : 'text-blue-600';
+
+                      return (
+                        <div key={i} className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-black text-zinc-900">Pedido #{item.numero_pedido} · {item.cliente}</p>
+                            <p className="text-xs text-zinc-400 font-bold">{new Date(item.fecha).toLocaleString('es-AR')} · {item.items} productos</p>
+                          </div>
+                          <div className="text-left sm:text-right">
+                            <p className="text-lg font-black text-zinc-900 font-mono">{formatCurrency(item.total_final)}</p>
+                            <p className={`text-[10px] font-black uppercase ${statusClass}`}>{statusLabel}</p>
+                          </div>
                         </div>
-                        <div className="text-right">
-                          <p className="text-lg font-black text-zinc-900 font-mono">{formatCurrency(item.total_final)}</p>
-                          <p className="text-[10px] font-black text-amber-600 uppercase">Pendiente de aprobación</p>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
+                    {detailModal.data.length === 0 && (
+                      <p className="text-sm text-zinc-400 text-center py-8">No hay pedidos activos.</p>
+                    )}
                   </div>
                 )}
 

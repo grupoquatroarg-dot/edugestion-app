@@ -1397,26 +1397,43 @@ const requirePortalCustomer = async (req: any, res: any) => {
   return decoded;
 };
 
-const mapPortalOrder = (row: any, items: any[] = []) => ({
-  id: toNumber(row.id),
-  numero_pedido: toNumber(row.numero_pedido),
-  cliente_id: toNumber(row.cliente_id),
-  cliente: row.cliente || "",
-  fecha: row.fecha,
-  estado: row.estado || "pendiente_aprobacion",
-  subtotal: toNumber(row.subtotal),
-  descuento_tipo: row.descuento_tipo || "none",
-  descuento_valor: toNumber(row.descuento_valor),
-  descuento_monto: toNumber(row.descuento_monto),
-  total_final: toNumber(row.total_final),
-  sale_id: row.sale_id === null || row.sale_id === undefined ? null : toNumber(row.sale_id),
-  admin_notes: row.admin_notes || "",
-  rejection_reason: row.rejection_reason || "",
-  cancel_reason: row.cancel_reason || "",
-  rejected_at: row.rejected_at || null,
-  cancelled_at: row.cancelled_at || null,
-  items,
-});
+const mapPortalOrder = (row: any, items: any[] = []) => {
+  const estado = row.estado || "pendiente_aprobacion";
+  const hasShortage = items.some((item: any) => toNumber(item.faltante) > 0);
+  const stockStatus =
+    estado === "aprobado_pendiente_entrega"
+      ? (hasShortage ? "esperando_stock" : "listo_entrega")
+      : null;
+
+  return {
+    id: toNumber(row.id),
+    numero_pedido: toNumber(row.numero_pedido),
+    cliente_id: toNumber(row.cliente_id),
+    cliente: row.cliente || "",
+    fecha: row.fecha,
+    estado,
+    stock_status: stockStatus,
+    subtotal: toNumber(row.subtotal),
+    descuento_tipo: row.descuento_tipo || "none",
+    descuento_valor: toNumber(row.descuento_valor),
+    descuento_monto: toNumber(row.descuento_monto),
+    total_final: toNumber(row.total_final),
+    sale_id: row.sale_id === null || row.sale_id === undefined ? null : toNumber(row.sale_id),
+    numero_venta: row.numero_venta || null,
+    sale_total: toNumber(row.sale_total),
+    sale_monto_pagado: toNumber(row.sale_monto_pagado),
+    sale_monto_pendiente: toNumber(row.sale_monto_pendiente),
+    sale_estado: row.sale_estado || null,
+    admin_notes: row.admin_notes || "",
+    rejection_reason: row.rejection_reason || "",
+    cancel_reason: row.cancel_reason || "",
+    aprobado_at: row.aprobado_at || null,
+    entregado_at: row.entregado_at || null,
+    rejected_at: row.rejected_at || null,
+    cancelled_at: row.cancelled_at || null,
+    items,
+  };
+};
 
 const fetchPortalOrderItems = async (pool: any, orderIds: number[]) => {
   if (!orderIds.length) return new Map<number, any[]>();
@@ -1432,7 +1449,8 @@ const fetchPortalOrderItems = async (pool: any, orderIds: number[]) => {
         (coi.cantidad * coi.precio_unitario) AS importe,
         p.name AS product_name,
         p.code,
-        p.codigo_unico
+        p.codigo_unico,
+        COALESCE(p.stock, 0) AS stock_actual
       FROM customer_order_items coi
       JOIN products p ON p.id = coi.product_id
       WHERE coi.order_id = ANY($1::int[])
@@ -1454,6 +1472,8 @@ const fetchPortalOrderItems = async (pool: any, orderIds: number[]) => {
       cantidad: toNumber(row.cantidad),
       precio_unitario: toNumber(row.precio_unitario),
       importe: toNumber(row.importe),
+      stock_actual: toNumber(row.stock_actual),
+      faltante: Math.max(0, toNumber(row.cantidad) - toNumber(row.stock_actual)),
     });
   }
 
@@ -1560,9 +1580,17 @@ const handleCustomerPortal = async (req: any, res: any) => {
     if (req.method === "GET") {
       const ordersResult = await pool.query(
         `
-          SELECT co.*, c.nombre_apellido AS cliente
+          SELECT
+            co.*,
+            c.nombre_apellido AS cliente,
+            s.numero_venta,
+            s.total AS sale_total,
+            s.monto_pagado AS sale_monto_pagado,
+            s.monto_pendiente AS sale_monto_pendiente,
+            s.estado AS sale_estado
           FROM customer_orders co
           JOIN clientes c ON c.id = co.cliente_id
+          LEFT JOIN sales s ON s.id = co.sale_id
           WHERE co.cliente_id = $1
           ORDER BY co.fecha DESC, co.id DESC
         `,
@@ -1665,22 +1693,106 @@ const handleCustomerPortal = async (req: any, res: any) => {
     return sendSuccess(res, result.rows[0], "Pedido cancelado");
   }
 
+
+  if (endpoint === "portal-sale-detail") {
+    if (req.method !== "GET") return sendError(res, "Method not allowed", 405);
+    const saleId = getId(req);
+    if (!saleId) return sendError(res, "ID de venta inválido", 400);
+
+    const saleResult = await pool.query(
+      `SELECT
+         s.*,
+         c.nombre_apellido AS nombre_cliente,
+         c.telefono AS cliente_telefono,
+         c.direccion AS cliente_direccion,
+         c.localidad AS cliente_localidad
+       FROM sales s
+       JOIN clientes c ON c.id = s.cliente_id
+       WHERE s.id = $1
+         AND s.cliente_id = $2
+       LIMIT 1`,
+      [saleId, clienteId]
+    );
+
+    if (!saleResult.rowCount) {
+      return sendError(res, "Venta no encontrada", 404);
+    }
+
+    const itemsResult = await pool.query(
+      `SELECT
+         si.id,
+         si.product_id,
+         si.cantidad,
+         si.precio_venta,
+         si.precio_unitario_original,
+         si.bonificacion_tipo,
+         si.bonificacion_valor,
+         si.precio_unitario_bonificado,
+         p.name AS product_name
+       FROM sale_items si
+       JOIN products p ON p.id = si.product_id
+       WHERE si.sale_id = $1
+       ORDER BY si.id ASC`,
+      [saleId]
+    );
+
+    const sale = saleResult.rows[0];
+    return sendSuccess(res, {
+      ...sale,
+      id: toNumber(sale.id),
+      total: toNumber(sale.total),
+      monto_pagado: toNumber(sale.monto_pagado),
+      monto_pendiente: toNumber(sale.monto_pendiente),
+      items: itemsResult.rows.map((item: any) => ({
+        ...item,
+        id: toNumber(item.id),
+        product_id: toNumber(item.product_id),
+        cantidad: toNumber(item.cantidad),
+        precio_venta: toNumber(item.precio_venta),
+        precio_unitario_original: toNumber(item.precio_unitario_original),
+        bonificacion_valor: toNumber(item.bonificacion_valor),
+        precio_unitario_bonificado: toNumber(item.precio_unitario_bonificado),
+      })),
+    });
+  }
+
   if (endpoint === "portal-movements") {
     if (req.method !== "GET") return sendError(res, "Method not allowed", 405);
 
     const [salesResult, movementsResult] = await Promise.all([
       pool.query(
-        `SELECT id, numero_venta, fecha, total, monto_pagado, monto_pendiente, estado, metodo_pago
-         FROM sales
-         WHERE cliente_id = $1
-         ORDER BY fecha DESC, id DESC`,
+        `SELECT
+           s.id,
+           s.numero_venta,
+           s.fecha,
+           s.total,
+           s.monto_pagado,
+           s.monto_pendiente,
+           s.estado,
+           s.metodo_pago,
+           co.numero_pedido
+         FROM sales s
+         LEFT JOIN customer_orders co ON co.sale_id = s.id
+         WHERE s.cliente_id = $1
+         ORDER BY s.fecha DESC, s.id DESC`,
         [clienteId]
       ),
       pool.query(
-        `SELECT id, fecha, tipo, origen, descripcion, forma_pago, monto
-         FROM movimientos_financieros
-         WHERE cliente_id = $1
-         ORDER BY fecha DESC, id DESC`,
+        `SELECT
+           mf.id,
+           mf.fecha,
+           mf.tipo,
+           mf.origen,
+           mf.descripcion,
+           mf.forma_pago,
+           mf.monto,
+           mf.numero_pago,
+           mf.venta_id,
+           s.numero_venta
+         FROM movimientos_financieros mf
+         LEFT JOIN sales s ON s.id = mf.venta_id
+         WHERE mf.cliente_id = $1
+         ORDER BY mf.fecha DESC, mf.id DESC`,
         [clienteId]
       ),
     ]);

@@ -160,7 +160,31 @@ export const getSummaryData = async (pool: any) => {
     pool.query(`SELECT COALESCE(SUM(stock * cost), 0) AS total FROM products WHERE eliminado = 0`),
     pool.query(`SELECT COUNT(*)::int AS count FROM products WHERE stock <= stock_minimo AND eliminado = 0`),
     pool.query(`SELECT COUNT(*)::int AS count FROM supplier_orders WHERE estado = 'pendiente'`),
-    pool.query(`SELECT COUNT(*)::int AS count FROM customer_orders WHERE estado = 'pendiente_aprobacion'`),
+    pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE co.estado = 'pendiente_aprobacion')::int AS pendientes_aprobacion,
+        COUNT(*) FILTER (
+          WHERE co.estado = 'aprobado_pendiente_entrega'
+            AND EXISTS (
+              SELECT 1
+              FROM customer_order_items coi
+              JOIN products p ON p.id = coi.product_id
+              WHERE coi.order_id = co.id
+                AND COALESCE(coi.cantidad, 0) > COALESCE(p.stock, 0)
+            )
+        )::int AS esperando_stock,
+        COUNT(*) FILTER (
+          WHERE co.estado = 'aprobado_pendiente_entrega'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM customer_order_items coi
+              JOIN products p ON p.id = coi.product_id
+              WHERE coi.order_id = co.id
+                AND COALESCE(coi.cantidad, 0) > COALESCE(p.stock, 0)
+            )
+        )::int AS listos_entrega
+      FROM customer_orders co
+    `),
     pool.query(`
       SELECT
         COUNT(*)::int AS planificados,
@@ -199,7 +223,9 @@ export const getSummaryData = async (pool: any) => {
         prevTotal: toNumber(ventasPrevMesResult.rows[0]?.total),
       },
       dia: toNumber(ventasDiaResult.rows[0]?.total),
-      pedidosClientesPendientes: toNumber(pedidosClientesPendientesResult.rows[0]?.count),
+      pedidosClientesPendientes: toNumber(pedidosClientesPendientesResult.rows[0]?.pendientes_aprobacion),
+      pedidosClientesEsperandoStock: toNumber(pedidosClientesPendientesResult.rows[0]?.esperando_stock),
+      pedidosClientesListosEntrega: toNumber(pedidosClientesPendientesResult.rows[0]?.listos_entrega),
       topClientes: topClientesResult.rows.map((row: any) => ({
         nombre_cliente: row.nombre_cliente,
         total: toNumber(row.total),

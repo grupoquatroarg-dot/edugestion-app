@@ -159,13 +159,34 @@ export default async function handler(req: any, res: any) {
           co.subtotal,
           co.total_final,
           c.nombre_apellido AS cliente,
-          COUNT(coi.id)::int AS items
+          COUNT(coi.id)::int AS items,
+          CASE
+            WHEN co.estado = 'aprobado_pendiente_entrega'
+              AND EXISTS (
+                SELECT 1
+                FROM customer_order_items shortage_item
+                JOIN products p ON p.id = shortage_item.product_id
+                WHERE shortage_item.order_id = co.id
+                  AND COALESCE(shortage_item.cantidad, 0) > COALESCE(p.stock, 0)
+              )
+              THEN 'esperando_stock'
+            WHEN co.estado = 'aprobado_pendiente_entrega'
+              THEN 'listo_entrega'
+            ELSE NULL
+          END AS stock_status
         FROM customer_orders co
         JOIN clientes c ON c.id = co.cliente_id
         LEFT JOIN customer_order_items coi ON coi.order_id = co.id
-        WHERE co.estado = 'pendiente_aprobacion'
+        WHERE co.estado IN ('pendiente_aprobacion', 'aprobado_pendiente_entrega')
         GROUP BY co.id, c.nombre_apellido
-        ORDER BY co.fecha DESC, co.id DESC
+        ORDER BY
+          CASE
+            WHEN co.estado = 'pendiente_aprobacion' THEN 1
+            WHEN co.estado = 'aprobado_pendiente_entrega' THEN 2
+            ELSE 3
+          END,
+          co.fecha DESC,
+          co.id DESC
       `);
 
       return sendSuccess(res, result.rows.map((row: any) => ({
@@ -173,6 +194,7 @@ export default async function handler(req: any, res: any) {
         numero_pedido: toNumber(row.numero_pedido),
         fecha: row.fecha,
         estado: row.estado,
+        stock_status: row.stock_status || null,
         subtotal: toNumber(row.subtotal),
         total_final: toNumber(row.total_final),
         cliente: row.cliente,
