@@ -13,7 +13,9 @@ import {
   CheckCircle2,
   AlertCircle,
   RotateCcw,
-  ShieldAlert
+  ShieldAlert,
+  Download,
+  Upload
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { unwrapResponse, apiFetch } from '../utils/api';
@@ -41,6 +43,8 @@ export default function ConfigModule() {
   const [resetAdminPassword, setResetAdminPassword] = useState('');
   const [resetConfirmation, setResetConfirmation] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [restoreLoading, setRestoreLoading] = useState(false);
 
   // Form states
   const [settings, setSettings] = useState<Record<string, string>>({});
@@ -246,6 +250,101 @@ export default function ConfigModule() {
   };
 
   
+  const downloadJsonFile = (data: any, filename: string) => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: 'application/json;charset=utf-8'
+    });
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    URL.revokeObjectURL(url);
+  };
+
+  const buildBackupFileName = () => {
+    const now = new Date();
+    const date = now.toISOString().split('T')[0];
+    const time = now.toTimeString().slice(0, 5).replace(':', '-');
+
+    return `edugestion_backup_${date}_${time}.json`;
+  };
+
+  const handleDownloadBackup = async () => {
+    setBackupLoading(true);
+
+    try {
+      const res = await apiFetch('/api/config/backup-data');
+      const body = await res.json();
+
+      if (!res.ok) {
+        throw new Error(body?.message || 'No se pudo generar la copia de seguridad');
+      }
+
+      const backup = unwrapResponse(body);
+      downloadJsonFile(backup, buildBackupFileName());
+      showStatus('Copia de seguridad descargada correctamente', 'success');
+    } catch (error: any) {
+      showStatus(error?.message || 'Error al descargar copia de seguridad', 'error');
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  const handleRestoreBackupFile = async (file: File | null) => {
+    if (!file) return;
+
+    const adminPassword = window.prompt('Ingrese la contraseña del administrador para restaurar la copia');
+
+    if (!adminPassword) {
+      showStatus('Restauración cancelada', 'error');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      'Esta acción reemplazará los datos actuales por los datos del archivo JSON. ¿Desea continuar?'
+    );
+
+    if (!confirmed) {
+      showStatus('Restauración cancelada', 'error');
+      return;
+    }
+
+    setRestoreLoading(true);
+
+    try {
+      const text = await file.text();
+      const backup = JSON.parse(text);
+
+      const res = await apiFetch('/api/config/restore-app-data', {
+        method: 'POST',
+        body: JSON.stringify({
+          adminPassword,
+          confirmation: 'RESTAURAR',
+          backup
+        })
+      });
+
+      const body = await res.json();
+
+      if (!res.ok) {
+        throw new Error(body?.message || 'No se pudo restaurar la copia de seguridad');
+      }
+
+      await fetchData();
+      showStatus('Copia de seguridad restaurada correctamente', 'success');
+    } catch (error: any) {
+      showStatus(error?.message || 'Error al restaurar copia de seguridad', 'error');
+    } finally {
+      setRestoreLoading(false);
+    }
+  };
+
   const handleResetAppData = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -476,6 +575,34 @@ const renderTabs = () => {
                       Se conservan usuarios, permisos, configuraciÃ³n base y formas de pago.
                     </p>
                   </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={handleDownloadBackup}
+                    disabled={backupLoading}
+                    className="w-full flex items-center justify-center gap-2 bg-zinc-900 text-white px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50"
+                  >
+                    <Download size={16} />
+                    {backupLoading ? 'Descargando...' : 'Descargar copia JSON'}
+                  </button>
+
+                  <label className="w-full flex items-center justify-center gap-2 bg-white text-zinc-900 px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-100 transition-all border border-zinc-200 cursor-pointer">
+                    <Upload size={16} />
+                    {restoreLoading ? 'Restaurando...' : 'Restaurar copia JSON'}
+                    <input
+                      type="file"
+                      accept="application/json,.json"
+                      className="hidden"
+                      disabled={restoreLoading}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        e.currentTarget.value = '';
+                        handleRestoreBackupFile(file);
+                      }}
+                    />
+                  </label>
                 </div>
 
                 <button
@@ -1054,6 +1181,23 @@ const renderTabs = () => {
                 reportes operativos, pedidos a proveedor, proveedores, categorÃ­as y familias.
                 Se conservarÃ¡n usuarios, permisos, datos del negocio y formas de pago.
               </div>
+
+              <div className="p-4 rounded-2xl bg-amber-50 border border-amber-100 text-amber-800 text-xs font-bold leading-relaxed space-y-3">
+                <p>
+                  Antes de restablecer, se recomienda descargar una copia de seguridad JSON para poder volver a este punto.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleDownloadBackup}
+                  disabled={backupLoading}
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 bg-amber-600 text-white px-5 py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-amber-700 transition-all disabled:opacity-50"
+                >
+                  <Download size={16} />
+                  {backupLoading ? 'Descargando...' : 'Sí, descargar copia antes'}
+                </button>
+              </div>
+
+
 
               <div className="space-y-2">
                 <label className="text-xs font-black uppercase tracking-widest text-zinc-400">
