@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { clientRepository } from "../server/repositories/clientRepository.js";
 import { UserRepository } from "../server/repositories/userRepository.js";
-import { verifyToken } from "../server/utils/jwt.js";
+import { verifyToken, generateToken } from "../server/utils/jwt.js";
+import bcrypt from "bcryptjs";
 import { sendError, sendSuccess } from "../server/utils/response.js";
 import { getPostgresPool } from "../server/utils/postgres.js";
 
@@ -20,6 +21,9 @@ const clientSchema = z.object({
   tipo_cliente: z.enum(["minorista", "mayorista"]).optional(),
   lista_precio: z.string().optional().nullable(),
   limite_credito: z.number().optional().nullable(),
+  portal_enabled: z.union([z.boolean(), z.number()]).optional().nullable(),
+  portal_username: z.string().optional().nullable(),
+  portal_password: z.string().optional().nullable(),
 });
 
 const baseUserSchema = z.object({
@@ -176,6 +180,9 @@ const normalizeClientBody = (body: any) => ({
   telefono: normalizeArgentinaPhone(body.telefono),
   tipo_cliente: body.tipo_cliente || "minorista",
   limite_credito: Number(body.limite_credito || 0),
+  portal_enabled: body.portal_enabled === true || body.portal_enabled === 1 || body.portal_enabled === '1',
+  portal_username: body.portal_username || null,
+  portal_password: body.portal_password || null,
 });
 
 const handleUsers = async (req: any, res: any) => {
@@ -1359,8 +1366,319 @@ const handleChecklist = async (req: any, res: any) => {
 };
 
 
+
+const portalLoginSchema = z.object({
+  username: z.string().min(1, "Usuario requerido"),
+  password: z.string().min(1, "Contraseña requerida"),
+});
+
+const portalOrderSchema = z.object({
+  items: z.array(z.object({
+    product_id: z.number(),
+    cantidad: z.number().positive(),
+  })).min(1, "Debe incluir al menos un producto"),
+});
+
+const requirePortalCustomer = async (req: any, res: any) => {
+  const token = getBearerToken(req);
+
+  if (!token) {
+    sendError(res, "Unauthorized: Login cliente requerido", 401);
+    return null;
+  }
+
+  const decoded = verifyToken(token);
+
+  if (!decoded?.userId || decoded.role !== "cliente") {
+    sendError(res, "Unauthorized: Login cliente requerido", 401);
+    return null;
+  }
+
+  return decoded;
+};
+
+const mapPortalOrder = (row: any, items: any[] = []) => ({
+  id: toNumber(row.id),
+  numero_pedido: toNumber(row.numero_pedido),
+  cliente_id: toNumber(row.cliente_id),
+  cliente: row.cliente || "",
+  fecha: row.fecha,
+  estado: row.estado || "pendiente_aprobacion",
+  subtotal: toNumber(row.subtotal),
+  descuento_tipo: row.descuento_tipo || "none",
+  descuento_valor: toNumber(row.descuento_valor),
+  descuento_monto: toNumber(row.descuento_monto),
+  total_final: toNumber(row.total_final),
+  sale_id: row.sale_id === null || row.sale_id === undefined ? null : toNumber(row.sale_id),
+  admin_notes: row.admin_notes || "",
+  items,
+});
+
+const fetchPortalOrderItems = async (pool: any, orderIds: number[]) => {
+  if (!orderIds.length) return new Map<number, any[]>();
+
+  const result = await pool.query(
+    `
+      SELECT
+        coi.id,
+        coi.order_id,
+        coi.product_id,
+        coi.cantidad,
+        coi.precio_unitario,
+        (coi.cantidad * coi.precio_unitario) AS importe,
+        p.name AS product_name,
+        p.code,
+        p.codigo_unico
+      FROM customer_order_items coi
+      JOIN products p ON p.id = coi.product_id
+      WHERE coi.order_id = ANY($1::int[])
+      ORDER BY coi.id ASC
+    `,
+    [orderIds]
+  );
+
+  const grouped = new Map<number, any[]>();
+  for (const row of result.rows) {
+    const orderId = toNumber(row.order_id);
+    if (!grouped.has(orderId)) grouped.set(orderId, []);
+    grouped.get(orderId)!.push({
+      id: toNumber(row.id),
+      order_id: orderId,
+      product_id: toNumber(row.product_id),
+      product_name: row.product_name,
+      code: row.code || row.codigo_unico || "",
+      cantidad: toNumber(row.cantidad),
+      precio_unitario: toNumber(row.precio_unitario),
+      importe: toNumber(row.importe),
+    });
+  }
+
+  return grouped;
+};
+
+const handleCustomerPortal = async (req: any, res: any) => {
+  const endpoint = getEndpoint(req);
+  const pool = getPostgresPool();
+
+  if (endpoint === "portal-login") {
+    if (req.method !== "POST") return sendError(res, "Method not allowed", 405);
+
+    const parsed = portalLoginSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })));
+    }
+
+    const result = await pool.query(
+      `
+        SELECT id, nombre_apellido, razon_social, portal_username, portal_password_hash, portal_enabled, saldo_cta_cte
+        FROM clientes
+        WHERE portal_username = $1
+          AND COALESCE(portal_enabled, 0) <> 0
+          AND COALESCE(activo, 1) <> 0
+        LIMIT 1
+      `,
+      [parsed.data.username]
+    );
+
+    const cliente = result.rows[0];
+    if (!cliente?.portal_password_hash || !bcrypt.compareSync(parsed.data.password, cliente.portal_password_hash)) {
+      return sendError(res, "Usuario o contraseña inválidos", 401);
+    }
+
+    const token = generateToken({
+      userId: toNumber(cliente.id),
+      role: "cliente",
+      userName: cliente.nombre_apellido,
+    });
+
+    return sendSuccess(res, {
+      token,
+      cliente: {
+        id: toNumber(cliente.id),
+        nombre_apellido: cliente.nombre_apellido,
+        razon_social: cliente.razon_social,
+        saldo_cta_cte: toNumber(cliente.saldo_cta_cte),
+      },
+    });
+  }
+
+  const portalUser = await requirePortalCustomer(req, res);
+  if (!portalUser) return;
+  const clienteId = Number(portalUser.userId);
+
+  if (endpoint === "portal-me") {
+    if (req.method !== "GET") return sendError(res, "Method not allowed", 405);
+
+    const result = await pool.query(
+      `SELECT id, nombre_apellido, razon_social, telefono, email, direccion, localidad, saldo_cta_cte
+       FROM clientes
+       WHERE id = $1 AND COALESCE(portal_enabled, 0) <> 0
+       LIMIT 1`,
+      [clienteId]
+    );
+
+    if (!result.rowCount) return sendError(res, "Cliente no encontrado", 404);
+    return sendSuccess(res, {
+      ...result.rows[0],
+      id: toNumber(result.rows[0].id),
+      saldo_cta_cte: toNumber(result.rows[0].saldo_cta_cte),
+    });
+  }
+
+  if (endpoint === "portal-products") {
+    if (req.method !== "GET") return sendError(res, "Method not allowed", 405);
+
+    const result = await pool.query(
+      `
+        SELECT p.id, p.code, p.codigo_unico, p.name, p.description, p.sale_price, p.stock, pf.name AS family_name, pc.name AS category_name
+        FROM products p
+        LEFT JOIN product_families pf ON pf.id = p.family_id
+        LEFT JOIN product_categories pc ON pc.id = p.category_id
+        WHERE COALESCE(p.eliminado, 0) = 0
+          AND COALESCE(p.estado, 'activo') = 'activo'
+        ORDER BY p.name ASC
+      `
+    );
+
+    return sendSuccess(res, result.rows.map((row: any) => ({
+      id: toNumber(row.id),
+      code: row.codigo_unico || row.code || "",
+      name: row.name,
+      description: row.description || "",
+      sale_price: toNumber(row.sale_price),
+      stock: toNumber(row.stock),
+      family_name: row.family_name || "",
+      category_name: row.category_name || "",
+    })));
+  }
+
+  if (endpoint === "portal-orders") {
+    if (req.method === "GET") {
+      const ordersResult = await pool.query(
+        `
+          SELECT co.*, c.nombre_apellido AS cliente
+          FROM customer_orders co
+          JOIN clientes c ON c.id = co.cliente_id
+          WHERE co.cliente_id = $1
+          ORDER BY co.fecha DESC, co.id DESC
+        `,
+        [clienteId]
+      );
+
+      const orderIds = ordersResult.rows.map((row: any) => toNumber(row.id));
+      const itemsByOrder = await fetchPortalOrderItems(pool, orderIds);
+      return sendSuccess(res, ordersResult.rows.map((row: any) => mapPortalOrder(row, itemsByOrder.get(toNumber(row.id)) || [])));
+    }
+
+    if (req.method === "POST") {
+      const parsed = portalOrderSchema.safeParse(getBody(req));
+      if (!parsed.success) {
+        return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })));
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+
+        await client.query(
+          `INSERT INTO settings (key, value) VALUES ('next_customer_order_number', '1') ON CONFLICT (key) DO NOTHING`
+        );
+        const numberResult = await client.query(`SELECT value FROM settings WHERE key = 'next_customer_order_number' LIMIT 1`);
+        const nextNumber = parseInt(numberResult.rows[0]?.value || "1", 10) || 1;
+        await client.query(`UPDATE settings SET value = $1 WHERE key = 'next_customer_order_number'`, [String(nextNumber + 1)]);
+
+        const productIds = parsed.data.items.map((item) => item.product_id);
+        const productResult = await client.query(
+          `SELECT id, name, sale_price FROM products WHERE id = ANY($1::int[]) AND COALESCE(eliminado, 0) = 0`,
+          [productIds]
+        );
+        const productMap = new Map<number, any>(productResult.rows.map((row: any) => [toNumber(row.id), row]));
+
+        let subtotal = 0;
+        for (const item of parsed.data.items) {
+          const product = productMap.get(item.product_id);
+          if (!product) throw new Error(`Producto inválido: ${item.product_id}`);
+          subtotal += toNumber(item.cantidad) * toNumber(product.sale_price);
+        }
+
+        const orderResult = await client.query(
+          `
+            INSERT INTO customer_orders (numero_pedido, cliente_id, estado, subtotal, descuento_tipo, descuento_valor, descuento_monto, total_final)
+            VALUES ($1, $2, 'pendiente_aprobacion', $3, 'none', 0, 0, $3)
+            RETURNING id
+          `,
+          [nextNumber, clienteId, subtotal]
+        );
+
+        const orderId = toNumber(orderResult.rows[0]?.id);
+
+        for (const item of parsed.data.items) {
+          const product = productMap.get(item.product_id);
+          await client.query(
+            `INSERT INTO customer_order_items (order_id, product_id, cantidad, precio_unitario)
+             VALUES ($1, $2, $3, $4)`,
+            [orderId, item.product_id, item.cantidad, toNumber(product.sale_price)]
+          );
+        }
+
+        await client.query("COMMIT");
+        return sendSuccess(res, { id: orderId, numero_pedido: nextNumber }, "Pedido enviado para aprobación", 201);
+      } catch (error: any) {
+        await client.query("ROLLBACK");
+        return sendError(res, error?.message || "Error al crear pedido", 400);
+      } finally {
+        client.release();
+      }
+    }
+
+    return sendError(res, "Method not allowed", 405);
+  }
+
+  if (endpoint === "portal-movements") {
+    if (req.method !== "GET") return sendError(res, "Method not allowed", 405);
+
+    const [salesResult, movementsResult] = await Promise.all([
+      pool.query(
+        `SELECT id, numero_venta, fecha, total, monto_pagado, monto_pendiente, estado, metodo_pago
+         FROM sales
+         WHERE cliente_id = $1
+         ORDER BY fecha DESC, id DESC`,
+        [clienteId]
+      ),
+      pool.query(
+        `SELECT id, fecha, tipo, origen, descripcion, forma_pago, monto
+         FROM movimientos_financieros
+         WHERE cliente_id = $1
+         ORDER BY fecha DESC, id DESC`,
+        [clienteId]
+      ),
+    ]);
+
+    return sendSuccess(res, {
+      sales: salesResult.rows.map((row: any) => ({
+        ...row,
+        id: toNumber(row.id),
+        total: toNumber(row.total),
+        monto_pagado: toNumber(row.monto_pagado),
+        monto_pendiente: toNumber(row.monto_pendiente),
+      })),
+      movements: movementsResult.rows.map((row: any) => ({
+        ...row,
+        id: toNumber(row.id),
+        monto: toNumber(row.monto),
+      })),
+    });
+  }
+
+  return sendError(res, "Endpoint portal cliente no encontrado", 404);
+};
+
 export default async function handler(req: any, res: any) {
   const endpoint = getEndpoint(req);
+
+  if (endpoint.startsWith("portal-")) {
+    return handleCustomerPortal(req, res);
+  }
 
   if (endpoint === "users") {
     return handleUsers(req, res);

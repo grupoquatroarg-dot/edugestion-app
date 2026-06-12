@@ -148,6 +148,38 @@ export default async function handler(req: any, res: any) {
       );
     }
 
+
+    if (endpoint === "pedidos-clientes") {
+      const result = await pool.query(`
+        SELECT
+          co.id,
+          co.numero_pedido,
+          co.fecha,
+          co.estado,
+          co.subtotal,
+          co.total_final,
+          c.nombre_apellido AS cliente,
+          COUNT(coi.id)::int AS items
+        FROM customer_orders co
+        JOIN clientes c ON c.id = co.cliente_id
+        LEFT JOIN customer_order_items coi ON coi.order_id = co.id
+        WHERE co.estado = 'pendiente_aprobacion'
+        GROUP BY co.id, c.nombre_apellido
+        ORDER BY co.fecha DESC, co.id DESC
+      `);
+
+      return sendSuccess(res, result.rows.map((row: any) => ({
+        id: toNumber(row.id),
+        numero_pedido: toNumber(row.numero_pedido),
+        fecha: row.fecha,
+        estado: row.estado,
+        subtotal: toNumber(row.subtotal),
+        total_final: toNumber(row.total_final),
+        cliente: row.cliente,
+        items: toNumber(row.items),
+      })));
+    }
+
     if (endpoint === "stock-critico") {
       const result = await pool.query(`
         SELECT id, name, codigo_unico, stock, stock_minimo

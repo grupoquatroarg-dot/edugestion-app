@@ -81,6 +81,7 @@ export const getSummaryData = async (pool: any) => {
     stockValorizadoResult,
     stockCriticoResult,
     pedidosPendientesResult,
+    pedidosClientesPendientesResult,
     rutaDiaResult,
     alertasDeudaResult,
   ] = await Promise.all([
@@ -159,6 +160,7 @@ export const getSummaryData = async (pool: any) => {
     pool.query(`SELECT COALESCE(SUM(stock * cost), 0) AS total FROM products WHERE eliminado = 0`),
     pool.query(`SELECT COUNT(*)::int AS count FROM products WHERE stock <= stock_minimo AND eliminado = 0`),
     pool.query(`SELECT COUNT(*)::int AS count FROM supplier_orders WHERE estado = 'pendiente'`),
+    pool.query(`SELECT COUNT(*)::int AS count FROM customer_orders WHERE estado = 'pendiente_aprobacion'`),
     pool.query(`
       SELECT
         COUNT(*)::int AS planificados,
@@ -197,6 +199,7 @@ export const getSummaryData = async (pool: any) => {
         prevTotal: toNumber(ventasPrevMesResult.rows[0]?.total),
       },
       dia: toNumber(ventasDiaResult.rows[0]?.total),
+      pedidosClientesPendientes: toNumber(pedidosClientesPendientesResult.rows[0]?.count),
       topClientes: topClientesResult.rows.map((row: any) => ({
         nombre_cliente: row.nombre_cliente,
         total: toNumber(row.total),

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { LogIn, AlertCircle, Loader2 } from 'lucide-react';
+import { LogIn, AlertCircle, Loader2, ShoppingCart } from 'lucide-react';
+import CustomerPortal from './CustomerPortal';
 
 export default function Login() {
   const { login } = useAuth();
@@ -8,6 +9,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [mode, setMode] = useState<'admin' | 'cliente'>(() => localStorage.getItem('customer_portal_token') ? 'cliente' : 'admin');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,11 +25,24 @@ export default function Login() {
     }
   };
 
+  if (mode === 'cliente') {
+    return <CustomerPortal onBackToAdmin={() => setMode('admin')} />;
+  }
+
   return (
     <div className="min-h-screen bg-zinc-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="bg-white rounded-2xl shadow-xl border border-zinc-200 overflow-hidden">
           <div className="p-8">
+            <div className="grid grid-cols-2 gap-2 mb-6 bg-zinc-50 p-1 rounded-2xl">
+              <button type="button" onClick={() => setMode('admin')} className="py-2 rounded-xl bg-white shadow-sm text-xs font-black uppercase tracking-widest text-zinc-900 flex items-center justify-center gap-2">
+                <LogIn size={14} /> Admin
+              </button>
+              <button type="button" onClick={() => setMode('cliente')} className="py-2 rounded-xl text-xs font-black uppercase tracking-widest text-zinc-400 hover:text-emerald-700 flex items-center justify-center gap-2">
+                <ShoppingCart size={14} /> Cliente
+              </button>
+            </div>
+
             <div className="flex justify-center mb-8">
               <div className="w-16 h-16 bg-zinc-900 rounded-2xl flex items-center justify-center text-white">
                 <LogIn size={32} />

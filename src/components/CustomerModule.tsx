@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, UserPlus, User, Phone, Mail, MapPin, MoreVertical, Edit2, Trash2, Plus, X, AlertCircle, Building2, CreditCard, Eye } from 'lucide-react';
+import { Search, UserPlus, User, Phone, Mail, MapPin, MoreVertical, Edit2, Trash2, Plus, X, AlertCircle, Building2, CreditCard, Eye, KeyRound } from 'lucide-react';
 import CustomerDetail from './CustomerDetail';
 import AddressAutocomplete from './AddressAutocomplete';
 import { getSocket } from '../utils/socket';
@@ -28,6 +28,8 @@ interface Cliente {
   fecha_alta: string;
   activo: boolean;
   tiene_deuda_vencida?: number;
+  portal_enabled?: number | boolean;
+  portal_username?: string;
 }
 
 export default function CustomerModule() {
@@ -58,7 +60,10 @@ export default function CustomerModule() {
     observaciones: '',
     tipo_cliente: 'minorista' as 'minorista' | 'mayorista',
     lista_precio: 'lista1',
-    limite_credito: 0
+    limite_credito: 0,
+    portal_enabled: false,
+    portal_username: '',
+    portal_password: ''
   });
 
   useEffect(() => {
@@ -174,7 +179,10 @@ export default function CustomerModule() {
         observaciones: cliente.observaciones || '',
         tipo_cliente: cliente.tipo_cliente,
         lista_precio: cliente.lista_precio || 'lista1',
-        limite_credito: cliente.limite_credito
+        limite_credito: cliente.limite_credito,
+        portal_enabled: cliente.portal_enabled === 1 || cliente.portal_enabled === true,
+        portal_username: cliente.portal_username || '',
+        portal_password: ''
       });
     } else {
       let defaultLimit = 0;
@@ -202,7 +210,10 @@ export default function CustomerModule() {
         observaciones: '',
         tipo_cliente: 'minorista',
         lista_precio: 'lista1',
-        limite_credito: defaultLimit
+        limite_credito: defaultLimit,
+        portal_enabled: false,
+        portal_username: '',
+        portal_password: ''
       });
     }
     setIsModalOpen(true);
@@ -341,6 +352,9 @@ export default function CustomerModule() {
                 }`}>
                   {cliente.tipo_cliente}
                 </span>
+                {cliente.portal_enabled === 1 || cliente.portal_enabled === true ? (
+                  <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-blue-50 text-blue-600">Portal activo</span>
+                ) : null}
                 <button 
                   onClick={() => openMovementsModal(cliente)}
                   className="flex items-center gap-1 text-zinc-900 font-mono font-bold hover:bg-zinc-50 px-2 py-1 rounded-lg transition-all"
@@ -473,6 +487,49 @@ export default function CustomerModule() {
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   />
                 </div>
+              <div className="md:col-span-2 bg-blue-50/60 border border-blue-100 rounded-2xl p-4 space-y-4">
+                <div className="flex items-center gap-2">
+                  <KeyRound size={18} className="text-blue-600" />
+                  <div>
+                    <h3 className="text-sm font-black text-zinc-900 uppercase tracking-widest">Acceso Portal Cliente</h3>
+                    <p className="text-xs text-zinc-500">Opcional. Si no querés darle acceso al portal, dejalo desactivado.</p>
+                  </div>
+                </div>
+                <label className="flex items-center gap-3 text-sm font-bold text-zinc-700">
+                  <input
+                    type="checkbox"
+                    checked={formData.portal_enabled}
+                    onChange={(e) => setFormData({ ...formData, portal_enabled: e.target.checked })}
+                    className="w-4 h-4 accent-blue-600"
+                  />
+                  Habilitar acceso al portal para este cliente
+                </label>
+                {formData.portal_enabled && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-500 uppercase mb-2">Usuario portal</label>
+                      <input
+                        type="text"
+                        className="w-full px-4 py-2 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                        value={formData.portal_username}
+                        onChange={(e) => setFormData({ ...formData, portal_username: e.target.value })}
+                        placeholder="cliente123"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-500 uppercase mb-2">Contraseña portal</label>
+                      <input
+                        type="password"
+                        className="w-full px-4 py-2 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none"
+                        value={formData.portal_password}
+                        onChange={(e) => setFormData({ ...formData, portal_password: e.target.value })}
+                        placeholder={editingCliente ? 'Dejar vacío para no cambiar' : 'Mínimo 6 caracteres'}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
                 <div className="md:col-span-2">
                   <label className="block text-xs font-bold text-zinc-500 uppercase mb-2">Dirección *</label>
                   <AddressAutocomplete

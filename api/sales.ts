@@ -59,6 +59,12 @@ const supplierOrderCompleteSchema = z.object({
   monto_pagado: z.number().nonnegative().optional(),
 });
 
+const customerOrderApproveSchema = z.object({
+  descuento_tipo: z.enum(["none", "percentage", "fixed"]).optional(),
+  descuento_valor: z.number().nonnegative().optional(),
+  admin_notes: z.string().optional().nullable(),
+});
+
 const getBody = (req: any) => {
   if (req.body && typeof req.body === "object") return req.body;
 
@@ -725,9 +731,219 @@ const handleSupplierOrders = async (req: any, res: any) => {
   return sendError(res, "Endpoint de pedidos a proveedor no encontrado", 404);
 };
 
+
+const mapCustomerOrderAdmin = (row: any, items: any[] = []) => ({
+  id: toNumber(row.id),
+  numero_pedido: toNumber(row.numero_pedido),
+  cliente_id: toNumber(row.cliente_id),
+  cliente: row.cliente || "",
+  fecha: row.fecha,
+  estado: row.estado || "pendiente_aprobacion",
+  subtotal: toNumber(row.subtotal),
+  descuento_tipo: row.descuento_tipo || "none",
+  descuento_valor: toNumber(row.descuento_valor),
+  descuento_monto: toNumber(row.descuento_monto),
+  total_final: toNumber(row.total_final),
+  sale_id: row.sale_id === null || row.sale_id === undefined ? null : toNumber(row.sale_id),
+  admin_notes: row.admin_notes || "",
+  items,
+});
+
+const fetchCustomerOrderItems = async (queryable: any, orderIds: number[]) => {
+  if (!orderIds.length) return new Map<number, any[]>();
+
+  const result = await queryable.query(
+    `
+      SELECT
+        coi.id,
+        coi.order_id,
+        coi.product_id,
+        coi.cantidad,
+        coi.precio_unitario,
+        (coi.cantidad * coi.precio_unitario) AS importe,
+        p.name AS product_name,
+        p.code,
+        p.codigo_unico
+      FROM customer_order_items coi
+      JOIN products p ON p.id = coi.product_id
+      WHERE coi.order_id = ANY($1::int[])
+      ORDER BY coi.id ASC
+    `,
+    [orderIds]
+  );
+
+  const grouped = new Map<number, any[]>();
+  for (const row of result.rows) {
+    const orderId = toNumber(row.order_id);
+    if (!grouped.has(orderId)) grouped.set(orderId, []);
+    grouped.get(orderId)!.push({
+      id: toNumber(row.id),
+      order_id: orderId,
+      product_id: toNumber(row.product_id),
+      product_name: row.product_name,
+      code: row.codigo_unico || row.code || "",
+      cantidad: toNumber(row.cantidad),
+      precio_unitario: toNumber(row.precio_unitario),
+      importe: toNumber(row.importe),
+    });
+  }
+
+  return grouped;
+};
+
+const handleCustomerOrders = async (req: any, res: any) => {
+  const endpoint = getEndpoint(req);
+  const user = await requirePermission(req, res, "sales", endpoint === "customer-orders" ? "view" : "edit");
+  if (!user) return;
+
+  const pool = getPostgresPool();
+  const id = getId(req);
+
+  if (endpoint === "customer-orders" && req.method === "GET") {
+    const status = Array.isArray(req.query?.status) ? req.query.status[0] : req.query?.status;
+    const params: any[] = [];
+    let where = "WHERE 1 = 1";
+    if (status) {
+      params.push(status);
+      where += ` AND co.estado = $${params.length}`;
+    }
+
+    const ordersResult = await pool.query(
+      `
+        SELECT co.*, c.nombre_apellido AS cliente
+        FROM customer_orders co
+        JOIN clientes c ON c.id = co.cliente_id
+        ${where}
+        ORDER BY
+          CASE co.estado
+            WHEN 'pendiente_aprobacion' THEN 1
+            WHEN 'aprobado_pendiente_entrega' THEN 2
+            ELSE 3
+          END,
+          co.fecha DESC,
+          co.id DESC
+      `,
+      params
+    );
+
+    const orderIds = ordersResult.rows.map((row: any) => toNumber(row.id));
+    const itemsByOrder = await fetchCustomerOrderItems(pool, orderIds);
+    return sendSuccess(res, ordersResult.rows.map((row: any) => mapCustomerOrderAdmin(row, itemsByOrder.get(toNumber(row.id)) || [])));
+  }
+
+  if (endpoint === "customer-order-approve" && req.method === "POST") {
+    if (!id) return sendError(res, "ID de pedido inválido", 400);
+    const parsed = customerOrderApproveSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })));
+    }
+
+    const orderResult = await pool.query(`SELECT * FROM customer_orders WHERE id = $1 LIMIT 1`, [id]);
+    if (!orderResult.rowCount) return sendError(res, "Pedido no encontrado", 404);
+
+    const order = orderResult.rows[0];
+    if (order.estado !== "pendiente_aprobacion") {
+      return sendError(res, "Solo se pueden aprobar pedidos pendientes", 400);
+    }
+
+    const subtotal = toNumber(order.subtotal);
+    const discountType = parsed.data.descuento_tipo || "none";
+    const discountValue = toNumber(parsed.data.descuento_valor);
+    let discountAmount = 0;
+
+    if (discountType === "percentage") {
+      discountAmount = subtotal * Math.min(discountValue, 100) / 100;
+    } else if (discountType === "fixed") {
+      discountAmount = Math.min(subtotal, discountValue);
+    }
+
+    const totalFinal = Math.max(0, subtotal - discountAmount);
+
+    const result = await pool.query(
+      `
+        UPDATE customer_orders
+        SET estado = 'aprobado_pendiente_entrega',
+            descuento_tipo = $1,
+            descuento_valor = $2,
+            descuento_monto = $3,
+            total_final = $4,
+            admin_notes = $5,
+            aprobado_at = now()
+        WHERE id = $6
+        RETURNING *
+      `,
+      [discountType, discountValue, discountAmount, totalFinal, parsed.data.admin_notes || null, id]
+    );
+
+    return sendSuccess(res, result.rows[0], "Pedido aprobado");
+  }
+
+  if (endpoint === "customer-order-deliver" && req.method === "POST") {
+    if (!id) return sendError(res, "ID de pedido inválido", 400);
+
+    const orderResult = await pool.query(
+      `SELECT co.*, c.nombre_apellido AS cliente
+       FROM customer_orders co
+       JOIN clientes c ON c.id = co.cliente_id
+       WHERE co.id = $1
+       LIMIT 1`,
+      [id]
+    );
+
+    if (!orderResult.rowCount) return sendError(res, "Pedido no encontrado", 404);
+    const order = orderResult.rows[0];
+
+    if (order.estado !== "aprobado_pendiente_entrega") {
+      return sendError(res, "Solo se pueden entregar pedidos aprobados", 400);
+    }
+
+    const itemsByOrder = await fetchCustomerOrderItems(pool, [id]);
+    const items = itemsByOrder.get(id) || [];
+    if (!items.length) return sendError(res, "El pedido no tiene productos", 400);
+
+    const subtotal = toNumber(order.subtotal);
+    const discountAmount = toNumber(order.descuento_monto);
+    const equivalentDiscountPct = subtotal > 0 ? Math.min(100, (discountAmount / subtotal) * 100) : 0;
+
+    const saleResult = await salesService.createSale({
+      cliente_id: toNumber(order.cliente_id),
+      nombre_cliente: order.cliente,
+      metodo_pago: "Cta Cte",
+      monto_pagado: 0,
+      notes: `Pedido cliente #${order.numero_pedido}`,
+      usuario: user.userName || "Sistema",
+      items: items.map((item: any) => ({
+        product_id: toNumber(item.product_id),
+        cantidad: toNumber(item.cantidad),
+        precio_venta: toNumber(item.precio_unitario),
+        precio_unitario_original: toNumber(item.precio_unitario),
+        bonificacion_tipo: equivalentDiscountPct > 0 ? "percentage" : "none",
+        bonificacion_valor: equivalentDiscountPct,
+      })),
+    });
+
+    await pool.query(
+      `UPDATE customer_orders
+       SET estado = 'entregado',
+           sale_id = $1,
+           entregado_at = now()
+       WHERE id = $2`,
+      [saleResult.saleId, id]
+    );
+
+    return sendSuccess(res, { ...saleResult, orderId: id }, "Pedido entregado y agregado a cuenta corriente");
+  }
+
+  return sendError(res, "Endpoint de pedidos de clientes no encontrado", 404);
+};
+
 export default async function handler(req: any, res: any) {
   const id = getId(req);
   const endpoint = getEndpoint(req);
+
+  if (["customer-orders", "customer-order-approve", "customer-order-deliver"].includes(endpoint)) {
+    return handleCustomerOrders(req, res);
+  }
 
   if (
     [

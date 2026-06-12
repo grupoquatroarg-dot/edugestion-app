@@ -37,6 +37,7 @@ interface DashboardSummary {
     topClientes: { nombre_cliente: string; total: number }[];
     topProductos: { name: string; total_qty: number }[];
     topProductosRentables: { producto: string; ventas: number; costo: number; ganancia: number; margen: number }[];
+    pedidosClientesPendientes: number;
   };
   stock: {
     valorizado: number;
@@ -229,6 +230,14 @@ export default function Dashboard() {
               value={formatCurrency(summary?.ventas?.dia ?? 0)}
               subtitle="Total facturado hoy"
               icon={<Clock className="text-zinc-600" />}
+            />
+            <DashboardCard 
+              title="Pedidos de Clientes"
+              value={(summary?.ventas?.pedidosClientesPendientes ?? 0).toString()}
+              subtitle="Pendientes de aprobación"
+              icon={<ShoppingCart className="text-emerald-600" />}
+              onClick={() => openDetail('pedidos-clientes', 'Pedidos de Clientes Pendientes')}
+              highlight={(summary?.ventas?.pedidosClientesPendientes ?? 0) > 0}
             />
             <DashboardCard 
               title="Comparativo Mensual"
@@ -508,6 +517,23 @@ export default function Dashboard() {
                       ))}
                     </tbody>
                   </table>
+                )}
+
+                {detailModal.type === 'pedidos-clientes' && (
+                  <div className="space-y-3">
+                    {detailModal.data.map((item, i) => (
+                      <div key={i} className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-black text-zinc-900">Pedido #{item.numero_pedido} · {item.cliente}</p>
+                          <p className="text-xs text-zinc-400 font-bold">{new Date(item.fecha).toLocaleString('es-AR')} · {item.items} productos</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-lg font-black text-zinc-900 font-mono">{formatCurrency(item.total_final)}</p>
+                          <p className="text-[10px] font-black text-amber-600 uppercase">Pendiente de aprobación</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
 
                 {detailModal.type === 'ventas-mes-detalle' && (

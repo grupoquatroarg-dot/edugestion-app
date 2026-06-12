@@ -85,7 +85,9 @@ export default async function handler(req: any, res: any) {
           "checklists",
           "checklist_items",
           "supplier_orders",
-          "supplier_order_items"
+          "supplier_order_items",
+          "customer_orders",
+          "customer_order_items"
         ];
 
         const quoteIdentifier = (value: string) => `"${value.replace(/"/g, '""')}"`;
@@ -186,7 +188,9 @@ export default async function handler(req: any, res: any) {
         "checklists",
         "checklist_items",
         "supplier_orders",
-        "supplier_order_items"
+        "supplier_order_items",
+          "customer_orders",
+          "customer_order_items"
       ];
 
       const quoteIdentifier = (value: string) => `"${value.replace(/"/g, '""')}"`;
@@ -322,6 +326,8 @@ export default async function handler(req: any, res: any) {
         "route_items",
         "routes",
         "supplier_order_items",
+          "customer_orders",
+          "customer_order_items",
         "supplier_orders",
         "sale_items",
         "sales",
@@ -513,7 +519,9 @@ export default async function handler(req: any, res: any) {
           "checklists",
           "checklist_items",
           "supplier_orders",
-          "supplier_order_items"
+          "supplier_order_items",
+          "customer_orders",
+          "customer_order_items"
         ];
 
         const quoteIdentifier = (value: string) => `"${value.replace(/"/g, '""')}"`;

@@ -27,6 +27,7 @@ import { Product } from '../types';
 import { getSocket } from '../utils/socket';
 import { generateSaleReceipt } from '../utils/pdfGenerator';
 import CustomerDetail from './CustomerDetail';
+import CustomerOrdersAdmin from './CustomerOrdersAdmin';
 import { useAuth } from '../contexts/AuthContext';
 import { unwrapResponse, apiFetch } from '../utils/api';
 
@@ -34,7 +35,7 @@ const socket = getSocket();
 
 export default function SalesModule() {
   const { hasPermission } = useAuth();
-  const [activeTab, setActiveTab] = useState<'nueva' | 'historial' | 'saldos'>('nueva');
+  const [activeTab, setActiveTab] = useState<'nueva' | 'historial' | 'saldos' | 'pedidos-clientes'>('nueva');
   const [products, setProducts] = useState<Product[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedClienteId, setSelectedClienteId] = useState<number>(1);
@@ -615,6 +616,15 @@ export default function SalesModule() {
             <DollarSign size={18} />
             Saldos Pendientes
           </button>
+          <button 
+            onClick={() => setActiveTab('pedidos-clientes')}
+            className={`px-4 sm:px-8 py-4 sm:py-5 text-sm font-bold transition-all border-b-2 flex items-center gap-2 ${
+              activeTab === 'pedidos-clientes' ? 'border-zinc-900 text-zinc-900' : 'border-transparent text-zinc-400 hover:text-zinc-600'
+            }`}
+          >
+            <ShoppingCart size={18} />
+            Pedidos de Clientes
+          </button>
         </div>
       </div>
 
@@ -1165,6 +1175,8 @@ export default function SalesModule() {
               </div>
             </div>
           </div>
+        ) : activeTab === 'pedidos-clientes' ? (
+          <CustomerOrdersAdmin onChanged={() => { fetchSalesHistory(); fetchClientes(); }} />
         ) : (
           <div className="p-4 sm:p-8 h-full overflow-y-auto custom-scrollbar">
             <div className="max-w-7xl mx-auto space-y-6 sm:space-y-8">
