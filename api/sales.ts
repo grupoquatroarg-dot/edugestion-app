@@ -65,6 +65,33 @@ const customerOrderApproveSchema = z.object({
   admin_notes: z.string().optional().nullable(),
 });
 
+const customerOrderRejectSchema = z.object({
+  motivo: z.string().min(3, "El motivo es obligatorio"),
+  admin_notes: z.string().optional().nullable(),
+});
+
+const customerOrderUpdateSchema = z.object({
+  items: z.array(z.object({
+    product_id: z.number(),
+    cantidad: z.number().positive(),
+  })).min(1, "Debe incluir al menos un producto"),
+  descuento_tipo: z.enum(["none", "percentage", "fixed"]).optional(),
+  descuento_valor: z.number().nonnegative().optional(),
+  admin_notes: z.string().optional().nullable(),
+});
+
+const calculateCustomerOrderDiscount = (subtotal: number, discountType: string, discountValue: number) => {
+  if (discountType === "percentage") {
+    return subtotal * Math.min(discountValue, 100) / 100;
+  }
+
+  if (discountType === "fixed") {
+    return Math.min(subtotal, discountValue);
+  }
+
+  return 0;
+};
+
 const getBody = (req: any) => {
   if (req.body && typeof req.body === "object") return req.body;
 
@@ -790,6 +817,7 @@ const mapCustomerOrderAdmin = (row: any, items: any[] = []) => ({
   numero_pedido: toNumber(row.numero_pedido),
   cliente_id: toNumber(row.cliente_id),
   cliente: row.cliente || "",
+  cliente_telefono: row.cliente_telefono || row.telefono || "",
   fecha: row.fecha,
   estado: row.estado || "pendiente_aprobacion",
   subtotal: toNumber(row.subtotal),
@@ -799,6 +827,10 @@ const mapCustomerOrderAdmin = (row: any, items: any[] = []) => ({
   total_final: toNumber(row.total_final),
   sale_id: row.sale_id === null || row.sale_id === undefined ? null : toNumber(row.sale_id),
   admin_notes: row.admin_notes || "",
+  rejection_reason: row.rejection_reason || "",
+  cancel_reason: row.cancel_reason || "",
+  rejected_at: row.rejected_at || null,
+  cancelled_at: row.cancelled_at || null,
   items,
 });
 
@@ -963,7 +995,7 @@ const handleCustomerOrders = async (req: any, res: any) => {
 
     const ordersResult = await pool.query(
       `
-        SELECT co.*, c.nombre_apellido AS cliente
+        SELECT co.*, c.nombre_apellido AS cliente, c.telefono AS cliente_telefono
         FROM customer_orders co
         JOIN clientes c ON c.id = co.cliente_id
         ${where}
@@ -984,6 +1016,111 @@ const handleCustomerOrders = async (req: any, res: any) => {
     return sendSuccess(res, ordersResult.rows.map((row: any) => mapCustomerOrderAdmin(row, itemsByOrder.get(toNumber(row.id)) || [])));
   }
 
+  if (endpoint === "customer-order-reject" && req.method === "POST") {
+    if (!id) return sendError(res, "ID de pedido inválido", 400);
+    const parsed = customerOrderRejectSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })));
+    }
+
+    const result = await pool.query(
+      `UPDATE customer_orders
+       SET estado = 'rechazado',
+           rejection_reason = $1,
+           admin_notes = $2,
+           rejected_at = now()
+       WHERE id = $3
+         AND estado = 'pendiente_aprobacion'
+       RETURNING *`,
+      [parsed.data.motivo, parsed.data.admin_notes || parsed.data.motivo, id]
+    );
+
+    if (!result.rowCount) {
+      return sendError(res, "Solo se pueden rechazar pedidos pendientes", 400);
+    }
+
+    return sendSuccess(res, result.rows[0], "Pedido rechazado");
+  }
+
+  if (endpoint === "customer-order-update" && ["POST", "PUT"].includes(req.method)) {
+    if (!id) return sendError(res, "ID de pedido inválido", 400);
+    const parsed = customerOrderUpdateSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })));
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const orderResult = await client.query(
+        `SELECT * FROM customer_orders WHERE id = $1 FOR UPDATE`,
+        [id]
+      );
+
+      if (!orderResult.rowCount) {
+        await client.query("ROLLBACK");
+        return sendError(res, "Pedido no encontrado", 404);
+      }
+
+      const order = orderResult.rows[0];
+      if (order.estado !== "pendiente_aprobacion") {
+        await client.query("ROLLBACK");
+        return sendError(res, "Solo se pueden editar pedidos pendientes de aprobación", 400);
+      }
+
+      const productIds = parsed.data.items.map((item) => item.product_id);
+      const productResult = await client.query(
+        `SELECT id, name, sale_price FROM products WHERE id = ANY($1::int[]) AND COALESCE(eliminado, 0) = 0`,
+        [productIds]
+      );
+      const productMap = new Map<number, any>(productResult.rows.map((row: any) => [toNumber(row.id), row]));
+
+      let subtotal = 0;
+      for (const item of parsed.data.items) {
+        const product = productMap.get(item.product_id);
+        if (!product) throw new Error(`Producto inválido: ${item.product_id}`);
+        subtotal += toNumber(item.cantidad) * toNumber(product.sale_price);
+      }
+
+      const discountType = parsed.data.descuento_tipo || "none";
+      const discountValue = toNumber(parsed.data.descuento_valor);
+      const discountAmount = calculateCustomerOrderDiscount(subtotal, discountType, discountValue);
+      const totalFinal = Math.max(0, subtotal - discountAmount);
+
+      await client.query(`DELETE FROM customer_order_items WHERE order_id = $1`, [id]);
+      for (const item of parsed.data.items) {
+        const product = productMap.get(item.product_id);
+        await client.query(
+          `INSERT INTO customer_order_items (order_id, product_id, cantidad, precio_unitario)
+           VALUES ($1, $2, $3, $4)`,
+          [id, item.product_id, item.cantidad, toNumber(product.sale_price)]
+        );
+      }
+
+      const updateResult = await client.query(
+        `UPDATE customer_orders
+         SET subtotal = $1,
+             descuento_tipo = $2,
+             descuento_valor = $3,
+             descuento_monto = $4,
+             total_final = $5,
+             admin_notes = $6
+         WHERE id = $7
+         RETURNING *`,
+        [subtotal, discountType, discountValue, discountAmount, totalFinal, parsed.data.admin_notes || null, id]
+      );
+
+      await client.query("COMMIT");
+      return sendSuccess(res, updateResult.rows[0], "Pedido actualizado");
+    } catch (error: any) {
+      await client.query("ROLLBACK");
+      return sendError(res, error?.message || "Error al editar pedido", error?.statusCode || 400, error?.errors || []);
+    } finally {
+      client.release();
+    }
+  }
+
   if (endpoint === "customer-order-approve" && req.method === "POST") {
     if (!id) return sendError(res, "ID de pedido inválido", 400);
     const parsed = customerOrderApproveSchema.safeParse(getBody(req));
@@ -996,7 +1133,7 @@ const handleCustomerOrders = async (req: any, res: any) => {
       await client.query("BEGIN");
 
       const orderResult = await client.query(
-        `SELECT co.*, c.nombre_apellido AS cliente
+        `SELECT co.*, c.nombre_apellido AS cliente, c.telefono AS cliente_telefono
          FROM customer_orders co
          JOIN clientes c ON c.id = co.cliente_id
          WHERE co.id = $1
@@ -1018,14 +1155,7 @@ const handleCustomerOrders = async (req: any, res: any) => {
       const subtotal = toNumber(order.subtotal);
       const discountType = parsed.data.descuento_tipo || "none";
       const discountValue = toNumber(parsed.data.descuento_valor);
-      let discountAmount = 0;
-
-      if (discountType === "percentage") {
-        discountAmount = subtotal * Math.min(discountValue, 100) / 100;
-      } else if (discountType === "fixed") {
-        discountAmount = Math.min(subtotal, discountValue);
-      }
-
+      const discountAmount = calculateCustomerOrderDiscount(subtotal, discountType, discountValue);
       const totalFinal = Math.max(0, subtotal - discountAmount);
       const shortageItems = await getCustomerOrderShortages(client, id);
       const supplierOrder = await ensureSupplierOrderForCustomerOrder(
@@ -1076,7 +1206,7 @@ const handleCustomerOrders = async (req: any, res: any) => {
     if (!id) return sendError(res, "ID de pedido inválido", 400);
 
     const orderResult = await pool.query(
-      `SELECT co.*, c.nombre_apellido AS cliente
+      `SELECT co.*, c.nombre_apellido AS cliente, c.telefono AS cliente_telefono
        FROM customer_orders co
        JOIN clientes c ON c.id = co.cliente_id
        WHERE co.id = $1
@@ -1156,7 +1286,7 @@ export default async function handler(req: any, res: any) {
   const id = getId(req);
   const endpoint = getEndpoint(req);
 
-  if (["customer-orders", "customer-order-approve", "customer-order-deliver"].includes(endpoint)) {
+  if (["customer-orders", "customer-order-approve", "customer-order-deliver", "customer-order-reject", "customer-order-update"].includes(endpoint)) {
     return handleCustomerOrders(req, res);
   }
 

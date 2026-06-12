@@ -31,6 +31,9 @@ type PortalOrder = {
   descuento_monto: number;
   total_final: number;
   sale_id?: number | null;
+  admin_notes?: string;
+  rejection_reason?: string;
+  cancel_reason?: string;
   items: any[];
 };
 
@@ -55,6 +58,7 @@ const getStatusLabel = (status: string) => {
     case 'aprobado_pendiente_entrega': return 'Aprobado - pendiente de entrega';
     case 'entregado': return 'Entregado';
     case 'rechazado': return 'Rechazado';
+    case 'cancelado': return 'Cancelado';
     default: return status || 'Pendiente';
   }
 };
@@ -65,6 +69,7 @@ const getStatusClass = (status: string) => {
     case 'aprobado_pendiente_entrega': return 'bg-blue-50 text-blue-700 border-blue-100';
     case 'entregado': return 'bg-emerald-50 text-emerald-700 border-emerald-100';
     case 'rechazado': return 'bg-red-50 text-red-700 border-red-100';
+    case 'cancelado': return 'bg-zinc-100 text-zinc-600 border-zinc-200';
     default: return 'bg-zinc-50 text-zinc-600 border-zinc-100';
   }
 };
@@ -84,6 +89,7 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
   const [searchTerm, setSearchTerm] = useState('');
   const [cart, setCart] = useState<{ product: PortalProduct; quantity: number }[]>([]);
   const [submittingOrder, setSubmittingOrder] = useState(false);
+  const [actionLoading, setActionLoading] = useState<number | null>(null);
 
   const filteredProducts = useMemo(() => {
     const q = searchTerm.toLowerCase().trim();
@@ -203,6 +209,26 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
       alert(error?.message || 'No se pudo enviar el pedido');
     } finally {
       setSubmittingOrder(false);
+    }
+  };
+
+  const cancelOrder = async (order: PortalOrder) => {
+    if (!window.confirm('¿Cancelar este pedido? Solo se puede cancelar mientras está pendiente de aprobación.')) return;
+
+    setActionLoading(order.id);
+    try {
+      const res = await portalFetch(`/api/clientes?endpoint=portal-order-cancel&id=${order.id}`, {
+        method: 'POST',
+        body: JSON.stringify({ motivo: 'Cancelado por el cliente' }),
+      });
+      const body = await res.json();
+      unwrapResponse(body);
+      await loadPortalData();
+      alert('Pedido cancelado correctamente');
+    } catch (error: any) {
+      alert(error?.message || 'No se pudo cancelar el pedido');
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -395,6 +421,30 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                   <div className="bg-zinc-50 rounded-2xl p-3"><p className="text-[10px] font-black text-zinc-400 uppercase">Descuento</p><p className="font-black font-mono text-red-600">-{formatCurrency(order.descuento_monto)}</p></div>
                   <div className="bg-zinc-900 text-white rounded-2xl p-3"><p className="text-[10px] font-black text-zinc-400 uppercase">Total final</p><p className="font-black font-mono">{formatCurrency(order.total_final)}</p></div>
                 </div>
+                {order.admin_notes && (
+                  <div className="mt-3 bg-blue-50 border border-blue-100 text-blue-700 rounded-2xl p-3 text-xs font-bold">
+                    Observación: {order.admin_notes}
+                  </div>
+                )}
+                {order.rejection_reason && (
+                  <div className="mt-3 bg-red-50 border border-red-100 text-red-700 rounded-2xl p-3 text-xs font-bold">
+                    Motivo de rechazo: {order.rejection_reason}
+                  </div>
+                )}
+                {order.cancel_reason && (
+                  <div className="mt-3 bg-zinc-50 border border-zinc-100 text-zinc-600 rounded-2xl p-3 text-xs font-bold">
+                    Pedido cancelado: {order.cancel_reason}
+                  </div>
+                )}
+                {order.estado === 'pendiente_aprobacion' && (
+                  <button
+                    disabled={actionLoading === order.id}
+                    onClick={() => cancelOrder(order)}
+                    className="mt-4 w-full sm:w-auto px-4 py-3 bg-red-50 text-red-600 border border-red-100 rounded-xl font-black uppercase text-xs flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    <XCircle size={16} /> Cancelar pedido
+                  </button>
+                )}
               </div>
             ))}
             {orders.length === 0 && (

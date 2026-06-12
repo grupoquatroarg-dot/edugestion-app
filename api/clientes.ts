@@ -1411,6 +1411,10 @@ const mapPortalOrder = (row: any, items: any[] = []) => ({
   total_final: toNumber(row.total_final),
   sale_id: row.sale_id === null || row.sale_id === undefined ? null : toNumber(row.sale_id),
   admin_notes: row.admin_notes || "",
+  rejection_reason: row.rejection_reason || "",
+  cancel_reason: row.cancel_reason || "",
+  rejected_at: row.rejected_at || null,
+  cancelled_at: row.cancelled_at || null,
   items,
 });
 
@@ -1632,6 +1636,33 @@ const handleCustomerPortal = async (req: any, res: any) => {
     }
 
     return sendError(res, "Method not allowed", 405);
+  }
+
+  if (endpoint === "portal-order-cancel") {
+    if (req.method !== "POST") return sendError(res, "Method not allowed", 405);
+    const orderId = getId(req);
+    if (!orderId) return sendError(res, "ID de pedido inválido", 400);
+
+    const body = getBody(req);
+    const reason = String(body?.motivo || "Cancelado por el cliente").trim() || "Cancelado por el cliente";
+
+    const result = await pool.query(
+      `UPDATE customer_orders
+       SET estado = 'cancelado',
+           cancel_reason = $1,
+           cancelled_at = now()
+       WHERE id = $2
+         AND cliente_id = $3
+         AND estado = 'pendiente_aprobacion'
+       RETURNING id, numero_pedido`,
+      [reason, orderId, clienteId]
+    );
+
+    if (!result.rowCount) {
+      return sendError(res, "Solo podés cancelar pedidos pendientes de aprobación", 400);
+    }
+
+    return sendSuccess(res, result.rows[0], "Pedido cancelado");
   }
 
   if (endpoint === "portal-movements") {
