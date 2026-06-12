@@ -196,6 +196,7 @@ const mapSupplierOrder = (row: any, items: any[] = []) => {
     cliente: row.cliente || "",
     cliente_id: row.cliente_id === null || row.cliente_id === undefined ? null : toNumber(row.cliente_id),
     sale_id: row.sale_id === null || row.sale_id === undefined ? null : toNumber(row.sale_id),
+    customer_order_id: row.customer_order_id === null || row.customer_order_id === undefined ? null : toNumber(row.customer_order_id),
     fecha: row.fecha,
     estado: row.estado || "pendiente",
     notes: row.notes || "",
@@ -255,7 +256,7 @@ const handleSupplierOrders = async (req: any, res: any) => {
       const ordersResult = await pool.query(
         `
           SELECT
-            so.id, so.numero_pedido, so.cliente, so.cliente_id, so.sale_id, so.fecha, so.estado, so.notes, so.stock_actualizado,
+            so.id, so.numero_pedido, so.cliente, so.cliente_id, so.sale_id, so.customer_order_id, so.fecha, so.estado, so.notes, so.stock_actualizado,
             s.total AS sale_total,
             s.monto_pagado AS sale_monto_pagado,
             s.monto_pendiente AS sale_monto_pendiente,
@@ -287,7 +288,7 @@ const handleSupplierOrders = async (req: any, res: any) => {
       const orderResult = await pool.query(
         `
           SELECT
-            so.id, so.numero_pedido, so.cliente, so.cliente_id, so.sale_id, so.fecha, so.estado, so.notes, so.stock_actualizado,
+            so.id, so.numero_pedido, so.cliente, so.cliente_id, so.sale_id, so.customer_order_id, so.fecha, so.estado, so.notes, so.stock_actualizado,
             s.total AS sale_total,
             s.monto_pagado AS sale_monto_pagado,
             s.monto_pendiente AS sale_monto_pendiente,
@@ -493,7 +494,7 @@ const handleSupplierOrders = async (req: any, res: any) => {
 
       const orderResult = await client.query(
         `
-          SELECT id, numero_pedido, cliente, cliente_id, sale_id, estado, notes
+          SELECT id, numero_pedido, cliente, cliente_id, sale_id, customer_order_id, estado, notes
           FROM supplier_orders
           WHERE id = $1
           LIMIT 1
@@ -532,6 +533,58 @@ const handleSupplierOrders = async (req: any, res: any) => {
       if (!itemResult.rowCount) {
         await client.query("ROLLBACK");
         return sendError(res, "El pedido no tiene productos", 400);
+      }
+
+      if (order.customer_order_id && !order.sale_id) {
+        for (const item of itemResult.rows) {
+          const productId = toNumber(item.product_id);
+          const cantidad = toNumber(item.cantidad);
+          const costoUnitario = toNumber(item.cost);
+
+          await client.query(
+            `UPDATE products
+             SET stock = COALESCE(stock, 0) + $1
+             WHERE id = $2`,
+            [cantidad, productId]
+          );
+
+          await client.query(
+            `INSERT INTO stock_movimientos (product_id, cantidad, costo_unitario, cantidad_restante, descripcion, tipo_movimiento, motivo, usuario)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [
+              productId,
+              cantidad,
+              costoUnitario,
+              cantidad,
+              `Ingreso desde Pedido Proveedor #${order.numero_pedido || order.id} para Pedido Cliente #${order.customer_order_id}`,
+              "ingreso",
+              "pedido_proveedor",
+              user.userName || "Sistema",
+            ]
+          );
+        }
+
+        await client.query(
+          `UPDATE supplier_orders
+           SET estado = $1,
+               stock_actualizado = 1
+           WHERE id = $2`,
+          ["entregado", id]
+        );
+
+        await client.query(
+          `UPDATE customer_orders
+           SET admin_notes = COALESCE(admin_notes, '') || CASE WHEN COALESCE(admin_notes, '') = '' THEN '' ELSE E'\n' END || $1
+           WHERE id = $2`,
+          [`Pedido proveedor #${order.numero_pedido || order.id} completado. Stock disponible para entregar.`, order.customer_order_id]
+        );
+
+        await client.query("COMMIT");
+        return sendSuccess(
+          res,
+          { success: true, customerOrderId: toNumber(order.customer_order_id), supplierOrderId: id },
+          "Pedido a proveedor completado. Stock cargado para entregar el pedido del cliente."
+        );
       }
 
       let totalVenta = 0;
@@ -763,7 +816,8 @@ const fetchCustomerOrderItems = async (queryable: any, orderIds: number[]) => {
         (coi.cantidad * coi.precio_unitario) AS importe,
         p.name AS product_name,
         p.code,
-        p.codigo_unico
+        p.codigo_unico,
+        COALESCE(p.stock, 0) AS stock_actual
       FROM customer_order_items coi
       JOIN products p ON p.id = coi.product_id
       WHERE coi.order_id = ANY($1::int[])
@@ -785,10 +839,109 @@ const fetchCustomerOrderItems = async (queryable: any, orderIds: number[]) => {
       cantidad: toNumber(row.cantidad),
       precio_unitario: toNumber(row.precio_unitario),
       importe: toNumber(row.importe),
+      stock_actual: toNumber(row.stock_actual),
+      faltante: Math.max(0, toNumber(row.cantidad) - toNumber(row.stock_actual)),
     });
   }
 
   return grouped;
+};
+
+const ensureSupplierOrderForCustomerOrder = async (client: any, customerOrder: any, shortageItems: any[], userName: string) => {
+  const validShortages = shortageItems.filter((item: any) => toNumber(item.cantidad) > 0);
+
+  if (!validShortages.length) {
+    return null;
+  }
+
+  const existingResult = await client.query(
+    `SELECT id, numero_pedido
+     FROM supplier_orders
+     WHERE customer_order_id = $1 AND estado <> 'entregado'
+     ORDER BY id DESC
+     LIMIT 1`,
+    [toNumber(customerOrder.id)]
+  );
+
+  let supplierOrderId: number;
+  let supplierOrderNumber: number;
+
+  if (existingResult.rowCount) {
+    supplierOrderId = toNumber(existingResult.rows[0]?.id);
+    supplierOrderNumber = toNumber(existingResult.rows[0]?.numero_pedido);
+
+    await client.query(`DELETE FROM supplier_order_items WHERE order_id = $1`, [supplierOrderId]);
+    await client.query(
+      `UPDATE supplier_orders
+       SET cliente = $1,
+           cliente_id = $2,
+           notes = $3,
+           estado = CASE WHEN estado = 'entregado' THEN estado ELSE 'pendiente' END
+       WHERE id = $4`,
+      [
+        customerOrder.cliente || customerOrder.nombre_apellido || 'Pedido cliente',
+        customerOrder.cliente_id || null,
+        `Faltante generado por Pedido Cliente #${customerOrder.numero_pedido || customerOrder.id}`,
+        supplierOrderId,
+      ]
+    );
+  } else {
+    supplierOrderNumber = await getAndIncrementSetting(client, "next_order_number");
+    const orderResult = await client.query(
+      `INSERT INTO supplier_orders (numero_pedido, cliente, cliente_id, customer_order_id, estado, notes)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id`,
+      [
+        supplierOrderNumber,
+        customerOrder.cliente || customerOrder.nombre_apellido || 'Pedido cliente',
+        customerOrder.cliente_id || null,
+        toNumber(customerOrder.id),
+        'pendiente',
+        `Faltante generado por Pedido Cliente #${customerOrder.numero_pedido || customerOrder.id}`,
+      ]
+    );
+    supplierOrderId = toNumber(orderResult.rows[0]?.id);
+  }
+
+  for (const item of validShortages) {
+    await client.query(
+      `INSERT INTO supplier_order_items (order_id, product_id, cantidad)
+       VALUES ($1, $2, $3)`,
+      [supplierOrderId, toNumber(item.product_id), toNumber(item.cantidad)]
+    );
+  }
+
+  return { supplierOrderId, supplierOrderNumber };
+};
+
+const getCustomerOrderShortages = async (queryable: any, orderId: number) => {
+  const result = await queryable.query(
+    `SELECT
+       coi.product_id,
+       p.name AS product_name,
+       SUM(COALESCE(coi.cantidad, 0)) AS cantidad,
+       COALESCE(p.stock, 0) AS stock_actual
+     FROM customer_order_items coi
+     JOIN products p ON p.id = coi.product_id
+     WHERE coi.order_id = $1
+     GROUP BY coi.product_id, p.name, p.stock
+     ORDER BY p.name ASC`,
+    [orderId]
+  );
+
+  return result.rows
+    .map((row: any) => {
+      const cantidad = toNumber(row.cantidad);
+      const stockActual = Math.max(0, toNumber(row.stock_actual));
+      return {
+        product_id: toNumber(row.product_id),
+        product_name: row.product_name || 'Producto',
+        cantidad: Math.max(0, cantidad - stockActual),
+        solicitado: cantidad,
+        stock_actual: stockActual,
+      };
+    })
+    .filter((item: any) => item.cantidad > 0);
 };
 
 const handleCustomerOrders = async (req: any, res: any) => {
@@ -838,44 +991,85 @@ const handleCustomerOrders = async (req: any, res: any) => {
       return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })));
     }
 
-    const orderResult = await pool.query(`SELECT * FROM customer_orders WHERE id = $1 LIMIT 1`, [id]);
-    if (!orderResult.rowCount) return sendError(res, "Pedido no encontrado", 404);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
 
-    const order = orderResult.rows[0];
-    if (order.estado !== "pendiente_aprobacion") {
-      return sendError(res, "Solo se pueden aprobar pedidos pendientes", 400);
+      const orderResult = await client.query(
+        `SELECT co.*, c.nombre_apellido AS cliente
+         FROM customer_orders co
+         JOIN clientes c ON c.id = co.cliente_id
+         WHERE co.id = $1
+         LIMIT 1`,
+        [id]
+      );
+
+      if (!orderResult.rowCount) {
+        await client.query("ROLLBACK");
+        return sendError(res, "Pedido no encontrado", 404);
+      }
+
+      const order = orderResult.rows[0];
+      if (order.estado !== "pendiente_aprobacion") {
+        await client.query("ROLLBACK");
+        return sendError(res, "Solo se pueden aprobar pedidos pendientes", 400);
+      }
+
+      const subtotal = toNumber(order.subtotal);
+      const discountType = parsed.data.descuento_tipo || "none";
+      const discountValue = toNumber(parsed.data.descuento_valor);
+      let discountAmount = 0;
+
+      if (discountType === "percentage") {
+        discountAmount = subtotal * Math.min(discountValue, 100) / 100;
+      } else if (discountType === "fixed") {
+        discountAmount = Math.min(subtotal, discountValue);
+      }
+
+      const totalFinal = Math.max(0, subtotal - discountAmount);
+      const shortageItems = await getCustomerOrderShortages(client, id);
+      const supplierOrder = await ensureSupplierOrderForCustomerOrder(
+        client,
+        order,
+        shortageItems,
+        user.userName || "Sistema"
+      );
+
+      const result = await client.query(
+        `UPDATE customer_orders
+         SET estado = 'aprobado_pendiente_entrega',
+             descuento_tipo = $1,
+             descuento_valor = $2,
+             descuento_monto = $3,
+             total_final = $4,
+             admin_notes = $5,
+             aprobado_at = now()
+         WHERE id = $6
+         RETURNING *`,
+        [discountType, discountValue, discountAmount, totalFinal, parsed.data.admin_notes || null, id]
+      );
+
+      await client.query("COMMIT");
+
+      return sendSuccess(
+        res,
+        {
+          ...result.rows[0],
+          supplierOrderGenerated: Boolean(supplierOrder),
+          supplierOrderId: supplierOrder?.supplierOrderId || null,
+          supplierOrderNumber: supplierOrder?.supplierOrderNumber || null,
+          shortageItems,
+        },
+        shortageItems.length > 0
+          ? "Pedido aprobado. Hay faltantes y se generó/actualizó un pedido a proveedor."
+          : "Pedido aprobado"
+      );
+    } catch (error: any) {
+      await client.query("ROLLBACK");
+      return sendError(res, error?.message || "Error al aprobar pedido", error?.statusCode || 400, error?.errors || []);
+    } finally {
+      client.release();
     }
-
-    const subtotal = toNumber(order.subtotal);
-    const discountType = parsed.data.descuento_tipo || "none";
-    const discountValue = toNumber(parsed.data.descuento_valor);
-    let discountAmount = 0;
-
-    if (discountType === "percentage") {
-      discountAmount = subtotal * Math.min(discountValue, 100) / 100;
-    } else if (discountType === "fixed") {
-      discountAmount = Math.min(subtotal, discountValue);
-    }
-
-    const totalFinal = Math.max(0, subtotal - discountAmount);
-
-    const result = await pool.query(
-      `
-        UPDATE customer_orders
-        SET estado = 'aprobado_pendiente_entrega',
-            descuento_tipo = $1,
-            descuento_valor = $2,
-            descuento_monto = $3,
-            total_final = $4,
-            admin_notes = $5,
-            aprobado_at = now()
-        WHERE id = $6
-        RETURNING *
-      `,
-      [discountType, discountValue, discountAmount, totalFinal, parsed.data.admin_notes || null, id]
-    );
-
-    return sendSuccess(res, result.rows[0], "Pedido aprobado");
   }
 
   if (endpoint === "customer-order-deliver" && req.method === "POST") {
@@ -900,6 +1094,27 @@ const handleCustomerOrders = async (req: any, res: any) => {
     const itemsByOrder = await fetchCustomerOrderItems(pool, [id]);
     const items = itemsByOrder.get(id) || [];
     if (!items.length) return sendError(res, "El pedido no tiene productos", 400);
+
+    const shortageItems = await getCustomerOrderShortages(pool, id);
+    if (shortageItems.length > 0) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const supplierOrder = await ensureSupplierOrderForCustomerOrder(client, order, shortageItems, user.userName || "Sistema");
+        await client.query("COMMIT");
+        return sendError(
+          res,
+          `No se puede entregar el pedido porque hay productos sin stock. Se generó/actualizó el pedido a proveedor #${supplierOrder?.supplierOrderNumber || ''}.`,
+          400,
+          shortageItems
+        );
+      } catch (error: any) {
+        await client.query("ROLLBACK");
+        return sendError(res, error?.message || "Error al verificar stock del pedido", error?.statusCode || 400, error?.errors || []);
+      } finally {
+        client.release();
+      }
+    }
 
     const subtotal = toNumber(order.subtotal);
     const discountAmount = toNumber(order.descuento_monto);

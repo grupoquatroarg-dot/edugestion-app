@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Clock, Package, RefreshCcw, Truck, Percent, AlertCircle } from 'lucide-react';
+import { CheckCircle2, Clock, Package, RefreshCcw, Truck, Percent, AlertCircle, AlertTriangle } from 'lucide-react';
 import { unwrapResponse, apiFetch } from '../utils/api';
 
 const formatCurrency = (value: number) => `$${Number(value || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -61,7 +61,17 @@ export default function CustomerOrdersAdmin({ onChanged }: { onChanged?: () => v
         }),
       });
       const body = await res.json();
-      unwrapResponse(body);
+      const data = unwrapResponse(body);
+
+      if (data?.shortageItems?.length) {
+        const detalle = data.shortageItems
+          .map((item: any) => `- ${item.product_name}: faltan ${item.cantidad} u. (stock actual: ${item.stock_actual})`)
+          .join('\n');
+        alert(`Pedido aprobado. Hay productos sin stock y se generó/actualizó el Pedido a Proveedor #${data.supplierOrderNumber || ''}.\n\n${detalle}`);
+      } else {
+        alert('Pedido aprobado correctamente. Hay stock disponible para entregar.');
+      }
+
       await fetchOrders();
       onChanged?.();
     } catch (error: any) {
@@ -81,7 +91,10 @@ export default function CustomerOrdersAdmin({ onChanged }: { onChanged?: () => v
       await fetchOrders();
       onChanged?.();
     } catch (error: any) {
-      alert(error?.message || 'No se pudo entregar el pedido');
+      const detalles = error?.errors?.length
+        ? '\n\n' + error.errors.map((item: any) => `- ${item.product_name}: faltan ${item.cantidad} u. (stock actual: ${item.stock_actual})`).join('\n')
+        : '';
+      alert((error?.message || 'No se pudo entregar el pedido') + detalles);
     } finally {
       setActionLoading(null);
     }
@@ -131,6 +144,16 @@ export default function CustomerOrdersAdmin({ onChanged }: { onChanged?: () => v
                   </div>
                 </div>
 
+                {order.items.some((item: any) => Number(item.faltante || 0) > 0) && order.estado !== 'entregado' && (
+                  <div className="mx-5 mt-5 bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3 text-amber-800">
+                    <AlertTriangle size={18} className="shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-widest">Hay productos sin stock</p>
+                      <p className="text-xs font-bold mt-1">Al aprobar se generará automáticamente un pedido a proveedor. Para entregar, primero debe haber stock suficiente.</p>
+                    </div>
+                  </div>
+                )}
+
                 <div className="p-5 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-5">
                   <div className="space-y-2">
                     {order.items.map((item: any) => (
@@ -140,6 +163,9 @@ export default function CustomerOrdersAdmin({ onChanged }: { onChanged?: () => v
                           <div>
                             <p className="text-sm font-black text-zinc-900">{item.product_name}</p>
                             <p className="text-[10px] text-zinc-400 font-bold">{item.cantidad} u. x {formatCurrency(item.precio_unitario)}</p>
+                            <p className={`text-[10px] font-black ${Number(item.faltante || 0) > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                              Stock actual: {Number(item.stock_actual || 0)} u. {Number(item.faltante || 0) > 0 ? `| Faltan: ${Number(item.faltante || 0)} u.` : '| Disponible'}
+                            </p>
                           </div>
                         </div>
                         <p className="text-sm font-black font-mono">{formatCurrency(item.importe)}</p>

@@ -99,7 +99,7 @@ export default function SupplierOrders() {
   };
 
   const handleCompleteSale = async (id: number) => {
-    if (!window.confirm("¿Deseas completar la entrega del pedido? Si el pedido viene de una venta ya registrada, no duplicará la venta: solo actualizará costos y marcará la entrega.")) return;
+    if (!window.confirm("¿Deseas completar la entrega del pedido? Si viene de una venta ya registrada, no duplicará la venta. Si viene de un pedido de cliente, solo cargará stock para poder entregarlo luego.")) return;
 
     try {
       const res = await apiFetch(`/api/sales?endpoint=supplier-order-complete&id=${id}`, {
@@ -108,7 +108,7 @@ export default function SupplierOrders() {
       
       await unwrapResponse(res);
       
-      alert("Pedido completado correctamente.");
+      alert("Pedido completado correctamente. Si era un faltante de pedido cliente, el stock ya quedó cargado para entregar.");
       // Find the order to generate the remito
       const order = orders.find(o => o.id === id);
       if (order) {
