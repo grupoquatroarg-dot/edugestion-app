@@ -19,6 +19,8 @@ import {
   Truck,
   CreditCard,
   CircleDollarSign,
+  Filter,
+  RotateCcw,
 } from 'lucide-react';
 import { unwrapResponse } from '../utils/api';
 import { generateCustomerOrderPdf } from '../utils/customerOrderPdf';
@@ -208,6 +210,7 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
   const [submittingOrder, setSubmittingOrder] = useState(false);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [downloadingSaleId, setDownloadingSaleId] = useState<number | null>(null);
+  const [accountFilters, setAccountFilters] = useState({ dateFrom: '', dateTo: '', status: 'all' as 'all' | 'pending' | 'paid' });
 
   const filteredProducts = useMemo(() => {
     const q = searchTerm.toLowerCase().trim();
@@ -248,6 +251,37 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
     }),
     [orders]
   );
+
+  const isWithinAccountDateRange = (value?: string | null) => {
+    if (!value) return false;
+    const date = String(value).slice(0, 10);
+    if (accountFilters.dateFrom && date < accountFilters.dateFrom) return false;
+    if (accountFilters.dateTo && date > accountFilters.dateTo) return false;
+    return true;
+  };
+
+  const filteredAccountSales = useMemo(() => {
+    return (movements.sales || []).filter((sale: any) => {
+      if (!isWithinAccountDateRange(sale.fecha)) return false;
+
+      const pending = Number(sale.monto_pendiente || 0) > 0;
+      if (accountFilters.status === 'pending' && !pending) return false;
+      if (accountFilters.status === 'paid' && pending) return false;
+
+      return true;
+    });
+  }, [movements.sales, accountFilters]);
+
+  const filteredAccountMovements = useMemo(() => {
+    if (accountFilters.status === 'pending') return [];
+    return (movements.movements || []).filter((movement: any) =>
+      isWithinAccountDateRange(movement.fecha)
+    );
+  }, [movements.movements, accountFilters]);
+
+  const resetAccountFilters = () => {
+    setAccountFilters({ dateFrom: '', dateTo: '', status: 'all' });
+  };
 
   const loadPortalData = async () => {
     setLoading(true);
@@ -967,126 +1001,199 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
         )}
 
         {activeTab === 'cuenta' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="space-y-6">
             <div className="bg-white rounded-3xl border border-zinc-200 p-5 shadow-sm">
-              <h2 className="text-lg font-black mb-4 flex items-center gap-2">
-                <ReceiptText size={20} /> Ventas
-              </h2>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                <div>
+                  <h2 className="text-lg font-black flex items-center gap-2">
+                    <Filter size={20} /> Filtrar cuenta corriente
+                  </h2>
+                  <p className="text-xs text-zinc-400 mt-1">
+                    Buscá operaciones por período y por estado de pago.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={resetAccountFilters}
+                  className="self-start sm:self-auto px-3 py-2 rounded-xl bg-zinc-100 text-zinc-600 text-xs font-black flex items-center gap-2"
+                >
+                  <RotateCcw size={14} /> Limpiar
+                </button>
+              </div>
 
-              <div className="space-y-3">
-                {(movements.sales || []).map((sale: any) => (
-                  <div
-                    key={sale.id}
-                    className="border border-zinc-100 rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[10px] font-black uppercase text-zinc-400 mb-1">Desde</label>
+                  <input
+                    type="date"
+                    value={accountFilters.dateFrom}
+                    onChange={(event) => setAccountFilters({ ...accountFilters, dateFrom: event.target.value })}
+                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-zinc-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black uppercase text-zinc-400 mb-1">Hasta</label>
+                  <input
+                    type="date"
+                    value={accountFilters.dateTo}
+                    onChange={(event) => setAccountFilters({ ...accountFilters, dateTo: event.target.value })}
+                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-zinc-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black uppercase text-zinc-400 mb-1">Estado</label>
+                  <select
+                    value={accountFilters.status}
+                    onChange={(event) => setAccountFilters({ ...accountFilters, status: event.target.value as 'all' | 'pending' | 'paid' })}
+                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm font-black outline-none focus:ring-2 focus:ring-zinc-900"
                   >
-                    <div>
-                      <p className="font-black text-zinc-900">
-                        Venta #{sale.numero_venta}
-                      </p>
-                      <p className="text-xs text-zinc-400">
-                        {new Date(sale.fecha).toLocaleDateString('es-AR')} ·{' '}
-                        {sale.estado}
-                        {sale.numero_pedido
-                          ? ` · Pedido #${sale.numero_pedido}`
-                          : ''}
-                      </p>
-                    </div>
+                    <option value="all">Todos los movimientos</option>
+                    <option value="pending">Pendientes de pago</option>
+                    <option value="paid">Pagados</option>
+                  </select>
+                </div>
+              </div>
 
-                    <div className="flex items-center justify-between sm:justify-end gap-3">
-                      <div className="text-right">
-                        <p className="font-black font-mono">
-                          {formatCurrency(sale.total)}
-                        </p>
-                        {sale.monto_pendiente > 0 ? (
-                          <p className="text-xs text-red-600 font-bold">
-                            Pendiente {formatCurrency(sale.monto_pendiente)}
-                          </p>
-                        ) : (
-                          <p className="text-xs text-emerald-600 font-bold">
-                            Pagada
-                          </p>
-                        )}
-                      </div>
-                      <button
-                        disabled={downloadingSaleId === sale.id}
-                        onClick={() => downloadSalePdf(Number(sale.id))}
-                        className="p-3 rounded-xl bg-emerald-50 text-emerald-700 disabled:opacity-50"
-                        title="Descargar comprobante de venta"
-                      >
-                        {downloadingSaleId === sale.id ? (
-                          <Loader2 size={17} className="animate-spin" />
-                        ) : (
-                          <Download size={17} />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                ))}
-
-                {(movements.sales || []).length === 0 && (
-                  <p className="text-sm text-zinc-400">Sin ventas registradas.</p>
-                )}
+              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="rounded-2xl bg-zinc-50 p-3">
+                  <p className="text-[9px] font-black uppercase text-zinc-400">Ventas visibles</p>
+                  <p className="text-lg font-black text-zinc-900">{filteredAccountSales.length}</p>
+                </div>
+                <div className="rounded-2xl bg-red-50 p-3">
+                  <p className="text-[9px] font-black uppercase text-red-400">Pendiente visible</p>
+                  <p className="text-lg font-black font-mono text-red-600">
+                    {formatCurrency(filteredAccountSales.reduce((sum: number, sale: any) => sum + Number(sale.monto_pendiente || 0), 0))}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-emerald-50 p-3">
+                  <p className="text-[9px] font-black uppercase text-emerald-500">Pagado visible</p>
+                  <p className="text-lg font-black font-mono text-emerald-700">
+                    {formatCurrency(filteredAccountSales.reduce((sum: number, sale: any) => sum + Number(sale.monto_pagado || 0), 0))}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-blue-50 p-3">
+                  <p className="text-[9px] font-black uppercase text-blue-500">Pagos visibles</p>
+                  <p className="text-lg font-black text-blue-700">{filteredAccountMovements.length}</p>
+                </div>
               </div>
             </div>
 
-            <div className="bg-white rounded-3xl border border-zinc-200 p-5 shadow-sm">
-              <h2 className="text-lg font-black mb-4 flex items-center gap-2">
-                <CircleDollarSign size={20} /> Movimientos
-              </h2>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-white rounded-3xl border border-zinc-200 p-5 shadow-sm">
+                <h2 className="text-lg font-black mb-4 flex items-center gap-2">
+                  <ReceiptText size={20} /> Ventas
+                </h2>
 
-              <div className="space-y-3">
-                {(movements.movements || []).map((movement: any) => (
-                  <div
-                    key={movement.id}
-                    className="border border-zinc-100 rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                  >
-                    <div>
-                      <p className="font-black text-zinc-900">
-                        {movement.descripcion}
-                      </p>
-                      <p className="text-xs text-zinc-400">
-                        {new Date(movement.fecha).toLocaleDateString('es-AR')} ·{' '}
-                        {movement.forma_pago || movement.origen}
-                        {movement.numero_pago
-                          ? ` · Recibo #${movement.numero_pago}`
-                          : ''}
-                      </p>
-                    </div>
+                <div className="space-y-3">
+                  {filteredAccountSales.map((sale: any) => (
+                    <div
+                      key={sale.id}
+                      className="border border-zinc-100 rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                    >
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-black text-zinc-900">Venta #{sale.numero_venta}</p>
+                          <span className={`px-2 py-1 rounded-full text-[9px] font-black uppercase ${
+                            Number(sale.monto_pendiente || 0) > 0
+                              ? 'bg-red-50 text-red-600'
+                              : 'bg-emerald-50 text-emerald-700'
+                          }`}>
+                            {Number(sale.monto_pendiente || 0) > 0 ? 'Pendiente' : 'Pagada'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-zinc-400 mt-1">
+                          {new Date(sale.fecha).toLocaleDateString('es-AR')} · {sale.metodo_pago || sale.estado}
+                          {sale.numero_pedido ? ` · Pedido #${sale.numero_pedido}` : ''}
+                        </p>
+                      </div>
 
-                    <div className="flex items-center justify-between sm:justify-end gap-3">
-                      <p
-                        className={`font-black font-mono ${
-                          movement.tipo === 'ingreso'
-                            ? 'text-emerald-600'
-                            : 'text-red-600'
-                        }`}
-                      >
-                        {formatCurrency(movement.monto)}
-                      </p>
-
-                      {movement.tipo === 'ingreso' && (
+                      <div className="flex items-center justify-between sm:justify-end gap-3">
+                        <div className="text-right">
+                          <p className="font-black font-mono">{formatCurrency(sale.total)}</p>
+                          {sale.monto_pendiente > 0 ? (
+                            <p className="text-xs text-red-600 font-bold">
+                              Pendiente {formatCurrency(sale.monto_pendiente)}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-emerald-600 font-bold">
+                              Pagada · {formatCurrency(sale.monto_pagado)}
+                            </p>
+                          )}
+                        </div>
                         <button
-                          onClick={() =>
-                            generatePaymentReceiptPdf(
-                              movement,
-                              customer.nombre_apellido
-                            )
-                          }
-                          className="p-3 rounded-xl bg-zinc-100 text-zinc-700"
-                          title="Descargar comprobante de pago"
+                          disabled={downloadingSaleId === sale.id}
+                          onClick={() => downloadSalePdf(Number(sale.id))}
+                          className="p-3 rounded-xl bg-emerald-50 text-emerald-700 disabled:opacity-50"
+                          title="Descargar comprobante de venta"
                         >
-                          <Download size={17} />
+                          {downloadingSaleId === sale.id ? (
+                            <Loader2 size={17} className="animate-spin" />
+                          ) : (
+                            <Download size={17} />
+                          )}
                         </button>
-                      )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
 
-                {(movements.movements || []).length === 0 && (
-                  <p className="text-sm text-zinc-400">
-                    Sin movimientos registrados.
-                  </p>
+                  {filteredAccountSales.length === 0 && (
+                    <div className="rounded-2xl border border-dashed border-zinc-200 py-10 text-center">
+                      <p className="text-sm text-zinc-400">No hay ventas para los filtros seleccionados.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-3xl border border-zinc-200 p-5 shadow-sm">
+                <h2 className="text-lg font-black mb-4 flex items-center gap-2">
+                  <CircleDollarSign size={20} /> Pagos y movimientos
+                </h2>
+
+                {accountFilters.status === 'pending' && (
+                  <div className="mb-4 rounded-2xl bg-amber-50 border border-amber-100 p-3 text-xs font-bold text-amber-700">
+                    El filtro “Pendientes de pago” muestra las ventas con saldo. Los pagos aparecen al elegir “Todos” o “Pagados”.
+                  </div>
                 )}
+
+                <div className="space-y-3">
+                  {filteredAccountMovements.map((movement: any) => (
+                    <div
+                      key={movement.id}
+                      className="border border-zinc-100 rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                    >
+                      <div>
+                        <p className="font-black text-zinc-900">{movement.descripcion}</p>
+                        <p className="text-xs text-zinc-400">
+                          {new Date(movement.fecha).toLocaleDateString('es-AR')} · {movement.forma_pago || movement.origen}
+                          {movement.numero_pago ? ` · Recibo #${movement.numero_pago}` : ''}
+                          {movement.numero_venta ? ` · Venta #${movement.numero_venta}` : ''}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center justify-between sm:justify-end gap-3">
+                        <p className={`font-black font-mono ${movement.tipo === 'ingreso' ? 'text-emerald-600' : 'text-red-600'}`}>
+                          {formatCurrency(movement.monto)}
+                        </p>
+
+                        {movement.tipo === 'ingreso' && (
+                          <button
+                            onClick={() => generatePaymentReceiptPdf(movement, customer.nombre_apellido)}
+                            className="p-3 rounded-xl bg-zinc-100 text-zinc-700"
+                            title="Descargar comprobante de pago"
+                          >
+                            <Download size={17} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+
+                  {filteredAccountMovements.length === 0 && accountFilters.status !== 'pending' && (
+                    <div className="rounded-2xl border border-dashed border-zinc-200 py-10 text-center">
+                      <p className="text-sm text-zinc-400">No hay movimientos para los filtros seleccionados.</p>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>

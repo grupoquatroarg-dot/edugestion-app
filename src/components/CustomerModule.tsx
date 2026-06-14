@@ -41,6 +41,7 @@ export default function CustomerModule() {
   const [isMovementsModalOpen, setIsMovementsModalOpen] = useState(false);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [selectedClienteId, setSelectedClienteId] = useState<number | null>(null);
+  const [initialDetailTab, setInitialDetailTab] = useState<'ventas' | 'movimientos' | 'pedidos'>('ventas');
   const [selectedClienteForMovements, setSelectedClienteForMovements] = useState<Cliente | null>(null);
   const [movements, setMovements] = useState<any[]>([]);
   const [editingCliente, setEditingCliente] = useState<Cliente | null>(null);
@@ -223,10 +224,10 @@ export default function CustomerModule() {
     setSelectedClienteForMovements(cliente);
     setIsMovementsModalOpen(true);
     try {
-      const res = await apiFetch(`/api/clientes/${cliente.id}/movimientos`);
+      const res = await apiFetch(`/api/clientes?endpoint=client-account&id=${cliente.id}`);
       const body = await res.json();
-      const data = unwrapResponse(body);
-      setMovements(data);
+      const data = unwrapResponse(body) as any;
+      setMovements(data.movements || []);
     } catch (error) {
       console.error("Error fetching movements:", error);
     }
@@ -277,10 +278,20 @@ export default function CustomerModule() {
       <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredClientes.map(cliente => (
-            <div key={cliente.id} className="bg-white rounded-2xl border border-zinc-200 p-4 sm:p-6 hover:shadow-md transition-all group relative">
-              <div className="absolute top-3 right-3 flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity bg-white/90 backdrop-blur rounded-xl border border-zinc-100 shadow-sm">
+            <div
+              key={cliente.id}
+              onClick={() => {
+                setInitialDetailTab('ventas');
+                setSelectedClienteId(cliente.id);
+                setIsDetailOpen(true);
+              }}
+              className="bg-white rounded-2xl border border-zinc-200 p-4 sm:p-6 hover:shadow-md transition-all group relative cursor-pointer"
+            >
+              <div onClick={(event) => event.stopPropagation()}
+                className="absolute top-3 right-3 flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity bg-white/90 backdrop-blur rounded-xl border border-zinc-100 shadow-sm">
                 <button 
                   onClick={() => {
+                    setInitialDetailTab('ventas');
                     setSelectedClienteId(cliente.id);
                     setIsDetailOpen(true);
                   }}
@@ -356,7 +367,12 @@ export default function CustomerModule() {
                   <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-blue-50 text-blue-600">Portal activo</span>
                 ) : null}
                 <button 
-                  onClick={() => openMovementsModal(cliente)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setInitialDetailTab('movimientos');
+                    setSelectedClienteId(cliente.id);
+                    setIsDetailOpen(true);
+                  }}
                   className="flex items-center gap-1 text-zinc-900 font-mono font-bold hover:bg-zinc-50 px-2 py-1 rounded-lg transition-all"
                 >
                   <CreditCard size={14} className="text-zinc-400" />
@@ -587,7 +603,8 @@ export default function CustomerModule() {
       {/* Customer Detail Screen */}
       {isDetailOpen && selectedClienteId && (
         <CustomerDetail 
-          clienteId={selectedClienteId} 
+          clienteId={selectedClienteId}
+          initialTab={initialDetailTab}
           onClose={() => {
             setIsDetailOpen(false);
             setSelectedClienteId(null);

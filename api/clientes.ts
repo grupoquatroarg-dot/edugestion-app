@@ -5,6 +5,7 @@ import { verifyToken, generateToken } from "../server/utils/jwt.js";
 import bcrypt from "bcryptjs";
 import { sendError, sendSuccess } from "../server/utils/response.js";
 import { getPostgresPool } from "../server/utils/postgres.js";
+import { salesService } from "../server/services/salesService.js";
 
 const clientSchema = z.object({
   nombre_apellido: z.string().min(2, "El nombre es requerido"),
@@ -1816,11 +1817,325 @@ const handleCustomerPortal = async (req: any, res: any) => {
   return sendError(res, "Endpoint portal cliente no encontrado", 404);
 };
 
+
+const handleClientAccountAdmin = async (req: any, res: any) => {
+  const endpoint = getEndpoint(req);
+  const id = getId(req);
+
+  if (!id) {
+    return sendError(res, "ID de cliente invalido", 400);
+  }
+
+  if (endpoint === "client-payment") {
+    const user = await requireClientPermission(req, res, "edit");
+    if (!user) return;
+    if (req.method !== "POST") return sendError(res, "Method not allowed", 405);
+
+    const body = getBody(req);
+    const amount = Number(body?.monto || 0);
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return sendError(res, "El monto debe ser mayor a cero", 400);
+    }
+
+    try {
+      const result = await salesService.registerClientPayment({
+        cliente_id: id,
+        monto: amount,
+        metodo_pago: String(body?.metodo_pago || "").trim(),
+        fecha: body?.fecha || undefined,
+        observaciones: body?.observaciones || undefined,
+        usuario: user.userName || "Sistema",
+      });
+
+      return sendSuccess(res, result, "Pago registrado exitosamente", 201);
+    } catch (error: any) {
+      return sendError(
+        res,
+        error?.message || "Error al registrar el pago",
+        error?.statusCode || 400,
+        error?.errors || []
+      );
+    }
+  }
+
+  const user = await requireClientPermission(req, res, "view");
+  if (!user) return;
+  if (req.method !== "GET") return sendError(res, "Method not allowed", 405);
+
+  const pool = getPostgresPool();
+
+  if (endpoint === "client-detail") {
+    try {
+      const [clientResult, salesResult, totalsResult, pendingOrdersResult, topProductsResult] = await Promise.all([
+        pool.query(
+          `SELECT *
+           FROM clientes
+           WHERE id = $1
+           LIMIT 1`,
+          [id]
+        ),
+        pool.query(
+          `SELECT
+             s.id,
+             s.numero_venta,
+             s.fecha,
+             s.total,
+             s.monto_pagado,
+             s.monto_pendiente,
+             s.estado,
+             s.metodo_pago,
+             s.notes,
+             co.numero_pedido
+           FROM sales s
+           LEFT JOIN customer_orders co ON co.sale_id = s.id
+           WHERE s.cliente_id = $1
+           ORDER BY s.fecha DESC, s.id DESC`,
+          [id]
+        ),
+        pool.query(
+          `SELECT
+             COUNT(*)::int AS total_sales,
+             COALESCE(SUM(total), 0) AS total_purchased,
+             COALESCE(SUM(monto_pagado), 0) AS total_paid,
+             COALESCE(SUM(monto_pendiente), 0) AS total_pending,
+             COALESCE(AVG(total), 0) AS average_ticket
+           FROM sales
+           WHERE cliente_id = $1`,
+          [id]
+        ),
+        pool.query(
+          `SELECT
+             co.id,
+             co.numero_pedido,
+             co.fecha,
+             co.estado,
+             coi.cantidad AS quantity,
+             p.name AS product_name,
+             p.company
+           FROM customer_orders co
+           JOIN customer_order_items coi ON coi.order_id = co.id
+           JOIN products p ON p.id = coi.product_id
+           WHERE co.cliente_id = $1
+             AND co.estado IN ('pendiente_aprobacion', 'aprobado_pendiente_entrega')
+           ORDER BY co.fecha DESC, co.id DESC, coi.id ASC`,
+          [id]
+        ),
+        pool.query(
+          `SELECT
+             p.id,
+             p.name,
+             p.company,
+             COALESCE(SUM(si.cantidad), 0) AS quantity,
+             COALESCE(SUM(si.cantidad * si.precio_venta), 0) AS amount
+           FROM sale_items si
+           JOIN sales s ON s.id = si.sale_id
+           JOIN products p ON p.id = si.product_id
+           WHERE s.cliente_id = $1
+           GROUP BY p.id, p.name, p.company
+           ORDER BY quantity DESC, amount DESC
+           LIMIT 5`,
+          [id]
+        ),
+      ]);
+
+      if (!clientResult.rowCount) {
+        return sendError(res, "Cliente no encontrado", 404);
+      }
+
+      const cliente = clientResult.rows[0];
+      const totals = totalsResult.rows[0] || {};
+      const sales = salesResult.rows.map((row: any) => ({
+        ...row,
+        id: toNumber(row.id),
+        total: toNumber(row.total),
+        monto_pagado: toNumber(row.monto_pagado),
+        monto_pendiente: toNumber(row.monto_pendiente),
+      }));
+
+      return sendSuccess(res, {
+        cliente: {
+          ...cliente,
+          id: toNumber(cliente.id),
+          saldo_cta_cte: toNumber(cliente.saldo_cta_cte),
+          limite_credito: toNumber(cliente.limite_credito),
+        },
+        summary: {
+          total_sales: toNumber(totals.total_sales),
+          total_purchased: toNumber(totals.total_purchased),
+          total_paid: toNumber(totals.total_paid),
+          total_pending: toNumber(totals.total_pending),
+          average_ticket: toNumber(totals.average_ticket),
+        },
+        sales,
+        total_payments: toNumber(totals.total_paid),
+        pending_orders: pendingOrdersResult.rows.map((row: any) => ({
+          ...row,
+          id: toNumber(row.id),
+          quantity: toNumber(row.quantity),
+          order_date: row.fecha,
+        })),
+        top_products: topProductsResult.rows.map((row: any) => ({
+          ...row,
+          id: toNumber(row.id),
+          quantity: toNumber(row.quantity),
+          amount: toNumber(row.amount),
+        })),
+      });
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al obtener la ficha del cliente", 400);
+    }
+  }
+
+  if (endpoint === "client-account") {
+    try {
+      const [clientResult, salesResult, movementsResult] = await Promise.all([
+        pool.query(
+          `SELECT id, nombre_apellido, saldo_cta_cte
+           FROM clientes
+           WHERE id = $1
+           LIMIT 1`,
+          [id]
+        ),
+        pool.query(
+          `SELECT
+             s.id,
+             s.numero_venta,
+             s.fecha,
+             s.total,
+             s.monto_pagado,
+             s.monto_pendiente,
+             s.estado,
+             s.metodo_pago,
+             s.notes,
+             co.numero_pedido
+           FROM sales s
+           LEFT JOIN customer_orders co ON co.sale_id = s.id
+           WHERE s.cliente_id = $1`,
+          [id]
+        ),
+        pool.query(
+          `SELECT
+             mf.id,
+             mf.fecha,
+             mf.tipo,
+             mf.origen,
+             mf.descripcion,
+             mf.forma_pago,
+             mf.monto,
+             mf.numero_pago,
+             mf.venta_id,
+             s.numero_venta,
+             co.numero_pedido
+           FROM movimientos_financieros mf
+           LEFT JOIN sales s ON s.id = mf.venta_id
+           LEFT JOIN customer_orders co ON co.sale_id = s.id
+           WHERE mf.cliente_id = $1`,
+          [id]
+        ),
+      ]);
+
+      if (!clientResult.rowCount) {
+        return sendError(res, "Cliente no encontrado", 404);
+      }
+
+      const cliente = clientResult.rows[0];
+      const saleOperations = salesResult.rows.map((row: any) => ({
+        id: `sale-${row.id}`,
+        source_id: toNumber(row.id),
+        operation_type: "venta",
+        fecha: row.fecha,
+        descripcion: `Venta N° ${row.numero_venta || row.id}${row.numero_pedido ? ` / Pedido #${row.numero_pedido}` : ""}`,
+        debe: toNumber(row.total),
+        haber: 0,
+        numero_venta: row.numero_venta,
+        numero_pedido: row.numero_pedido,
+        venta_id: toNumber(row.id),
+        metodo_pago: row.metodo_pago,
+        total: toNumber(row.total),
+        monto_pagado: toNumber(row.monto_pagado),
+        monto_pendiente: toNumber(row.monto_pendiente),
+        estado: row.estado || (toNumber(row.monto_pendiente) > 0 ? "Pendiente" : "Pagada"),
+        notes: row.notes || null,
+      }));
+
+      const paymentOperations = movementsResult.rows.map((row: any) => {
+        const isIncome = String(row.tipo || "").toLowerCase() === "ingreso";
+        return {
+          id: `movement-${row.id}`,
+          source_id: toNumber(row.id),
+          operation_type: isIncome ? "pago" : "ajuste",
+          fecha: row.fecha,
+          descripcion: row.descripcion || (isIncome ? "Pago recibido" : "Ajuste"),
+          debe: isIncome ? 0 : toNumber(row.monto),
+          haber: isIncome ? toNumber(row.monto) : 0,
+          numero_pago: row.numero_pago,
+          numero_venta: row.numero_venta,
+          numero_pedido: row.numero_pedido,
+          venta_id: row.venta_id ? toNumber(row.venta_id) : null,
+          metodo_pago: row.forma_pago || row.origen || "",
+          origen: row.origen,
+          estado: "Pagado",
+        };
+      });
+
+      const chronological = [...saleOperations, ...paymentOperations].sort((a: any, b: any) => {
+        const dateDiff = new Date(a.fecha).getTime() - new Date(b.fecha).getTime();
+        if (dateDiff !== 0) return dateDiff;
+        if (a.operation_type === b.operation_type) return a.source_id - b.source_id;
+        return a.operation_type === "venta" ? -1 : 1;
+      });
+
+      const totalNet = chronological.reduce(
+        (sum: number, operation: any) => sum + toNumber(operation.debe) - toNumber(operation.haber),
+        0
+      );
+      const currentBalance = toNumber(cliente.saldo_cta_cte);
+      let runningBalance = currentBalance - totalNet;
+
+      const withBalance = chronological.map((operation: any) => {
+        runningBalance += toNumber(operation.debe) - toNumber(operation.haber);
+        return {
+          ...operation,
+          saldo_resultante: Math.round(runningBalance * 100) / 100,
+        };
+      });
+
+      const totalSales = saleOperations.reduce((sum: number, row: any) => sum + toNumber(row.total), 0);
+      const totalPayments = paymentOperations.reduce((sum: number, row: any) => sum + toNumber(row.haber), 0);
+
+      return sendSuccess(res, {
+        cliente: {
+          id: toNumber(cliente.id),
+          nombre_apellido: cliente.nombre_apellido,
+          saldo_cta_cte: currentBalance,
+        },
+        summary: {
+          total_sales: totalSales,
+          total_payments: totalPayments,
+          pending_balance: currentBalance,
+          pending_sales: saleOperations.filter((row: any) => toNumber(row.monto_pendiente) > 0).length,
+          paid_sales: saleOperations.filter((row: any) => toNumber(row.monto_pendiente) <= 0).length,
+        },
+        movements: withBalance.reverse(),
+      });
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al obtener la cuenta corriente", 400);
+    }
+  }
+
+  return sendError(res, "Endpoint de cliente no encontrado", 404);
+};
+
 export default async function handler(req: any, res: any) {
   const endpoint = getEndpoint(req);
 
   if (endpoint.startsWith("portal-")) {
     return handleCustomerPortal(req, res);
+  }
+
+  if (["client-detail", "client-account", "client-payment"].includes(endpoint)) {
+    return handleClientAccountAdmin(req, res);
   }
 
   if (endpoint === "users") {
