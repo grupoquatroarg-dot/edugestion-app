@@ -352,6 +352,16 @@ const toNumber = (value: any, fallback: number = 0) => {
   return Number.isNaN(parsed) ? fallback : parsed;
 };
 
+const getSalePaymentStatus = (row: any): "pending" | "partial" | "paid" => {
+  const total = toNumber(row?.total);
+  const paid = toNumber(row?.monto_pagado);
+  const pending = toNumber(row?.monto_pendiente, Math.max(0, total - paid));
+
+  if (pending <= 0) return "paid";
+  if (paid > 0) return "partial";
+  return "pending";
+};
+
 const toIntFlag = (value: any) => {
   if (value === true) return 1;
   if (value === false) return 0;
@@ -1771,7 +1781,17 @@ const handleCustomerPortal = async (req: any, res: any) => {
            s.monto_pendiente,
            s.estado,
            s.metodo_pago,
-           co.numero_pedido
+           co.numero_pedido,
+           COALESCE((
+             SELECT SUM(
+               GREATEST(
+                 0,
+                 (COALESCE(si.precio_unitario_original, si.precio_venta) - COALESCE(si.precio_unitario_bonificado, si.precio_venta)) * si.cantidad
+               )
+             )
+             FROM sale_items si
+             WHERE si.sale_id = s.id
+           ), 0) AS descuento_total
          FROM sales s
          LEFT JOIN customer_orders co ON co.sale_id = s.id
          WHERE s.cliente_id = $1
@@ -1789,9 +1809,11 @@ const handleCustomerPortal = async (req: any, res: any) => {
            mf.monto,
            mf.numero_pago,
            mf.venta_id,
-           s.numero_venta
+           s.numero_venta,
+           co.numero_pedido
          FROM movimientos_financieros mf
          LEFT JOIN sales s ON s.id = mf.venta_id
+         LEFT JOIN customer_orders co ON co.sale_id = s.id
          WHERE mf.cliente_id = $1
          ORDER BY mf.fecha DESC, mf.id DESC`,
         [clienteId]
@@ -1805,11 +1827,14 @@ const handleCustomerPortal = async (req: any, res: any) => {
         total: toNumber(row.total),
         monto_pagado: toNumber(row.monto_pagado),
         monto_pendiente: toNumber(row.monto_pendiente),
+        descuento_total: toNumber(row.descuento_total),
+        payment_status: getSalePaymentStatus(row),
       })),
       movements: movementsResult.rows.map((row: any) => ({
         ...row,
         id: toNumber(row.id),
         monto: toNumber(row.monto),
+        payment_status: "paid",
       })),
     });
   }
@@ -1886,7 +1911,17 @@ const handleClientAccountAdmin = async (req: any, res: any) => {
              s.estado,
              s.metodo_pago,
              s.notes,
-             co.numero_pedido
+             co.numero_pedido,
+             COALESCE((
+               SELECT SUM(
+                 GREATEST(
+                   0,
+                   (COALESCE(si.precio_unitario_original, si.precio_venta) - COALESCE(si.precio_unitario_bonificado, si.precio_venta)) * si.cantidad
+                 )
+               )
+               FROM sale_items si
+               WHERE si.sale_id = s.id
+             ), 0) AS descuento_total
            FROM sales s
            LEFT JOIN customer_orders co ON co.sale_id = s.id
            WHERE s.cliente_id = $1
@@ -1951,6 +1986,8 @@ const handleClientAccountAdmin = async (req: any, res: any) => {
         total: toNumber(row.total),
         monto_pagado: toNumber(row.monto_pagado),
         monto_pendiente: toNumber(row.monto_pendiente),
+        descuento_total: toNumber(row.descuento_total),
+        payment_status: getSalePaymentStatus(row),
       }));
 
       return sendSuccess(res, {
@@ -2008,7 +2045,17 @@ const handleClientAccountAdmin = async (req: any, res: any) => {
              s.estado,
              s.metodo_pago,
              s.notes,
-             co.numero_pedido
+             co.numero_pedido,
+             COALESCE((
+               SELECT SUM(
+                 GREATEST(
+                   0,
+                   (COALESCE(si.precio_unitario_original, si.precio_venta) - COALESCE(si.precio_unitario_bonificado, si.precio_venta)) * si.cantidad
+                 )
+               )
+               FROM sale_items si
+               WHERE si.sale_id = s.id
+             ), 0) AS descuento_total
            FROM sales s
            LEFT JOIN customer_orders co ON co.sale_id = s.id
            WHERE s.cliente_id = $1`,
@@ -2055,6 +2102,8 @@ const handleClientAccountAdmin = async (req: any, res: any) => {
         total: toNumber(row.total),
         monto_pagado: toNumber(row.monto_pagado),
         monto_pendiente: toNumber(row.monto_pendiente),
+        descuento_total: toNumber(row.descuento_total),
+        payment_status: getSalePaymentStatus(row),
         estado: row.estado || (toNumber(row.monto_pendiente) > 0 ? "Pendiente" : "Pagada"),
         notes: row.notes || null,
       }));
@@ -2069,12 +2118,15 @@ const handleClientAccountAdmin = async (req: any, res: any) => {
           descripcion: row.descripcion || (isIncome ? "Pago recibido" : "Ajuste"),
           debe: isIncome ? 0 : toNumber(row.monto),
           haber: isIncome ? toNumber(row.monto) : 0,
+          monto: toNumber(row.monto),
           numero_pago: row.numero_pago,
           numero_venta: row.numero_venta,
           numero_pedido: row.numero_pedido,
           venta_id: row.venta_id ? toNumber(row.venta_id) : null,
           metodo_pago: row.forma_pago || row.origen || "",
+          forma_pago: row.forma_pago || row.origen || "",
           origen: row.origen,
+          payment_status: "paid",
           estado: "Pagado",
         };
       });
@@ -2103,6 +2155,8 @@ const handleClientAccountAdmin = async (req: any, res: any) => {
 
       const totalSales = saleOperations.reduce((sum: number, row: any) => sum + toNumber(row.total), 0);
       const totalPayments = paymentOperations.reduce((sum: number, row: any) => sum + toNumber(row.haber), 0);
+      const totalPending = saleOperations.reduce((sum: number, row: any) => sum + toNumber(row.monto_pendiente), 0);
+      const totalDiscounts = saleOperations.reduce((sum: number, row: any) => sum + toNumber(row.descuento_total), 0);
 
       return sendSuccess(res, {
         cliente: {
@@ -2113,9 +2167,14 @@ const handleClientAccountAdmin = async (req: any, res: any) => {
         summary: {
           total_sales: totalSales,
           total_payments: totalPayments,
+          total_collected: totalPayments,
+          total_pending: totalPending,
+          total_discounts: totalDiscounts,
+          current_balance: currentBalance,
           pending_balance: currentBalance,
-          pending_sales: saleOperations.filter((row: any) => toNumber(row.monto_pendiente) > 0).length,
-          paid_sales: saleOperations.filter((row: any) => toNumber(row.monto_pendiente) <= 0).length,
+          pending_sales: saleOperations.filter((row: any) => row.payment_status === "pending").length,
+          partial_sales: saleOperations.filter((row: any) => row.payment_status === "partial").length,
+          paid_sales: saleOperations.filter((row: any) => row.payment_status === "paid").length,
         },
         movements: withBalance.reverse(),
       });

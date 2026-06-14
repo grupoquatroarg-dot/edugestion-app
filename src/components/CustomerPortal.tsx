@@ -101,6 +101,28 @@ const formatDate = (value?: string | null) => {
   return new Date(value).toLocaleDateString('es-AR');
 };
 
+const getSalePaymentStatus = (sale: any): 'pending' | 'partial' | 'paid' => {
+  const paid = Number(sale?.monto_pagado || 0);
+  const pending = Number(sale?.monto_pendiente || 0);
+  if (pending <= 0) return 'paid';
+  if (paid > 0) return 'partial';
+  return 'pending';
+};
+
+const getSalePaymentStatusLabel = (sale: any) => {
+  const status = sale?.payment_status || getSalePaymentStatus(sale);
+  if (status === 'partial') return 'Pago parcial';
+  if (status === 'paid') return 'Pagada';
+  return 'Pendiente';
+};
+
+const getSalePaymentStatusClass = (sale: any) => {
+  const status = sale?.payment_status || getSalePaymentStatus(sale);
+  if (status === 'partial') return 'bg-amber-50 text-amber-700';
+  if (status === 'paid') return 'bg-emerald-50 text-emerald-700';
+  return 'bg-red-50 text-red-600';
+};
+
 const getStatusLabel = (order: PortalOrder) => {
   if (order.estado === 'aprobado_pendiente_entrega' && order.stock_status === 'esperando_stock') {
     return 'Esperando reposición';
@@ -210,7 +232,7 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
   const [submittingOrder, setSubmittingOrder] = useState(false);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [downloadingSaleId, setDownloadingSaleId] = useState<number | null>(null);
-  const [accountFilters, setAccountFilters] = useState({ dateFrom: '', dateTo: '', status: 'all' as 'all' | 'pending' | 'paid' });
+  const [accountFilters, setAccountFilters] = useState({ dateFrom: '', dateTo: '', status: 'all' as 'all' | 'pending' | 'partial' | 'paid' });
 
   const filteredProducts = useMemo(() => {
     const q = searchTerm.toLowerCase().trim();
@@ -264,16 +286,15 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
     return (movements.sales || []).filter((sale: any) => {
       if (!isWithinAccountDateRange(sale.fecha)) return false;
 
-      const pending = Number(sale.monto_pendiente || 0) > 0;
-      if (accountFilters.status === 'pending' && !pending) return false;
-      if (accountFilters.status === 'paid' && pending) return false;
+      const status = sale.payment_status || getSalePaymentStatus(sale);
+      if (accountFilters.status !== 'all' && status !== accountFilters.status) return false;
 
       return true;
     });
   }, [movements.sales, accountFilters]);
 
   const filteredAccountMovements = useMemo(() => {
-    if (accountFilters.status === 'pending') return [];
+    if (accountFilters.status === 'pending' || accountFilters.status === 'partial') return [];
     return (movements.movements || []).filter((movement: any) =>
       isWithinAccountDateRange(movement.fecha)
     );
@@ -1044,11 +1065,12 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                   <label className="block text-[10px] font-black uppercase text-zinc-400 mb-1">Estado</label>
                   <select
                     value={accountFilters.status}
-                    onChange={(event) => setAccountFilters({ ...accountFilters, status: event.target.value as 'all' | 'pending' | 'paid' })}
+                    onChange={(event) => setAccountFilters({ ...accountFilters, status: event.target.value as 'all' | 'pending' | 'partial' | 'paid' })}
                     className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm font-black outline-none focus:ring-2 focus:ring-zinc-900"
                   >
                     <option value="all">Todos los movimientos</option>
                     <option value="pending">Pendientes de pago</option>
+                    <option value="partial">Pagos parciales</option>
                     <option value="paid">Pagados</option>
                   </select>
                 </div>
@@ -1093,30 +1115,35 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="font-black text-zinc-900">Venta #{sale.numero_venta}</p>
-                          <span className={`px-2 py-1 rounded-full text-[9px] font-black uppercase ${
-                            Number(sale.monto_pendiente || 0) > 0
-                              ? 'bg-red-50 text-red-600'
-                              : 'bg-emerald-50 text-emerald-700'
-                          }`}>
-                            {Number(sale.monto_pendiente || 0) > 0 ? 'Pendiente' : 'Pagada'}
+                          <span className={`px-2 py-1 rounded-full text-[9px] font-black uppercase ${getSalePaymentStatusClass(sale)}`}>
+                            {getSalePaymentStatusLabel(sale)}
                           </span>
                         </div>
                         <p className="text-xs text-zinc-400 mt-1">
                           {new Date(sale.fecha).toLocaleDateString('es-AR')} · {sale.metodo_pago || sale.estado}
                           {sale.numero_pedido ? ` · Pedido #${sale.numero_pedido}` : ''}
                         </p>
+                        {Number(sale.descuento_total || 0) > 0 && (
+                          <p className="mt-1 text-[10px] font-bold text-amber-600">
+                            Descuento aplicado: {formatCurrency(sale.descuento_total)}
+                          </p>
+                        )}
                       </div>
 
                       <div className="flex items-center justify-between sm:justify-end gap-3">
                         <div className="text-right">
                           <p className="font-black font-mono">{formatCurrency(sale.total)}</p>
-                          {sale.monto_pendiente > 0 ? (
-                            <p className="text-xs text-red-600 font-bold">
-                              Pendiente {formatCurrency(sale.monto_pendiente)}
-                            </p>
-                          ) : (
+                          {getSalePaymentStatus(sale) === 'paid' ? (
                             <p className="text-xs text-emerald-600 font-bold">
                               Pagada · {formatCurrency(sale.monto_pagado)}
+                            </p>
+                          ) : getSalePaymentStatus(sale) === 'partial' ? (
+                            <p className="text-xs text-amber-600 font-bold">
+                              Cobrado {formatCurrency(sale.monto_pagado)} · Falta {formatCurrency(sale.monto_pendiente)}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-red-600 font-bold">
+                              Pendiente {formatCurrency(sale.monto_pendiente)}
                             </p>
                           )}
                         </div>
@@ -1149,9 +1176,9 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                   <CircleDollarSign size={20} /> Pagos y movimientos
                 </h2>
 
-                {accountFilters.status === 'pending' && (
+                {(accountFilters.status === 'pending' || accountFilters.status === 'partial') && (
                   <div className="mb-4 rounded-2xl bg-amber-50 border border-amber-100 p-3 text-xs font-bold text-amber-700">
-                    El filtro “Pendientes de pago” muestra las ventas con saldo. Los pagos aparecen al elegir “Todos” o “Pagados”.
+                    Este filtro muestra únicamente las ventas con ese estado. Los comprobantes de pago aparecen al elegir “Todos” o “Pagados”.
                   </div>
                 )}
 
@@ -1167,6 +1194,7 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                           {new Date(movement.fecha).toLocaleDateString('es-AR')} · {movement.forma_pago || movement.origen}
                           {movement.numero_pago ? ` · Recibo #${movement.numero_pago}` : ''}
                           {movement.numero_venta ? ` · Venta #${movement.numero_venta}` : ''}
+                          {movement.numero_pedido ? ` · Pedido #${movement.numero_pedido}` : ''}
                         </p>
                       </div>
 
@@ -1188,7 +1216,7 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                     </div>
                   ))}
 
-                  {filteredAccountMovements.length === 0 && accountFilters.status !== 'pending' && (
+                  {filteredAccountMovements.length === 0 && accountFilters.status !== 'pending' && accountFilters.status !== 'partial' && (
                     <div className="rounded-2xl border border-dashed border-zinc-200 py-10 text-center">
                       <p className="text-sm text-zinc-400">No hay movimientos para los filtros seleccionados.</p>
                     </div>

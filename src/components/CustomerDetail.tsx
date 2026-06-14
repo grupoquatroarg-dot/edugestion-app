@@ -28,9 +28,37 @@ import {
 } from 'lucide-react';
 import { getSocket } from '../utils/socket';
 import { generateSaleReceipt } from '../utils/pdfGenerator';
+import { generatePaymentReceiptPdf } from '../utils/paymentReceiptPdf';
 import { unwrapResponse, apiFetch } from '../utils/api';
 
 const socket = getSocket();
+
+const formatCurrency = (value: any) =>
+  `$${Number(value || 0).toLocaleString('es-AR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+const getPaymentStatusLabel = (status: string) => {
+  if (status === 'partial') return 'Parcial';
+  if (status === 'paid') return 'Pagado';
+  return 'Pendiente';
+};
+
+const getPaymentStatusClass = (status: string) => {
+  if (status === 'partial') return 'bg-amber-50 text-amber-700';
+  if (status === 'paid') return 'bg-emerald-50 text-emerald-700';
+  return 'bg-red-50 text-red-600';
+};
+
+const getSaleDiscountTotal = (sale: any) => {
+  if (Number(sale?.descuento_total || 0) > 0) return Number(sale.descuento_total);
+  return (sale?.items || []).reduce((sum: number, item: any) => {
+    const original = Number(item.precio_unitario_original ?? item.precio_venta ?? 0);
+    const finalPrice = Number(item.precio_unitario_bonificado ?? item.precio_venta ?? 0);
+    return sum + Math.max(0, original - finalPrice) * Number(item.cantidad || 0);
+  }, 0);
+};
 
 interface CustomerDetailProps {
   clienteId: number;
@@ -44,14 +72,15 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
   const [loading, setLoading] = useState(true);
   const [selectedSale, setSelectedSale] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'ventas' | 'movimientos' | 'pedidos'>(initialTab);
-  const [accountSummary, setAccountSummary] = useState({ total_sales: 0, total_payments: 0, pending_balance: 0, pending_sales: 0, paid_sales: 0 });
+  const [accountSummary, setAccountSummary] = useState({ total_sales: 0, total_payments: 0, total_collected: 0, total_pending: 0, total_discounts: 0, current_balance: 0, pending_balance: 0, pending_sales: 0, partial_sales: 0, paid_sales: 0 });
   const [selectedMovement, setSelectedMovement] = useState<any>(null);
   const [movementFilters, setMovementFilters] = useState({
     dateFrom: '',
     dateTo: '',
     type: 'all',
     status: 'all',
-    search: ''
+    reference: '',
+    paymentMethod: ''
   });
   const [downloadingSaleId, setDownloadingSaleId] = useState<number | null>(null);
   const [businessSettings, setBusinessSettings] = useState<Record<string, string>>({});
@@ -82,7 +111,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
       const body = await res.json();
       const account = unwrapResponse(body) as any;
       setMovimientos(account.movements || []);
-      setAccountSummary(account.summary || { total_sales: 0, total_payments: 0, pending_balance: 0, pending_sales: 0, paid_sales: 0 });
+      setAccountSummary(account.summary || { total_sales: 0, total_payments: 0, total_collected: 0, total_pending: 0, total_discounts: 0, current_balance: 0, pending_balance: 0, pending_sales: 0, partial_sales: 0, paid_sales: 0 });
     } catch (error) {
       console.error("Error fetching movements:", error);
     }
@@ -198,8 +227,16 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
     };
   }, [clienteId]);
 
+  const paymentMethodOptions = useMemo(() => {
+    const methods = movimientos
+      .map((movement: any) => String(movement.metodo_pago || '').trim())
+      .filter(Boolean) as string[];
+
+    return Array.from(new Set<string>(methods)).sort((a, b) => a.localeCompare(b, 'es'));
+  }, [movimientos]);
+
   const filteredMovements = useMemo(() => {
-    const search = movementFilters.search.trim().toLowerCase();
+    const reference = movementFilters.reference.trim().toLowerCase();
 
     return movimientos.filter((movement: any) => {
       const movementDate = String(movement.fecha || '').slice(0, 10);
@@ -207,31 +244,21 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
       if (movementFilters.dateFrom && movementDate < movementFilters.dateFrom) return false;
       if (movementFilters.dateTo && movementDate > movementFilters.dateTo) return false;
       if (movementFilters.type !== 'all' && movement.operation_type !== movementFilters.type) return false;
+      if (movementFilters.status !== 'all' && movement.payment_status !== movementFilters.status) return false;
+      if (movementFilters.paymentMethod && movement.metodo_pago !== movementFilters.paymentMethod) return false;
 
-      if (movementFilters.status === 'pending') {
-        if (movement.operation_type !== 'venta' || Number(movement.monto_pendiente || 0) <= 0) return false;
-      }
-
-      if (movementFilters.status === 'paid') {
-        const isPaidSale = movement.operation_type === 'venta' && Number(movement.monto_pendiente || 0) <= 0;
-        const isPayment = movement.operation_type === 'pago';
-        if (!isPaidSale && !isPayment) return false;
-      }
-
-      if (search) {
+      if (reference) {
         const haystack = [
-          movement.descripcion,
           movement.numero_venta,
           movement.numero_pedido,
           movement.numero_pago,
-          movement.metodo_pago,
-          movement.estado,
+          movement.descripcion,
         ]
           .filter(Boolean)
           .join(' ')
           .toLowerCase();
 
-        if (!haystack.includes(search)) return false;
+        if (!haystack.includes(reference)) return false;
       }
 
       return true;
@@ -239,7 +266,33 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
   }, [movimientos, movementFilters]);
 
   const resetMovementFilters = () => {
-    setMovementFilters({ dateFrom: '', dateTo: '', type: 'all', status: 'all', search: '' });
+    setMovementFilters({ dateFrom: '', dateTo: '', type: 'all', status: 'all', reference: '', paymentMethod: '' });
+  };
+
+  const openMovementDetail = (movement: any) => {
+    if (movement.operation_type === 'venta' && movement.venta_id) {
+      fetchSaleDetails(Number(movement.venta_id));
+      return;
+    }
+    setSelectedMovement(movement);
+  };
+
+  const downloadMovementPdf = (movement: any) => {
+    if (movement.operation_type === 'venta' && movement.venta_id) {
+      handleDownloadReceipt(Number(movement.venta_id));
+      return;
+    }
+
+    if (movement.operation_type === 'pago') {
+      generatePaymentReceiptPdf(
+        {
+          ...movement,
+          forma_pago: movement.forma_pago || movement.metodo_pago,
+          monto: Number(movement.monto || movement.haber || movement.debe || 0),
+        },
+        data?.cliente?.nombre_apellido || ''
+      );
+    }
   };
 
   if (loading) {
@@ -316,7 +369,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
               <div>
                 <p className="text-xs font-bold text-zinc-400 uppercase">Total Comprado</p>
                 <p className="text-2xl font-black text-zinc-900 font-mono">${(summary.total_purchased || 0).toFixed(2)}</p>
-                <p className="text-[10px] text-zinc-400">{summary.total_sales_count} ventas realizadas</p>
+                <p className="text-[10px] text-zinc-400">{summary.total_sales || sales.length} ventas realizadas</p>
               </div>
             </div>
 
@@ -327,10 +380,10 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
               <div>
                 <p className="text-xs font-bold text-zinc-400 uppercase">Última Compra</p>
                 <p className="text-xl font-bold text-zinc-900">
-                  {summary.last_purchase_date ? new Date(summary.last_purchase_date).toLocaleDateString() : 'Sin ventas'}
+                  {sales[0]?.fecha ? new Date(sales[0].fecha).toLocaleDateString('es-AR') : 'Sin ventas'}
                 </p>
                 <p className="text-[10px] text-zinc-400">
-                  {summary.last_purchase_date ? new Date(summary.last_purchase_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'}
+                  {sales[0]?.fecha ? new Date(sales[0].fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : '-'}
                 </p>
               </div>
             </div>
@@ -449,18 +502,26 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
 
               {activeTab === 'movimientos' && (
                 <div className="p-4 sm:p-6 space-y-5">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                    <div className="rounded-2xl border border-zinc-100 bg-zinc-900 p-4 text-white">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-white/60">Saldo actual</p>
+                      <p className="mt-1 text-xl font-black font-mono">{formatCurrency(accountSummary.current_balance ?? accountSummary.pending_balance)}</p>
+                    </div>
                     <div className="rounded-2xl border border-zinc-100 bg-zinc-50 p-4">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Ventas registradas</p>
-                      <p className="mt-1 text-xl font-black font-mono text-zinc-900">${Number(accountSummary.total_sales || 0).toFixed(2)}</p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Total vendido</p>
+                      <p className="mt-1 text-xl font-black font-mono text-zinc-900">{formatCurrency(accountSummary.total_sales)}</p>
+                      <p className="mt-1 text-[10px] font-bold text-zinc-400">Descuentos: {formatCurrency(accountSummary.total_discounts)}</p>
                     </div>
                     <div className="rounded-2xl border border-zinc-100 bg-emerald-50 p-4">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Pagos registrados</p>
-                      <p className="mt-1 text-xl font-black font-mono text-emerald-700">${Number(accountSummary.total_payments || 0).toFixed(2)}</p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Total cobrado</p>
+                      <p className="mt-1 text-xl font-black font-mono text-emerald-700">{formatCurrency(accountSummary.total_collected ?? accountSummary.total_payments)}</p>
                     </div>
                     <div className="rounded-2xl border border-zinc-100 bg-red-50 p-4">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-red-500">Saldo pendiente</p>
-                      <p className="mt-1 text-xl font-black font-mono text-red-600">${Number(accountSummary.pending_balance || 0).toFixed(2)}</p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-red-500">Total pendiente</p>
+                      <p className="mt-1 text-xl font-black font-mono text-red-600">{formatCurrency(accountSummary.total_pending ?? accountSummary.pending_balance)}</p>
+                      <p className="mt-1 text-[10px] font-bold text-red-400">
+                        {accountSummary.pending_sales} pendientes · {accountSummary.partial_sales} parciales
+                      </p>
                     </div>
                   </div>
 
@@ -479,9 +540,9 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                       <div>
-                        <label className="mb-1 block text-[10px] font-black uppercase text-zinc-400">Desde</label>
+                        <label className="mb-1 block text-[10px] font-black uppercase text-zinc-400">Fecha desde</label>
                         <input
                           type="date"
                           value={movementFilters.dateFrom}
@@ -490,7 +551,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-[10px] font-black uppercase text-zinc-400">Hasta</label>
+                        <label className="mb-1 block text-[10px] font-black uppercase text-zinc-400">Fecha hasta</label>
                         <input
                           type="date"
                           value={movementFilters.dateTo}
@@ -499,15 +560,15 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-[10px] font-black uppercase text-zinc-400">Operación</label>
+                        <label className="mb-1 block text-[10px] font-black uppercase text-zinc-400">Tipo de movimiento</label>
                         <select
                           value={movementFilters.type}
                           onChange={(e) => setMovementFilters({ ...movementFilters, type: e.target.value })}
                           className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-zinc-900"
                         >
-                          <option value="all">Todas</option>
+                          <option value="all">Todos</option>
                           <option value="venta">Ventas</option>
-                          <option value="pago">Pagos</option>
+                          <option value="pago">Cobros / pagos</option>
                           <option value="ajuste">Ajustes</option>
                         </select>
                       </div>
@@ -519,22 +580,36 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                           className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-zinc-900"
                         >
                           <option value="all">Todos</option>
-                          <option value="pending">Pendientes</option>
-                          <option value="paid">Pagados</option>
+                          <option value="pending">Pendiente</option>
+                          <option value="partial">Parcial</option>
+                          <option value="paid">Pagado</option>
                         </select>
                       </div>
                       <div>
-                        <label className="mb-1 block text-[10px] font-black uppercase text-zinc-400">Buscar</label>
+                        <label className="mb-1 block text-[10px] font-black uppercase text-zinc-400">N° venta, pedido o pago</label>
                         <div className="relative">
                           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
                           <input
                             type="text"
-                            value={movementFilters.search}
-                            onChange={(e) => setMovementFilters({ ...movementFilters, search: e.target.value })}
-                            placeholder="Venta, pedido, pago..."
+                            value={movementFilters.reference}
+                            onChange={(e) => setMovementFilters({ ...movementFilters, reference: e.target.value })}
+                            placeholder="Ej.: 1024"
                             className="w-full rounded-xl border border-zinc-200 bg-zinc-50 py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-zinc-900"
                           />
                         </div>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[10px] font-black uppercase text-zinc-400">Medio de pago</label>
+                        <select
+                          value={movementFilters.paymentMethod}
+                          onChange={(e) => setMovementFilters({ ...movementFilters, paymentMethod: e.target.value })}
+                          className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-zinc-900"
+                        >
+                          <option value="">Todos</option>
+                          {paymentMethodOptions.map((method) => (
+                            <option key={method} value={method}>{method}</option>
+                          ))}
+                        </select>
                       </div>
                     </div>
 
@@ -544,24 +619,26 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                   </div>
 
                   <div className="hidden md:block overflow-x-auto custom-scrollbar rounded-2xl border border-zinc-100">
-                    <table className="w-full min-w-[1050px] text-left border-collapse">
+                    <table className="w-full min-w-[1320px] text-left border-collapse">
                       <thead>
                         <tr className="bg-zinc-50">
-                          <th className="px-4 py-3 text-[10px] font-bold text-zinc-400 uppercase">Tipo</th>
-                          <th className="px-4 py-3 text-[10px] font-bold text-zinc-400 uppercase">Fecha</th>
-                          <th className="px-4 py-3 text-[10px] font-bold text-zinc-400 uppercase">Referencia</th>
-                          <th className="px-4 py-3 text-[10px] font-bold text-zinc-400 uppercase">Descripción</th>
-                          <th className="px-4 py-3 text-[10px] font-bold text-zinc-400 uppercase">Medio</th>
-                          <th className="px-4 py-3 text-[10px] font-bold text-zinc-400 uppercase text-right">Debe</th>
-                          <th className="px-4 py-3 text-[10px] font-bold text-zinc-400 uppercase text-right">Haber</th>
-                          <th className="px-4 py-3 text-[10px] font-bold text-zinc-400 uppercase text-right">Saldo</th>
-                          <th className="px-4 py-3 text-[10px] font-bold text-zinc-400 uppercase text-center">Detalle</th>
+                          <th className="px-3 py-3 text-[10px] font-bold text-zinc-400 uppercase">Tipo</th>
+                          <th className="px-3 py-3 text-[10px] font-bold text-zinc-400 uppercase">Fecha</th>
+                          <th className="px-3 py-3 text-[10px] font-bold text-zinc-400 uppercase">Referencia</th>
+                          <th className="px-3 py-3 text-[10px] font-bold text-zinc-400 uppercase">Estado</th>
+                          <th className="px-3 py-3 text-[10px] font-bold text-zinc-400 uppercase">Detalle</th>
+                          <th className="px-3 py-3 text-[10px] font-bold text-zinc-400 uppercase">Medio</th>
+                          <th className="px-3 py-3 text-[10px] font-bold text-zinc-400 uppercase text-right">Descuento</th>
+                          <th className="px-3 py-3 text-[10px] font-bold text-zinc-400 uppercase text-right">Debe</th>
+                          <th className="px-3 py-3 text-[10px] font-bold text-zinc-400 uppercase text-right">Haber</th>
+                          <th className="px-3 py-3 text-[10px] font-bold text-zinc-400 uppercase text-right">Saldo posterior</th>
+                          <th className="px-3 py-3 text-[10px] font-bold text-zinc-400 uppercase text-center">Acciones</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-50">
                         {filteredMovements.map((movement: any) => (
                           <tr key={movement.id} className="hover:bg-zinc-50/60">
-                            <td className="px-4 py-4">
+                            <td className="px-3 py-4">
                               <span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${
                                 movement.operation_type === 'venta'
                                   ? 'bg-violet-50 text-violet-700'
@@ -572,24 +649,47 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                                 {movement.operation_type}
                               </span>
                             </td>
-                            <td className="px-4 py-4 text-xs text-zinc-600 whitespace-nowrap">{new Date(movement.fecha).toLocaleString('es-AR')}</td>
-                            <td className="px-4 py-4 text-xs font-mono text-zinc-500">
-                              {movement.numero_venta ? `Venta #${movement.numero_venta}` : movement.numero_pago ? `Pago #${movement.numero_pago}` : '-'}
-                              {movement.numero_pedido ? <div className="text-[10px]">Pedido #{movement.numero_pedido}</div> : null}
+                            <td className="px-3 py-4 text-xs text-zinc-600 whitespace-nowrap">{new Date(movement.fecha).toLocaleString('es-AR')}</td>
+                            <td className="px-3 py-4 text-xs font-mono text-zinc-500">
+                              {movement.numero_venta ? <div>Venta #{movement.numero_venta}</div> : null}
+                              {movement.numero_pedido ? <div>Pedido #{movement.numero_pedido}</div> : null}
+                              {movement.numero_pago ? <div>Pago #{movement.numero_pago}</div> : null}
+                              {!movement.numero_venta && !movement.numero_pedido && !movement.numero_pago ? '-' : null}
                             </td>
-                            <td className="px-4 py-4 text-xs font-medium text-zinc-900 max-w-[260px]">{movement.descripcion}</td>
-                            <td className="px-4 py-4 text-xs font-bold text-zinc-600">{movement.metodo_pago || '-'}</td>
-                            <td className="px-4 py-4 text-xs font-mono text-right text-red-600">{Number(movement.debe || 0) > 0 ? `$${Number(movement.debe).toFixed(2)}` : '-'}</td>
-                            <td className="px-4 py-4 text-xs font-mono text-right text-emerald-600">{Number(movement.haber || 0) > 0 ? `$${Number(movement.haber).toFixed(2)}` : '-'}</td>
-                            <td className="px-4 py-4 text-xs font-black font-mono text-right text-zinc-900">${Number(movement.saldo_resultante || 0).toFixed(2)}</td>
-                            <td className="px-4 py-4 text-center">
-                              <button
-                                onClick={() => movement.venta_id ? fetchSaleDetails(Number(movement.venta_id)) : setSelectedMovement(movement)}
-                                className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900"
-                                title="Ver detalle de la operación"
-                              >
-                                <Eye size={16} />
-                              </button>
+                            <td className="px-3 py-4">
+                              <span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${getPaymentStatusClass(movement.payment_status)}`}>
+                                {getPaymentStatusLabel(movement.payment_status)}
+                              </span>
+                            </td>
+                            <td className="px-3 py-4 text-xs font-medium text-zinc-900 max-w-[280px]">{movement.descripcion}</td>
+                            <td className="px-3 py-4 text-xs font-bold text-zinc-600">{movement.metodo_pago || '-'}</td>
+                            <td className="px-3 py-4 text-xs font-mono text-right text-amber-700">
+                              {Number(movement.descuento_total || 0) > 0 ? formatCurrency(movement.descuento_total) : '-'}
+                            </td>
+                            <td className="px-3 py-4 text-xs font-mono text-right text-red-600">{Number(movement.debe || 0) > 0 ? formatCurrency(movement.debe) : '-'}</td>
+                            <td className="px-3 py-4 text-xs font-mono text-right text-emerald-600">{Number(movement.haber || 0) > 0 ? formatCurrency(movement.haber) : '-'}</td>
+                            <td className="px-3 py-4 text-xs font-black font-mono text-right text-zinc-900">{formatCurrency(movement.saldo_resultante)}</td>
+                            <td className="px-3 py-4">
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => openMovementDetail(movement)}
+                                  className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900"
+                                  title="Ver detalle de la operación"
+                                >
+                                  <Eye size={16} />
+                                </button>
+                                {(movement.operation_type === 'venta' || movement.operation_type === 'pago') && (
+                                  <button
+                                    type="button"
+                                    onClick={() => downloadMovementPdf(movement)}
+                                    className="rounded-lg p-2 text-emerald-600 hover:bg-emerald-50"
+                                    title="Descargar PDF relacionado"
+                                  >
+                                    <Download size={16} />
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -599,43 +699,61 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
 
                   <div className="md:hidden space-y-3">
                     {filteredMovements.map((movement: any) => (
-                      <button
-                        type="button"
-                        key={movement.id}
-                        onClick={() => movement.venta_id ? fetchSaleDetails(Number(movement.venta_id)) : setSelectedMovement(movement)}
-                        className="w-full rounded-2xl border border-zinc-100 bg-white p-4 text-left shadow-sm"
-                      >
+                      <div key={movement.id} className="w-full rounded-2xl border border-zinc-100 bg-white p-4 text-left shadow-sm">
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${
-                              movement.operation_type === 'venta'
-                                ? 'bg-violet-50 text-violet-700'
-                                : movement.operation_type === 'pago'
-                                  ? 'bg-emerald-50 text-emerald-700'
-                                  : 'bg-zinc-100 text-zinc-600'
-                            }`}>
-                              {movement.operation_type}
-                            </span>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${
+                                movement.operation_type === 'venta'
+                                  ? 'bg-violet-50 text-violet-700'
+                                  : movement.operation_type === 'pago'
+                                    ? 'bg-emerald-50 text-emerald-700'
+                                    : 'bg-zinc-100 text-zinc-600'
+                              }`}>
+                                {movement.operation_type}
+                              </span>
+                              <span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${getPaymentStatusClass(movement.payment_status)}`}>
+                                {getPaymentStatusLabel(movement.payment_status)}
+                              </span>
+                            </div>
                             <p className="mt-2 text-sm font-black text-zinc-900">{movement.descripcion}</p>
                             <p className="mt-1 text-xs text-zinc-400">{new Date(movement.fecha).toLocaleString('es-AR')}</p>
+                            <p className="mt-1 text-[10px] font-bold text-zinc-500">
+                              {movement.numero_venta ? `Venta #${movement.numero_venta} ` : ''}
+                              {movement.numero_pedido ? `· Pedido #${movement.numero_pedido} ` : ''}
+                              {movement.numero_pago ? `· Pago #${movement.numero_pago}` : ''}
+                            </p>
+                            <p className="mt-1 text-[10px] font-bold text-zinc-500">Medio: {movement.metodo_pago || '-'}</p>
                           </div>
-                          <ChevronRight size={18} className="text-zinc-300" />
+                          <div className="flex gap-1">
+                            <button type="button" onClick={() => openMovementDetail(movement)} className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-100">
+                              <Eye size={17} />
+                            </button>
+                            {(movement.operation_type === 'venta' || movement.operation_type === 'pago') && (
+                              <button type="button" onClick={() => downloadMovementPdf(movement)} className="rounded-lg p-2 text-emerald-600 hover:bg-emerald-50">
+                                <Download size={17} />
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        <div className="mt-3 grid grid-cols-3 gap-2 border-t border-zinc-100 pt-3">
+                        <div className="mt-3 grid grid-cols-2 gap-2 border-t border-zinc-100 pt-3">
                           <div>
-                            <p className="text-[9px] font-black uppercase text-zinc-400">Debe</p>
-                            <p className="text-xs font-black font-mono text-red-600">{Number(movement.debe || 0) > 0 ? `$${Number(movement.debe).toFixed(2)}` : '-'}</p>
-                          </div>
-                          <div>
-                            <p className="text-[9px] font-black uppercase text-zinc-400">Haber</p>
-                            <p className="text-xs font-black font-mono text-emerald-600">{Number(movement.haber || 0) > 0 ? `$${Number(movement.haber).toFixed(2)}` : '-'}</p>
+                            <p className="text-[9px] font-black uppercase text-zinc-400">Importe</p>
+                            <p className={`text-xs font-black font-mono ${Number(movement.haber || 0) > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                              {formatCurrency(Number(movement.haber || movement.debe || 0))}
+                            </p>
                           </div>
                           <div className="text-right">
-                            <p className="text-[9px] font-black uppercase text-zinc-400">Saldo</p>
-                            <p className="text-xs font-black font-mono text-zinc-900">${Number(movement.saldo_resultante || 0).toFixed(2)}</p>
+                            <p className="text-[9px] font-black uppercase text-zinc-400">Saldo posterior</p>
+                            <p className="text-xs font-black font-mono text-zinc-900">{formatCurrency(movement.saldo_resultante)}</p>
                           </div>
+                          {Number(movement.descuento_total || 0) > 0 && (
+                            <div className="col-span-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">
+                              Descuento aplicado: {formatCurrency(movement.descuento_total)}
+                            </div>
+                          )}
                         </div>
-                      </button>
+                      </div>
                     ))}
                   </div>
 
@@ -790,21 +908,42 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                   <p className="mt-1 font-black text-zinc-900">{selectedMovement.numero_pago ? `#${selectedMovement.numero_pago}` : '-'}</p>
                 </div>
                 <div className="rounded-2xl border border-zinc-100 p-4">
+                  <p className="text-[10px] font-black uppercase text-zinc-400">Venta / pedido</p>
+                  <p className="mt-1 font-black text-zinc-900">
+                    {selectedMovement.numero_venta ? `Venta #${selectedMovement.numero_venta}` : '-'}
+                    {selectedMovement.numero_pedido ? ` · Pedido #${selectedMovement.numero_pedido}` : ''}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-zinc-100 p-4">
                   <p className="text-[10px] font-black uppercase text-zinc-400">Medio de pago</p>
                   <p className="mt-1 font-black text-zinc-900">{selectedMovement.metodo_pago || '-'}</p>
                 </div>
                 <div className="rounded-2xl border border-zinc-100 p-4">
+                  <p className="text-[10px] font-black uppercase text-zinc-400">Estado</p>
+                  <span className={`mt-1 inline-flex rounded-full px-2 py-1 text-[9px] font-black uppercase ${getPaymentStatusClass(selectedMovement.payment_status)}`}>
+                    {getPaymentStatusLabel(selectedMovement.payment_status)}
+                  </span>
+                </div>
+                <div className="rounded-2xl border border-zinc-100 p-4">
                   <p className="text-[10px] font-black uppercase text-zinc-400">Importe</p>
-                  <p className="mt-1 font-black font-mono text-emerald-600">${Number(selectedMovement.haber || selectedMovement.debe || 0).toFixed(2)}</p>
+                  <p className="mt-1 font-black font-mono text-emerald-600">{formatCurrency(selectedMovement.haber || selectedMovement.debe)}</p>
                 </div>
                 <div className="rounded-2xl border border-zinc-100 p-4">
                   <p className="text-[10px] font-black uppercase text-zinc-400">Saldo posterior</p>
-                  <p className="mt-1 font-black font-mono text-zinc-900">${Number(selectedMovement.saldo_resultante || 0).toFixed(2)}</p>
+                  <p className="mt-1 font-black font-mono text-zinc-900">{formatCurrency(selectedMovement.saldo_resultante)}</p>
                 </div>
               </div>
             </div>
-            <div className="p-5 bg-zinc-50 border-t border-zinc-100 flex justify-end">
-              <button onClick={() => setSelectedMovement(null)} className="px-6 py-2 bg-zinc-900 text-white rounded-xl font-bold hover:bg-zinc-800">
+            <div className="p-5 bg-zinc-50 border-t border-zinc-100 flex flex-col-reverse sm:flex-row sm:justify-between gap-3">
+              {selectedMovement.operation_type === 'pago' && (
+                <button
+                  onClick={() => downloadMovementPdf(selectedMovement)}
+                  className="flex items-center justify-center gap-2 px-6 py-2 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700"
+                >
+                  <Download size={17} /> Descargar comprobante
+                </button>
+              )}
+              <button onClick={() => setSelectedMovement(null)} className="px-6 py-2 bg-zinc-900 text-white rounded-xl font-bold hover:bg-zinc-800 sm:ml-auto">
                 Cerrar
               </button>
             </div>
@@ -831,12 +970,20 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
             <div className="p-6 space-y-6">
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100">
-                  <p className="text-[10px] font-bold text-zinc-400 uppercase mb-1">Método de Pago</p>
+                  <p className="text-[10px] font-bold text-zinc-400 uppercase mb-1">Método de pago</p>
                   <p className="text-sm font-bold text-zinc-900 uppercase">{selectedSale.metodo_pago}</p>
                 </div>
                 <div className="bg-zinc-50 p-4 rounded-2xl border border-zinc-100 text-right">
-                  <p className="text-[10px] font-bold text-zinc-400 uppercase mb-1">Total Venta</p>
-                  <p className="text-xl font-black text-zinc-900 font-mono">${selectedSale.total.toFixed(2)}</p>
+                  <p className="text-[10px] font-bold text-zinc-400 uppercase mb-1">Total venta</p>
+                  <p className="text-xl font-black text-zinc-900 font-mono">{formatCurrency(selectedSale.total)}</p>
+                </div>
+                <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100">
+                  <p className="text-[10px] font-bold text-amber-600 uppercase mb-1">Descuento</p>
+                  <p className="text-sm font-black text-amber-700 font-mono">{formatCurrency(getSaleDiscountTotal(selectedSale))}</p>
+                </div>
+                <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 text-right">
+                  <p className="text-[10px] font-bold text-emerald-600 uppercase mb-1">Total cobrado</p>
+                  <p className="text-sm font-black text-emerald-700 font-mono">{formatCurrency(selectedSale.monto_pagado)}</p>
                 </div>
               </div>
 
@@ -852,11 +999,16 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                         <div>
                           <p className="text-sm font-bold text-zinc-900">{item.product_name}</p>
                           <p className="text-[10px] text-zinc-400 uppercase font-bold">{item.company}</p>
+                          {Number(item.precio_unitario_original || 0) > Number(item.precio_venta || 0) && (
+                            <p className="text-[10px] font-bold text-amber-600">
+                              Precio original {formatCurrency(item.precio_unitario_original)}
+                            </p>
+                          )}
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="text-xs font-bold text-zinc-900">{item.cantidad} x ${item.precio_venta.toFixed(2)}</p>
-                        <p className="text-sm font-black text-zinc-900 font-mono">${(item.cantidad * item.precio_venta).toFixed(2)}</p>
+                        <p className="text-xs font-bold text-zinc-900">{item.cantidad} x {formatCurrency(item.precio_venta)}</p>
+                        <p className="text-sm font-black text-zinc-900 font-mono">{formatCurrency(item.cantidad * item.precio_venta)}</p>
                       </div>
                     </div>
                   ))}

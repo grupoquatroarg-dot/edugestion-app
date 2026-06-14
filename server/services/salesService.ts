@@ -370,7 +370,7 @@ export const salesService = {
         }
 
         const pendingSales = db.prepare(
-          'SELECT id, monto_pagado, monto_pendiente FROM sales WHERE cliente_id = ? AND monto_pendiente > 0 ORDER BY fecha ASC, id ASC'
+          'SELECT id, numero_venta, monto_pagado, monto_pendiente FROM sales WHERE cliente_id = ? AND monto_pendiente > 0 ORDER BY fecha ASC, id ASC'
         ).all(clientId) as any[];
 
         if (pendingSales.length === 0) {
@@ -378,6 +378,7 @@ export const salesService = {
         }
 
         let remaining = paymentAmount;
+        const allocations: Array<{ id: number; numero_venta: string | number; amount: number }> = [];
 
         for (const sale of pendingSales) {
           if (remaining <= 0) break;
@@ -390,6 +391,11 @@ export const salesService = {
             'UPDATE sales SET monto_pagado = ?, monto_pendiente = ?, estado = ? WHERE id = ?'
           ).run(newMontoPagado, newMontoPendiente, newMontoPendiente <= 0 ? 'Pagada' : 'Pendiente', sale.id);
 
+          allocations.push({
+            id: Number(sale.id),
+            numero_venta: sale.numero_venta || sale.id,
+            amount: applied,
+          });
           remaining -= applied;
         }
 
@@ -399,10 +405,18 @@ export const salesService = {
         db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('next_payment_number', '1')").run();
         db.prepare("UPDATE settings SET value = ? WHERE key = 'next_payment_number'").run(String(nextPaymentNum + 1));
 
+        const saleReferences = allocations.map((allocation) => `#${allocation.numero_venta}`).join(', ');
+        const linkedSaleId = allocations.length === 1 ? allocations[0].id : null;
+        const descriptionParts = [
+          `Cobranza cliente ${customer.nombre_apellido}`,
+          saleReferences ? `Aplicado a venta${allocations.length === 1 ? '' : 's'} ${saleReferences}` : '',
+          String(observaciones || '').trim(),
+        ].filter(Boolean);
+
         db.prepare(
-          `INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cliente_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        ).run('ingreso', 'cobranza', `Cobranza cliente ${customer.nombre_apellido}`, 'Cobranzas', metodo_pago, paymentAmount, fecha || new Date().toISOString(), usuario || 'Sistema', nextPaymentNum, clientId);
+          `INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cliente_id, venta_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run('ingreso', 'cobranza', descriptionParts.join(' - '), 'Cobranzas', metodo_pago, paymentAmount, fecha || new Date().toISOString(), usuario || 'Sistema', nextPaymentNum, clientId, linkedSaleId);
 
         const updatedCustomer = db.prepare('SELECT * FROM clientes WHERE id = ?').get(clientId);
         return {
@@ -444,7 +458,7 @@ export const salesService = {
       }
 
       const pendingSalesResult = await client.query(
-        `SELECT id, monto_pagado, monto_pendiente
+        `SELECT id, numero_venta, monto_pagado, monto_pendiente
          FROM sales
          WHERE cliente_id = $1 AND monto_pendiente > 0
          ORDER BY fecha ASC, id ASC`,
@@ -456,6 +470,7 @@ export const salesService = {
       }
 
       let remaining = paymentAmount;
+      const allocations: Array<{ id: number; numero_venta: string | number; amount: number }> = [];
 
       for (const sale of pendingSalesResult.rows) {
         if (remaining <= 0) break;
@@ -474,6 +489,11 @@ export const salesService = {
           [newMontoPagado, newMontoPendiente, newMontoPendiente <= 0 ? 'Pagada' : 'Pendiente', sale.id]
         );
 
+        allocations.push({
+          id: Number(sale.id),
+          numero_venta: sale.numero_venta || sale.id,
+          amount: applied,
+        });
         remaining -= applied;
       }
 
@@ -485,13 +505,21 @@ export const salesService = {
       );
 
       const nextPaymentNum = await getAndIncrementSetting(client, 'next_payment_number');
+      const saleReferences = allocations.map((allocation) => `#${allocation.numero_venta}`).join(', ');
+      const linkedSaleId = allocations.length === 1 ? allocations[0].id : null;
+      const descriptionParts = [
+        `Cobranza cliente ${customer.nombre_apellido}`,
+        saleReferences ? `Aplicado a venta${allocations.length === 1 ? '' : 's'} ${saleReferences}` : '',
+        String(observaciones || '').trim(),
+      ].filter(Boolean);
+
       await client.query(
-        `INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cliente_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        `INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cliente_id, venta_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           'ingreso',
           'cobranza',
-          `Cobranza cliente ${customer.nombre_apellido}`,
+          descriptionParts.join(' - '),
           'Cobranzas',
           metodo_pago,
           paymentAmount,
@@ -499,6 +527,7 @@ export const salesService = {
           usuario || 'Sistema',
           nextPaymentNum,
           clientId,
+          linkedSaleId,
         ]
       );
 
