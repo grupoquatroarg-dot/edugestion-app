@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, Edit2, Trash2, Package, Search, X, AlertTriangle } from 'lucide-react';
+import { Plus, Edit2, Trash2, Package, Search, X, AlertTriangle, Boxes, RefreshCw, Loader2, CircleDollarSign, SlidersHorizontal } from 'lucide-react';
 import { Product, ProductFormData, ProductFamily, ProductCategory } from '../types';
 import { getSocket } from '../utils/socket';
 import { useAuth } from '../contexts/AuthContext';
@@ -9,7 +9,6 @@ const socket = getSocket();
 
 export default function ProductModule() {
   const { hasPermission } = useAuth();
-  console.log("ProductModule Rendering...");
   const [products, setProducts] = useState<Product[]>([]);
   const [families, setFamilies] = useState<ProductFamily[]>([]);
   const [categories, setCategories] = useState<ProductCategory[]>([]);
@@ -42,13 +41,14 @@ export default function ProductModule() {
   const [expireFormData, setExpireFormData] = useState({ cantidad: 0 });
   const [selectedProductForExpire, setSelectedProductForExpire] = useState<Product | null>(null);
 
-  const [totalStockValue, setTotalStockValue] = useState<number>(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
-    fetchProducts();
+    fetchProducts(true);
     fetchFamilies();
     fetchCategories();
-    fetchTotalStockValue();
 
     socket.on('product_updated', (updatedProduct: Product) => {
       setProducts(prev => {
@@ -59,12 +59,10 @@ export default function ProductModule() {
           return [...prev, updatedProduct].sort((a, b) => a.name.localeCompare(b.name));
         }
       });
-      fetchTotalStockValue();
     });
 
     socket.on('product_deleted', ({ id }) => {
       setProducts(prev => prev.filter(p => p.id !== id));
-      fetchTotalStockValue();
     });
 
     return () => {
@@ -73,16 +71,23 @@ export default function ProductModule() {
     };
   }, []);
 
-  const fetchProducts = async () => {
-    const res = await apiFetch('/api/products?all=true');
-    const body = await res.json();
-    const data = unwrapResponse(body);
-    setProducts(data || []);
-    setTotalStockValue((data || []).reduce((sum: number, product: Product) => {
-      const stock = Number(product.stock || 0);
-      const cost = Number(product.cost || 0);
-      return sum + stock * cost;
-    }, 0));
+  const fetchProducts = async (showInitialLoader = false) => {
+    if (showInitialLoader) setIsLoading(true);
+    else setIsRefreshing(true);
+    setLoadError('');
+
+    try {
+      const res = await apiFetch('/api/products?all=true');
+      const body = await res.json();
+      const data = unwrapResponse(body);
+      setProducts(data || []);
+    } catch (error: any) {
+      console.error('Error fetching products:', error);
+      setLoadError(error?.message || 'No se pudieron cargar los productos.');
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
   };
 
   const fetchFamilies = async () => {
@@ -99,13 +104,6 @@ export default function ProductModule() {
     setCategories(data);
   };
 
-  const fetchTotalStockValue = async () => {
-    setTotalStockValue(products.reduce((sum, product) => {
-      const stock = Number(product.stock || 0);
-      const cost = Number(product.cost || 0);
-      return sum + stock * cost;
-    }, 0));
-  };
 
   const handleCreateFamily = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -161,7 +159,6 @@ export default function ProductModule() {
       setEditingProduct(null);
       setFormData({ code: '', name: '', description: '', cost: 0, sale_price: 0, stock: 0, stock_minimo: 0, company: 'Edu', family_id: null, category_id: null, estado: 'activo' });
       fetchProducts();
-      fetchTotalStockValue();
     } catch (error: any) {
       console.error("Error saving product:", error);
       let msg = error.message || "Error al guardar el producto";
@@ -190,7 +187,6 @@ export default function ProductModule() {
       setSelectedProductForStock(null);
       setStockFormData({ cantidad: 0, costo_unitario: 0 });
       fetchProducts();
-      fetchTotalStockValue();
     } catch (error: any) {
       console.error("Error loading stock:", error);
       alert(error.message || "Error al cargar stock");
@@ -222,7 +218,6 @@ export default function ProductModule() {
       setExpireFormData({ cantidad: 0 });
       setSelectedProductForExpire(null);
       fetchProducts();
-      fetchTotalStockValue();
     } catch (error: any) {
       console.error("Error processing expiration write-off:", error);
       alert(error.message || "Error al procesar la baja");
@@ -255,14 +250,11 @@ export default function ProductModule() {
   };
 
   async function handleDeleteProduct(productId: number, productoObjeto: Product) {
-    console.log("Iniciando eliminar producto:", productId, productoObjeto);
-
     try {
       // 2.a Verificar existencia del ID
       if (!productId) throw new Error("productId inválido: " + productId);
 
       // 2.b Intento de eliminación directa en la BD (vía API)
-      console.log("Ejecutando fetch DELETE para:", productId);
       const response = await apiFetch(`/api/products/${productId}`, {
         method: 'DELETE'
       });
@@ -270,19 +262,14 @@ export default function ProductModule() {
       const body = await response.json();
       unwrapResponse(body);
 
-      console.log("PRODUCTO ELIMINADO:", productId);
-
       // 2.c Actualizar estado UI inmediatamente
       setProducts(prev => prev.filter(p => p.id !== productId));
-      fetchTotalStockValue();
       return;
     } catch (err) {
       console.error("Error al eliminar directamente:", err);
 
       // 3) Fallback imprescindible si el delete falla: soft-delete
       try {
-        console.log("Intentando fallback: marcar eliminado/inactivo para:", productId);
-        
         // Preparamos los datos para el fallback (marcar como inactivo y eliminado)
         const fallbackData = {
           ...productoObjeto,
@@ -298,9 +285,7 @@ export default function ProductModule() {
         const bodyFallback = await responseFallback.json();
         unwrapResponse(bodyFallback);
 
-        console.log("PRODUCTO ELIMINADO (via fallback):", productId);
         setProducts(prev => prev.filter(p => p.id !== productId));
-        fetchTotalStockValue();
         return;
       } catch (err2) {
         console.error("Fallback también falló:", err2);
@@ -330,241 +315,464 @@ export default function ProductModule() {
     });
   }, [products, searchTerm, showCriticalOnly]);
 
-  return (
-    <div className="p-4 sm:p-6 max-w-7xl mx-auto">
-      <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center gap-4 mb-8">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-zinc-900">
-            {showCriticalOnly ? 'Productos con Stock Crítico' : 'Módulo de Productos'}
-          </h1>
-          <p className="text-sm text-zinc-500 mt-1">
-            {showCriticalOnly ? 'Listado de productos bajo el stock mínimo' : 'Gestión de inventario y precios'}
-          </p>
-        </div>
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4">
-          <div className="bg-white px-4 sm:px-6 py-2 rounded-xl border border-zinc-200 shadow-sm flex flex-col items-end">
-            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Valor Total del Stock</span>
-            <span className="text-lg sm:text-xl font-black text-zinc-900 font-mono">
-              ${(totalStockValue ?? 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })}
-            </span>
-          </div>
-          {hasPermission('products', 'create') && (
-            <button
-              onClick={() => {
-                setEditingProduct(null);
-                setFormData({ code: '', name: '', description: '', cost: 0, sale_price: 0, stock: 0, stock_minimo: 0, company: 'Edu', family_id: null, category_id: null, estado: 'activo' });
-                setIsModalOpen(true);
-              }}
-              className="flex items-center justify-center gap-2 bg-zinc-900 text-white px-4 py-2.5 rounded-lg hover:bg-zinc-800 transition-colors shadow-sm text-sm sm:text-base"
-            >
-              <Plus size={20} />
-              <span className="whitespace-nowrap">Nuevo Producto</span>
-            </button>
-          )}
-        </div>
-      </div>
+  const stockSummary = useMemo(() => {
+    return products.reduce(
+      (summary, product) => {
+        const stock = Number(product.stock || 0);
+        const minimum = Number(product.stock_minimo || 0);
+        const cost = Number(product.cost || 0);
 
-    <div className="bg-white rounded-xl shadow-sm border border-zinc-200 overflow-hidden">
-        <div className="p-4 border-bottom border-zinc-100 bg-zinc-50/50 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-          <div className="flex-1 flex items-center gap-3 bg-white px-3 py-1.5 rounded-lg border border-zinc-200 focus-within:ring-2 focus-within:ring-zinc-900 transition-all">
-            <Search className="text-zinc-400 shrink-0" size={20} />
-            <input
-              type="text"
-              placeholder="Buscar productos..."
-              className="bg-transparent border-none focus:ring-0 w-full text-zinc-900 placeholder-zinc-400 outline-none"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
+        summary.totalUnits += stock;
+        summary.totalValue += stock * cost;
+        if (product.estado === 'activo') summary.active += 1;
+        if (stock <= minimum) summary.critical += 1;
+        return summary;
+      },
+      { active: 0, critical: 0, totalUnits: 0, totalValue: 0 }
+    );
+  }, [products]);
+
+  const formatCurrency = (value: number) =>
+    new Intl.NumberFormat('es-AR', {
+      style: 'currency',
+      currency: 'ARS',
+      minimumFractionDigits: 2
+    }).format(Number(value || 0));
+
+  const resetProductForm = () => {
+    setEditingProduct(null);
+    setFormData({
+      code: '',
+      name: '',
+      description: '',
+      cost: 0,
+      sale_price: 0,
+      stock: 0,
+      stock_minimo: 0,
+      company: 'Edu',
+      family_id: null,
+      category_id: null,
+      estado: 'activo'
+    });
+  };
+
+  const openNewProductModal = () => {
+    resetProductForm();
+    setIsModalOpen(true);
+  };
+
+  const openStockModal = (product: Product) => {
+    setSelectedProductForStock(product);
+    setStockFormData({ cantidad: 0, costo_unitario: product.cost });
+    setIsStockModalOpen(true);
+  };
+
+  const openExpireModal = (product: Product) => {
+    setSelectedProductForExpire(product);
+    setExpireFormData({ cantidad: 0 });
+    setIsExpireModalOpen(true);
+  };
+
+  const renderProductActions = (product: Product, mobile = false) => (
+    <div className={mobile ? 'grid grid-cols-2 gap-2' : 'flex flex-wrap justify-end gap-2'}>
+      {hasPermission('products', 'edit') && (
+        <>
           <button
-            onClick={() => setShowCriticalOnly(!showCriticalOnly)}
-            className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
-              showCriticalOnly 
-                ? 'bg-red-100 text-red-600 border border-red-200' 
-                : 'bg-zinc-100 text-zinc-500 border border-zinc-200 hover:bg-zinc-200'
-            }`}
+            type="button"
+            onClick={() => openStockModal(product)}
+            className={`${mobile ? 'w-full' : ''} inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-xs font-bold text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/30`}
+            title={`Ingresar stock de ${product.name}`}
+            aria-label={`Ingresar stock de ${product.name}`}
           >
-            <AlertTriangle size={14} />
-            Stock Crítico
+            <Plus size={15} aria-hidden="true" />
+            <span>Ingresar stock</span>
           </button>
-        </div>
+          <button
+            type="button"
+            onClick={() => openExpireModal(product)}
+            className={`${mobile ? 'w-full' : ''} inline-flex items-center justify-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs font-bold text-amber-700 transition hover:border-amber-300 hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500/30`}
+            title={`Registrar baja o merma de ${product.name}`}
+            aria-label={`Registrar baja o merma de ${product.name}`}
+          >
+            <AlertTriangle size={15} aria-hidden="true" />
+            <span>Registrar baja</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleEdit(product)}
+            className={`${mobile ? 'w-full' : ''} inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-700 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/30`}
+            title={`Editar ${product.name}`}
+            aria-label={`Editar producto ${product.name}`}
+          >
+            <Edit2 size={15} aria-hidden="true" />
+            <span>Editar</span>
+          </button>
+        </>
+      )}
+      {hasPermission('products', 'delete') && (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            handleDeleteProduct(product.id, product);
+          }}
+          className={`${mobile ? 'w-full' : ''} inline-flex items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-white px-2.5 py-2 text-xs font-bold text-red-600 transition hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500/30`}
+          title={`Eliminar ${product.name}`}
+          aria-label={`Eliminar producto ${product.name}`}
+        >
+          <Trash2 size={15} aria-hidden="true" />
+          <span>Eliminar</span>
+        </button>
+      )}
+    </div>
+  );
 
-        <div className="overflow-x-auto custom-scrollbar">
-          <table className="w-full text-left border-collapse min-w-[1000px]">
-            <thead>
-              <tr className="bg-zinc-50 border-b border-zinc-200">
-                <th className="px-4 sm:px-6 py-3 text-[10px] sm:text-xs font-semibold text-zinc-500 uppercase tracking-wider">Producto</th>
-                <th className="px-4 sm:px-6 py-3 text-[10px] sm:text-xs font-semibold text-zinc-500 uppercase tracking-wider">Categoría</th>
-                <th className="px-4 sm:px-6 py-3 text-[10px] sm:text-xs font-semibold text-zinc-500 uppercase tracking-wider">Familia</th>
-                <th className="px-4 sm:px-6 py-3 text-[10px] sm:text-xs font-semibold text-zinc-500 uppercase tracking-wider">Empresa</th>
-                <th className="px-4 sm:px-6 py-3 text-[10px] sm:text-xs font-semibold text-zinc-500 uppercase tracking-wider text-right">Costo</th>
-                <th className="px-4 sm:px-6 py-3 text-[10px] sm:text-xs font-semibold text-zinc-500 uppercase tracking-wider text-right">Venta</th>
-                <th className="px-4 sm:px-6 py-3 text-[10px] sm:text-xs font-semibold text-zinc-500 uppercase tracking-wider text-center">Stock</th>
-                <th className="px-4 sm:px-6 py-3 text-[10px] sm:text-xs font-semibold text-zinc-500 uppercase tracking-wider text-center">Stock Mín.</th>
-                <th className="px-4 sm:px-6 py-3 text-[10px] sm:text-xs font-semibold text-zinc-500 uppercase tracking-wider text-center">Estado</th>
-                <th className="px-4 sm:px-6 py-3 text-[10px] sm:text-xs font-semibold text-zinc-500 uppercase tracking-wider text-right">Acciones</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-200">
-              {filteredProducts.map((product) => (
-                <tr key={product.id} className={`hover:bg-zinc-50 transition-colors group ${product.estado === 'inactivo' ? 'opacity-60' : ''}`}>
-                  <td className="px-4 sm:px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center ${product.estado === 'inactivo' ? 'bg-zinc-200 text-zinc-400' : 'bg-zinc-100 text-zinc-500'}`}>
-                        <Package size={18} />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-zinc-900 text-sm sm:text-base">{product.name}</span>
-                          {product.stock <= (product.stock_minimo || 0) && (
-                            <AlertTriangle size={14} className="text-red-500" title="Stock Crítico" />
-                          )}
-                          {product.code && <span className="text-[10px] bg-zinc-100 text-zinc-500 px-1.5 py-0.5 rounded font-mono" title="Código Manual">{product.code}</span>}
-                          {product.codigo_unico && <span className="text-[10px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded font-mono font-bold" title="Código Único Irreversible">{product.codigo_unico}</span>}
-                        </div>
-                        <div className="text-xs sm:text-sm text-zinc-500 line-clamp-1">{product.description}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-4 sm:px-6 py-4">
-                    <span className="text-xs sm:text-sm text-zinc-600 font-medium">
-                      {product.category_name || 'Sin categoría'}
-                    </span>
-                  </td>
-                  <td className="px-4 sm:px-6 py-4">
-                    <span className="text-xs sm:text-sm text-zinc-600 font-medium">
-                      {product.family_name || 'Sin familia'}
-                    </span>
-                  </td>
-                  <td className="px-4 sm:px-6 py-4">
-                    <span className={`px-2 py-1 rounded-full text-[10px] sm:text-xs font-medium ${
-                      product.company === 'Edu' ? 'bg-blue-50 text-blue-600' : 'bg-orange-50 text-orange-600'
-                    }`}>
-                      {product.company}
-                    </span>
-                  </td>
-                  <td className="px-4 sm:px-6 py-4 text-right text-zinc-600 font-mono text-xs sm:text-sm">${product.cost.toFixed(2)}</td>
-                  <td className="px-4 sm:px-6 py-4 text-right text-zinc-900 font-semibold font-mono text-xs sm:text-sm">${product.sale_price.toFixed(2)}</td>
-                  <td className="px-4 sm:px-6 py-4 text-center">
-                    <span className={`font-medium text-xs sm:text-sm ${product.stock <= product.stock_minimo ? 'text-red-600 bg-red-50 px-2 py-1 rounded-lg' : 'text-zinc-900'}`}>
-                      {product.stock}
-                    </span>
-                  </td>
-                  <td className="px-4 sm:px-6 py-4 text-center">
-                    <span className="text-xs sm:text-sm text-zinc-500 font-mono">
-                      {product.stock_minimo || 0}
-                    </span>
-                  </td>
-                  <td className="px-4 sm:px-6 py-4 text-center">
-                    <span className={`px-2 py-1 rounded-full text-[9px] sm:text-[10px] uppercase font-bold tracking-wider ${
-                      product.estado === 'activo' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-zinc-100 text-zinc-500 border border-zinc-200'
-                    }`}>
-                      {product.estado}
-                    </span>
-                  </td>
-                  <td className="px-4 sm:px-6 py-4 text-right">
-                    <div className="flex justify-end gap-1 sm:gap-2 transition-opacity">
-                      {hasPermission('products', 'edit') && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedProductForStock(product);
-                              setStockFormData({ cantidad: 0, costo_unitario: product.cost });
-                              setIsStockModalOpen(true);
-                            }}
-                            className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
-                            title="Cargar Stock (PEPS)"
-                          >
-                            <Plus size={18} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedProductForExpire(product);
-                              setExpireFormData({ cantidad: 0 });
-                              setIsExpireModalOpen(true);
-                            }}
-                            className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
-                            title="Dar de baja por vencimiento"
-                          >
-                            <AlertTriangle size={18} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleEdit(product)}
-                            className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors cursor-pointer"
-                            title="Editar producto"
-                          >
-                            <Edit2 size={18} />
-                          </button>
-                        </>
-                      )}
-                      {hasPermission('products', 'delete') && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            console.log("BOTON TACHO PRESIONADO - ID:", product.id);
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleDeleteProduct(product.id, product);
-                          }}
-                          className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-red-100 flex items-center gap-1"
-                          title="Eliminar producto"
-                        >
-                          <Trash2 size={18} />
-                          <span className="text-[10px] font-bold">ELIMINAR</span>
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
+  return (
+    <div className="min-h-full bg-slate-50/70 px-3 py-4 sm:px-6 sm:py-6">
+      <div className="mx-auto max-w-[1500px] space-y-5">
+        <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="relative overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 px-5 py-6 text-white sm:px-8 sm:py-8">
+            <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-indigo-500/20 blur-3xl" />
+            <div className="pointer-events-none absolute -bottom-24 left-1/3 h-56 w-56 rounded-full bg-cyan-400/10 blur-3xl" />
+            <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+              <div className="max-w-2xl">
+                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-indigo-100">
+                  <Boxes size={14} aria-hidden="true" />
+                  Inventario
+                </div>
+                <h1 className="text-2xl font-black tracking-tight sm:text-4xl">
+                  {showCriticalOnly ? 'Productos con stock crítico' : 'Gestión de productos'}
+                </h1>
+                <p className="mt-2 max-w-xl text-sm leading-6 text-slate-300 sm:text-base">
+                  {showCriticalOnly
+                    ? 'Revisá rápidamente los artículos que alcanzaron o superaron su nivel mínimo.'
+                    : 'Administrá productos, precios, stock y alertas desde una vista clara y centralizada.'}
+                </p>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={() => fetchProducts(false)}
+                  disabled={isRefreshing}
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
+                  title="Actualizar listado de productos"
+                  aria-label="Actualizar listado de productos"
+                >
+                  <RefreshCw size={17} className={isRefreshing ? 'animate-spin' : ''} aria-hidden="true" />
+                  {isRefreshing ? 'Actualizando…' : 'Actualizar'}
+                </button>
+                {hasPermission('products', 'create') && (
+                  <button
+                    type="button"
+                    onClick={openNewProductModal}
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-500 px-5 py-2.5 text-sm font-black text-white shadow-lg shadow-indigo-950/30 transition hover:bg-indigo-400 focus:outline-none focus:ring-2 focus:ring-white/60"
+                  >
+                    <Plus size={18} aria-hidden="true" />
+                    Nuevo producto
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-px bg-slate-200 lg:grid-cols-4">
+            <div className="bg-white p-4 sm:p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Productos activos</p>
+                  <p className="mt-2 text-2xl font-black text-slate-950 sm:text-3xl">{stockSummary.active}</p>
+                  <p className="mt-1 text-xs text-slate-500">de {products.length} registrados</p>
+                </div>
+                <div className="rounded-xl bg-indigo-50 p-2.5 text-indigo-600"><Package size={20} aria-hidden="true" /></div>
+              </div>
+            </div>
+            <div className="bg-white p-4 sm:p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Unidades en stock</p>
+                  <p className="mt-2 text-2xl font-black text-slate-950 sm:text-3xl">{stockSummary.totalUnits.toLocaleString('es-AR')}</p>
+                  <p className="mt-1 text-xs text-slate-500">existencia total</p>
+                </div>
+                <div className="rounded-xl bg-cyan-50 p-2.5 text-cyan-700"><Boxes size={20} aria-hidden="true" /></div>
+              </div>
+            </div>
+            <div className="bg-white p-4 sm:p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Stock crítico</p>
+                  <p className={`mt-2 text-2xl font-black sm:text-3xl ${stockSummary.critical > 0 ? 'text-red-600' : 'text-slate-950'}`}>{stockSummary.critical}</p>
+                  <p className="mt-1 text-xs text-slate-500">requieren revisión</p>
+                </div>
+                <div className={`rounded-xl p-2.5 ${stockSummary.critical > 0 ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}><AlertTriangle size={20} aria-hidden="true" /></div>
+              </div>
+            </div>
+            <div className="bg-white p-4 sm:p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Valor del inventario</p>
+                  <p className="mt-2 truncate text-xl font-black text-slate-950 sm:text-2xl" title={formatCurrency(stockSummary.totalValue)}>{formatCurrency(stockSummary.totalValue)}</p>
+                  <p className="mt-1 text-xs text-slate-500">stock valorizado al costo</p>
+                </div>
+                <div className="rounded-xl bg-emerald-50 p-2.5 text-emerald-600"><CircleDollarSign size={20} aria-hidden="true" /></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 bg-white p-4 sm:p-5">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h2 className="text-lg font-black text-slate-950">Listado de productos</h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  {filteredProducts.length} resultado{filteredProducts.length === 1 ? '' : 's'} visible{filteredProducts.length === 1 ? '' : 's'}
+                </p>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row lg:min-w-[620px]">
+                <label className="flex min-h-11 flex-1 items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 transition focus-within:border-indigo-400 focus-within:bg-white focus-within:ring-4 focus-within:ring-indigo-100">
+                  <Search className="shrink-0 text-slate-400" size={18} aria-hidden="true" />
+                  <span className="sr-only">Buscar productos</span>
+                  <input
+                    type="search"
+                    placeholder="Buscar por nombre, código, familia o categoría…"
+                    className="w-full border-none bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                  />
+                  {searchTerm && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchTerm('')}
+                      className="rounded-md p-1 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700"
+                      title="Limpiar búsqueda"
+                      aria-label="Limpiar búsqueda"
+                    >
+                      <X size={15} aria-hidden="true" />
+                    </button>
+                  )}
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowCriticalOnly((current) => !current)}
+                  aria-pressed={showCriticalOnly}
+                  className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-black transition focus:outline-none focus:ring-4 ${
+                    showCriticalOnly
+                      ? 'border-red-200 bg-red-50 text-red-700 ring-red-100'
+                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 focus:ring-slate-100'
+                  }`}
+                  title={showCriticalOnly ? 'Mostrar todos los productos' : 'Mostrar solamente stock crítico'}
+                >
+                  <SlidersHorizontal size={17} aria-hidden="true" />
+                  {showCriticalOnly ? 'Mostrando críticos' : 'Filtrar críticos'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {loadError && products.length > 0 && !isLoading && (
+            <div className="mx-4 mt-4 flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 sm:flex-row sm:items-center sm:justify-between" role="alert">
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-600" aria-hidden="true" />
+                <div><p className="font-black">No se pudo actualizar el listado</p><p className="mt-0.5 text-xs text-amber-700">Se mantienen visibles los últimos datos cargados.</p></div>
+              </div>
+              <button type="button" onClick={() => fetchProducts(false)} className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-300 bg-white px-3 py-2 text-xs font-black text-amber-800 transition hover:bg-amber-100">
+                <RefreshCw size={14} aria-hidden="true" /> Reintentar
+              </button>
+            </div>
+          )}
+
+          {isLoading ? (
+            <div className="space-y-3 p-5" role="status" aria-live="polite">
+              <div className="flex items-center gap-3 text-sm font-bold text-slate-600">
+                <Loader2 size={18} className="animate-spin text-indigo-600" aria-hidden="true" />
+                Cargando productos…
+              </div>
+              {[0, 1, 2, 3, 4].map((item) => (
+                <div key={item} className="h-20 animate-pulse rounded-2xl bg-slate-100" />
               ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+            </div>
+          ) : loadError && products.length === 0 ? (
+            <div className="flex min-h-72 flex-col items-center justify-center px-6 py-12 text-center" role="alert">
+              <div className="mb-4 rounded-2xl bg-red-50 p-4 text-red-600"><AlertTriangle size={28} aria-hidden="true" /></div>
+              <h3 className="text-lg font-black text-slate-950">No pudimos cargar los productos</h3>
+              <p className="mt-2 max-w-md text-sm text-slate-500">{loadError}</p>
+              <button
+                type="button"
+                onClick={() => fetchProducts(true)}
+                className="mt-5 inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800"
+              >
+                <RefreshCw size={16} aria-hidden="true" />
+                Reintentar
+              </button>
+            </div>
+          ) : filteredProducts.length === 0 ? (
+            <div className="flex min-h-72 flex-col items-center justify-center px-6 py-12 text-center">
+              <div className="mb-4 rounded-2xl bg-slate-100 p-4 text-slate-500"><Package size={30} aria-hidden="true" /></div>
+              <h3 className="text-lg font-black text-slate-950">
+                {products.length === 0 ? 'Todavía no hay productos' : 'No encontramos resultados'}
+              </h3>
+              <p className="mt-2 max-w-md text-sm text-slate-500">
+                {products.length === 0
+                  ? 'Creá el primer producto para comenzar a gestionar el inventario.'
+                  : 'Probá modificando la búsqueda o desactivando el filtro de stock crítico.'}
+              </p>
+              <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+                {(searchTerm || showCriticalOnly) && (
+                  <button
+                    type="button"
+                    onClick={() => { setSearchTerm(''); setShowCriticalOnly(false); }}
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Limpiar filtros
+                  </button>
+                )}
+                {products.length === 0 && hasPermission('products', 'create') && (
+                  <button type="button" onClick={openNewProductModal} className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-indigo-700">
+                    Crear producto
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="hidden overflow-x-auto lg:block">
+                <table className="w-full min-w-[1240px] border-collapse text-left">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50/80">
+                      {['Producto', 'Clasificación', 'Empresa', 'Costo', 'Venta', 'Stock', 'Estado', 'Acciones'].map((heading) => (
+                        <th key={heading} className={`px-5 py-3.5 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500 ${['Costo', 'Venta'].includes(heading) ? 'text-right' : ''} ${['Stock', 'Estado'].includes(heading) ? 'text-center' : ''} ${heading === 'Acciones' ? 'text-right' : ''}`}>{heading}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredProducts.map((product) => {
+                      const isCritical = Number(product.stock) <= Number(product.stock_minimo || 0);
+                      return (
+                        <tr key={product.id} className={`group transition hover:bg-indigo-50/30 ${product.estado === 'inactivo' ? 'bg-slate-50/70 opacity-70' : 'bg-white'}`}>
+                          <td className="px-5 py-4">
+                            <div className="flex min-w-[280px] items-center gap-3">
+                              <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border ${isCritical ? 'border-red-100 bg-red-50 text-red-600' : 'border-indigo-100 bg-indigo-50 text-indigo-600'}`}>
+                                <Package size={20} aria-hidden="true" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <p className="font-black text-slate-950">{product.name}</p>
+                                  {isCritical && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-red-600">Crítico</span>}
+                                </div>
+                                <p className="mt-1 max-w-[330px] truncate text-xs text-slate-500">{product.description || 'Sin descripción'}</p>
+                                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                  {product.code && <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-bold text-slate-600" title="Código manual">{product.code}</span>}
+                                  {product.codigo_unico && <span className="rounded-md bg-indigo-50 px-1.5 py-0.5 font-mono text-[10px] font-black text-indigo-700" title="Código único">{product.codigo_unico}</span>}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-5 py-4">
+                            <div className="min-w-[150px] space-y-1">
+                              <p className="text-sm font-bold text-slate-700">{product.family_name || 'Sin familia'}</p>
+                              <p className="text-xs text-slate-400">{product.category_name || 'Sin categoría'}</p>
+                            </div>
+                          </td>
+                          <td className="px-5 py-4"><span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${product.company === 'Edu' ? 'bg-blue-50 text-blue-700' : 'bg-orange-50 text-orange-700'}`}>{product.company}</span></td>
+                          <td className="px-5 py-4 text-right font-mono text-sm font-bold text-slate-600">{formatCurrency(product.cost)}</td>
+                          <td className="px-5 py-4 text-right font-mono text-sm font-black text-slate-950">{formatCurrency(product.sale_price)}</td>
+                          <td className="px-5 py-4 text-center">
+                            <div className="inline-flex flex-col items-center">
+                              <span className={`rounded-lg px-2.5 py-1 text-sm font-black ${isCritical ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{product.stock}</span>
+                              <span className="mt-1 text-[10px] font-bold text-slate-400">mín. {product.stock_minimo || 0}</span>
+                            </div>
+                          </td>
+                          <td className="px-5 py-4 text-center"><span className={`rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wider ${product.estado === 'activo' ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-100 text-slate-500'}`}>{product.estado}</span></td>
+                          <td className="px-5 py-4">{renderProductActions(product)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
 
+              <div className="grid gap-3 p-3 lg:hidden">
+                {filteredProducts.map((product) => {
+                  const isCritical = Number(product.stock) <= Number(product.stock_minimo || 0);
+                  return (
+                    <article key={product.id} className={`overflow-hidden rounded-2xl border bg-white shadow-sm ${isCritical ? 'border-red-200' : 'border-slate-200'} ${product.estado === 'inactivo' ? 'opacity-70' : ''}`}>
+                      <div className="p-4">
+                        <div className="flex items-start gap-3">
+                          <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${isCritical ? 'bg-red-50 text-red-600' : 'bg-indigo-50 text-indigo-600'}`}><Package size={20} aria-hidden="true" /></div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <h3 className="font-black text-slate-950">{product.name}</h3>
+                                <p className="mt-0.5 text-xs text-slate-500">{product.description || 'Sin descripción'}</p>
+                              </div>
+                              <span className={`shrink-0 rounded-full border px-2 py-1 text-[9px] font-black uppercase ${product.estado === 'activo' ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-100 text-slate-500'}`}>{product.estado}</span>
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {product.code && <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-bold text-slate-600">{product.code}</span>}
+                              {product.codigo_unico && <span className="rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-[10px] font-black text-indigo-700">{product.codigo_unico}</span>}
+                              {isCritical && <span className="rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-black text-red-600">STOCK CRÍTICO</span>}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl bg-slate-50 p-3 text-sm">
+                          <div><p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Familia</p><p className="mt-1 font-bold text-slate-700">{product.family_name || 'Sin familia'}</p></div>
+                          <div><p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Empresa</p><p className="mt-1 font-bold text-slate-700">{product.company}</p></div>
+                          <div><p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Costo</p><p className="mt-1 font-mono font-bold text-slate-700">{formatCurrency(product.cost)}</p></div>
+                          <div><p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Precio venta</p><p className="mt-1 font-mono font-black text-slate-950">{formatCurrency(product.sale_price)}</p></div>
+                          <div><p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Stock</p><p className={`mt-1 font-black ${isCritical ? 'text-red-600' : 'text-emerald-700'}`}>{product.stock} unidades</p></div>
+                          <div><p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Stock mínimo</p><p className="mt-1 font-bold text-slate-700">{product.stock_minimo || 0} unidades</p></div>
+                        </div>
+                      </div>
+                      <div className="border-t border-slate-100 bg-slate-50/70 p-3">{renderProductActions(product, true)}</div>
+                    </article>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </section>
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 z-50">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200 flex flex-col max-h-[95vh]">
-            <div className="p-4 sm:p-6 border-b border-zinc-100 flex justify-between items-center shrink-0">
-              <h2 className="text-lg sm:text-xl font-bold text-zinc-900">
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 z-50">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200 flex flex-col max-h-[95vh]">
+            <div className="p-4 sm:p-6 border-b border-slate-100 flex justify-between items-center shrink-0">
+              <h2 className="text-lg sm:text-xl font-bold text-slate-900">
                 {editingProduct ? 'Editar Producto' : 'Nuevo Producto'}
               </h2>
-              <button onClick={() => setIsModalOpen(false)} className="text-zinc-400 hover:text-zinc-600 p-1">
+              <button type="button" onClick={() => setIsModalOpen(false)} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" title="Cerrar formulario" aria-label="Cerrar formulario de producto">
                 <X size={24} />
               </button>
             </div>
             <form onSubmit={handleSubmit} className="p-4 sm:p-6 space-y-4 overflow-y-auto custom-scrollbar">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="sm:col-span-1">
-                  <label className="block text-xs font-medium text-zinc-700 mb-1 uppercase tracking-wider">Código</label>
+                  <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wider">Código</label>
                   <input
                     required
                     autoFocus
                     type="text"
                     placeholder="Ej: C001"
-                    className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 focus:border-transparent outline-none transition-all font-mono text-sm"
+                    className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all font-mono text-sm"
                     value={formData.code}
                     onChange={(e) => setFormData({ ...formData, code: e.target.value })}
                   />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="block text-xs font-medium text-zinc-700 mb-1 uppercase tracking-wider">Nombre</label>
+                  <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wider">Nombre</label>
                   <input
                     required
                     type="text"
-                    className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 focus:border-transparent outline-none transition-all text-sm"
+                    className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm"
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   />
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-zinc-700 mb-1 uppercase tracking-wider">Descripción</label>
+                <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wider">Descripción</label>
                 <textarea
-                  className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 focus:border-transparent outline-none transition-all text-sm"
+                  className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm"
                   rows={2}
                   value={formData.description || ''}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
@@ -572,23 +780,23 @@ export default function ProductModule() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-medium text-zinc-700 mb-1 uppercase tracking-wider">Costo</label>
+                  <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wider">Costo</label>
                   <input
                     required
                     type="number"
                     step="0.01"
-                    className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 focus:border-transparent outline-none transition-all text-sm"
+                    className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm"
                     value={formData.cost}
                     onChange={(e) => setFormData({ ...formData, cost: parseFloat(e.target.value) || 0 })}
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-zinc-700 mb-1 uppercase tracking-wider">Precio Venta</label>
+                  <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wider">Precio Venta</label>
                   <input
                     required
                     type="number"
                     step="0.01"
-                    className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 focus:border-transparent outline-none transition-all text-sm"
+                    className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm"
                     value={formData.sale_price}
                     onChange={(e) => setFormData({ ...formData, sale_price: parseFloat(e.target.value) || 0 })}
                   />
@@ -596,32 +804,32 @@ export default function ProductModule() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-medium text-zinc-700 mb-1 uppercase tracking-wider">Stock Inicial</label>
+                  <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wider">Stock Inicial</label>
                   <input
                     required
                     type="number"
                     min="0"
-                    className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 focus:border-transparent outline-none transition-all text-sm"
+                    className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm"
                     value={formData.stock}
                     onChange={(e) => setFormData({ ...formData, stock: parseInt(e.target.value) || 0 })}
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-zinc-700 mb-1 uppercase tracking-wider">Stock Mínimo</label>
+                  <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wider">Stock Mínimo</label>
                   <input
                     required
                     type="number"
                     min="0"
-                    className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 focus:border-transparent outline-none transition-all text-sm"
+                    className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm"
                     value={formData.stock_minimo}
                     onChange={(e) => setFormData({ ...formData, stock_minimo: parseInt(e.target.value) || 0 })}
                   />
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-zinc-700 mb-1 uppercase tracking-wider">Empresa</label>
+                <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wider">Empresa</label>
                   <select
-                    className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 focus:border-transparent outline-none transition-all text-sm"
+                    className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm"
                     value={formData.company}
                     onChange={(e) => setFormData({ ...formData, company: e.target.value as 'Edu' | 'Peti' })}
                   >
@@ -631,9 +839,9 @@ export default function ProductModule() {
                 </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-medium text-zinc-700 mb-1 uppercase tracking-wider">Categoría</label>
+                  <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wider">Categoría</label>
                   <select
-                    className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 focus:border-transparent outline-none transition-all text-sm"
+                    className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm"
                     value={formData.category_id || ''}
                     onChange={(e) => setFormData({ ...formData, category_id: parseInt(e.target.value) || null })}
                   >
@@ -644,11 +852,11 @@ export default function ProductModule() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-zinc-700 mb-1 uppercase tracking-wider">Familia</label>
+                  <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wider">Familia</label>
                   <div className="flex gap-2">
                     <select
                       required
-                      className="flex-1 px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 focus:border-transparent outline-none transition-all text-sm"
+                      className="flex-1 px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm"
                       value={formData.family_id || ''}
                       onChange={(e) => setFormData({ ...formData, family_id: parseInt(e.target.value) || null })}
                     >
@@ -660,24 +868,26 @@ export default function ProductModule() {
                     <button
                       type="button"
                       onClick={() => setIsFamilyModalOpen(true)}
-                      className="p-2 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors"
-                      title="Nueva Familia"
+                      className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 transition hover:bg-indigo-100"
+                      title="Crear nueva familia"
+                      aria-label="Crear nueva familia de producto"
                     >
-                      <Plus size={20} />
+                      <Plus size={17} aria-hidden="true" />
+                      <span className="hidden sm:inline">Nueva</span>
                     </button>
                   </div>
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-zinc-700 mb-2 uppercase tracking-wider">Estado del Producto</label>
-                <div className="flex p-1 bg-zinc-100 rounded-xl">
+                <label className="block text-xs font-medium text-slate-700 mb-2 uppercase tracking-wider">Estado del Producto</label>
+                <div className="flex p-1 bg-slate-100 rounded-xl">
                   <button
                     type="button"
                     onClick={() => setFormData({ ...formData, estado: 'activo' })}
                     className={`flex-1 py-2 text-xs font-medium rounded-lg transition-all ${
                       formData.estado === 'activo'
-                        ? 'bg-white text-zinc-900 shadow-sm'
-                        : 'text-zinc-500 hover:text-zinc-700'
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700'
                     }`}
                   >
                     Activo
@@ -687,14 +897,14 @@ export default function ProductModule() {
                     onClick={() => setFormData({ ...formData, estado: 'inactivo' })}
                     className={`flex-1 py-2 text-xs font-medium rounded-lg transition-all ${
                       formData.estado === 'inactivo'
-                        ? 'bg-white text-zinc-900 shadow-sm'
-                        : 'text-zinc-500 hover:text-zinc-700'
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700'
                     }`}
                   >
                     Inactivo
                   </button>
                 </div>
-                <p className="text-[10px] text-zinc-400 mt-2 px-1 italic">
+                <p className="text-[10px] text-slate-400 mt-2 px-1 italic">
                   * Los productos inactivos no aparecerán en el buscador de ventas.
                 </p>
               </div>
@@ -702,13 +912,13 @@ export default function ProductModule() {
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="flex-1 px-4 py-3 rounded-lg border border-zinc-200 text-zinc-600 hover:bg-zinc-50 transition-colors font-bold text-sm"
+                  className="flex-1 px-4 py-3 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors font-bold text-sm"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 px-4 py-3 rounded-lg bg-zinc-900 text-white hover:bg-zinc-800 transition-colors shadow-sm font-bold text-sm"
+                  className="flex-1 px-4 py-3 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shadow-sm font-bold text-sm"
                 >
                   {editingProduct ? 'Guardar Cambios' : 'Crear Producto'}
                 </button>
@@ -719,35 +929,35 @@ export default function ProductModule() {
       )}
 
       {isStockModalOpen && selectedProductForStock && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center">
               <div>
-                <h2 className="text-xl font-bold text-zinc-900">Cargar Stock</h2>
-                <p className="text-xs text-zinc-500">{selectedProductForStock.name}</p>
+                <h2 className="text-xl font-bold text-slate-900">Cargar Stock</h2>
+                <p className="text-xs text-slate-500">{selectedProductForStock.name}</p>
               </div>
-              <button onClick={() => setIsStockModalOpen(false)} className="text-zinc-400 hover:text-zinc-600">
+              <button type="button" onClick={() => setIsStockModalOpen(false)} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" title="Cerrar" aria-label="Cerrar carga de stock">
                 <X size={24} />
               </button>
             </div>
             <form onSubmit={handleStockSubmit} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">Cantidad a Ingresar</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Cantidad a Ingresar</label>
                 <input
                   required
                   type="number"
-                  className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 focus:border-transparent outline-none transition-all"
+                  className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
                   value={stockFormData.cantidad}
                   onChange={(e) => setStockFormData({ ...stockFormData, cantidad: parseInt(e.target.value) })}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">Costo Unitario (Lote)</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Costo Unitario (Lote)</label>
                 <input
                   required
                   type="number"
                   step="0.01"
-                  className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 focus:border-transparent outline-none transition-all"
+                  className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
                   value={stockFormData.costo_unitario}
                   onChange={(e) => setStockFormData({ ...stockFormData, costo_unitario: parseFloat(e.target.value) })}
                 />
@@ -756,7 +966,7 @@ export default function ProductModule() {
                 <button
                   type="button"
                   onClick={() => setIsStockModalOpen(false)}
-                  className="flex-1 px-4 py-2 rounded-lg border border-zinc-200 text-zinc-600 hover:bg-zinc-50 transition-colors"
+                  className="flex-1 px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
                 >
                   Cancelar
                 </button>
@@ -773,14 +983,14 @@ export default function ProductModule() {
       )}
 
       {isExpireModalOpen && selectedProductForExpire && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center">
               <div>
-                <h2 className="text-xl font-bold text-zinc-900">Baja por Vencimiento</h2>
-                <p className="text-xs text-zinc-500">{selectedProductForExpire.name}</p>
+                <h2 className="text-xl font-bold text-slate-900">Baja por Vencimiento</h2>
+                <p className="text-xs text-slate-500">{selectedProductForExpire.name}</p>
               </div>
-              <button onClick={() => setIsExpireModalOpen(false)} className="text-zinc-400 hover:text-zinc-600">
+              <button type="button" onClick={() => setIsExpireModalOpen(false)} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" title="Cerrar" aria-label="Cerrar registro de baja">
                 <X size={24} />
               </button>
             </div>
@@ -794,13 +1004,13 @@ export default function ProductModule() {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">Cantidad Vencida</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Cantidad Vencida</label>
                 <input
                   required
                   type="number"
                   min="1"
                   max={selectedProductForExpire.stock}
-                  className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all"
+                  className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all"
                   value={expireFormData.cantidad}
                   onChange={(e) => setExpireFormData({ ...expireFormData, cantidad: parseInt(e.target.value) || 0 })}
                 />
@@ -809,7 +1019,7 @@ export default function ProductModule() {
                 <button
                   type="button"
                   onClick={() => setIsExpireModalOpen(false)}
-                  className="flex-1 px-4 py-2 rounded-lg border border-zinc-200 text-zinc-600 hover:bg-zinc-50 transition-colors"
+                  className="flex-1 px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
                 >
                   Cancelar
                 </button>
@@ -826,32 +1036,32 @@ export default function ProductModule() {
       )}
 
       {isFamilyModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="p-6 border-b border-zinc-100 flex justify-between items-center">
-              <h2 className="text-xl font-bold text-zinc-900">Nueva Familia</h2>
-              <button onClick={() => setIsFamilyModalOpen(false)} className="text-zinc-400 hover:text-zinc-600">
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+              <h2 className="text-xl font-bold text-slate-900">Nueva Familia</h2>
+              <button type="button" onClick={() => setIsFamilyModalOpen(false)} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" title="Cerrar" aria-label="Cerrar nueva familia">
                 <X size={24} />
               </button>
             </div>
             <form onSubmit={handleCreateFamily} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">Nombre de la Familia</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Nombre de la Familia</label>
                 <input
                   autoFocus
                   required
                   type="text"
-                  className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 focus:border-transparent outline-none transition-all"
+                  className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
                   value={newFamilyName}
                   onChange={(e) => setNewFamilyName(e.target.value)}
                   placeholder="Ej: Lácteos, Bebidas..."
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">Categoría Asociada</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Categoría Asociada</label>
                 <select
                   required
-                  className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 focus:border-transparent outline-none transition-all"
+                  className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
                   value={newFamilyCategoryId || ''}
                   onChange={(e) => setNewFamilyCategoryId(parseInt(e.target.value) || null)}
                 >
@@ -865,13 +1075,13 @@ export default function ProductModule() {
                 <button
                   type="button"
                   onClick={() => setIsFamilyModalOpen(false)}
-                  className="flex-1 px-4 py-2 rounded-lg border border-zinc-200 text-zinc-600 hover:bg-zinc-50 transition-colors"
+                  className="flex-1 px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 px-4 py-2 rounded-lg bg-zinc-900 text-white hover:bg-zinc-800 transition-colors shadow-sm"
+                  className="flex-1 px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shadow-sm"
                 >
                   Crear Familia
                 </button>
@@ -880,6 +1090,7 @@ export default function ProductModule() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
