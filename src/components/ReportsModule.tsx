@@ -15,7 +15,10 @@ import {
   ChevronRight,
   PieChart,
   LineChart as LineChartIcon,
-  TrendingDown
+  TrendingDown,
+  AlertTriangle,
+  RefreshCw,
+  Loader2
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -78,6 +81,87 @@ type ReportData = {
 
 const COLORS = ['#18181b', '#71717a', '#a1a1aa', '#d4d4d8', '#e4e4e7'];
 
+const getErrorMessage = (error: unknown) => {
+  if (error instanceof Error && error.message) return error.message;
+  return 'No se pudieron cargar los datos del reporte.';
+};
+
+function ReportLoadingState({ message = 'Cargando datos del reporte...' }: { message?: string }) {
+  return (
+    <div className="space-y-6" role="status" aria-live="polite">
+      <div className="flex items-center gap-3 rounded-2xl border border-zinc-200 bg-white px-5 py-4 shadow-sm">
+        <Loader2 size={20} className="animate-spin text-zinc-900" />
+        <div>
+          <p className="text-sm font-black text-zinc-900">{message}</p>
+          <p className="text-xs font-medium text-zinc-500">La información aparecerá apenas termine la consulta.</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+        {[0, 1, 2].map((item) => (
+          <div key={item} className="h-36 animate-pulse rounded-[32px] border border-zinc-200 bg-white p-8">
+            <div className="h-3 w-28 rounded bg-zinc-200" />
+            <div className="mt-5 h-10 w-40 rounded bg-zinc-200" />
+            <div className="mt-4 h-3 w-24 rounded bg-zinc-100" />
+          </div>
+        ))}
+      </div>
+
+      <div className="h-80 animate-pulse rounded-[40px] border border-zinc-200 bg-white p-8">
+        <div className="h-5 w-52 rounded bg-zinc-200" />
+        <div className="mt-8 h-56 rounded-3xl bg-zinc-100" />
+      </div>
+    </div>
+  );
+}
+
+function ReportErrorState({
+  message,
+  onRetry,
+  compact = false
+}: {
+  message: string;
+  onRetry: () => void;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      className={`rounded-[32px] border border-red-200 bg-red-50 text-center ${compact ? 'p-5' : 'p-10 md:p-14'}`}
+      role="alert"
+    >
+      <AlertTriangle size={compact ? 24 : 34} className="mx-auto text-red-600" />
+      <h3 className="mt-3 text-base font-black text-red-900">No se pudo cargar el reporte</h3>
+      <p className="mx-auto mt-2 max-w-2xl text-sm font-medium text-red-700">{message}</p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="mt-5 inline-flex items-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-xs font-black uppercase tracking-widest text-white transition hover:bg-red-800"
+      >
+        <RefreshCw size={15} />
+        Reintentar
+      </button>
+    </div>
+  );
+}
+
+function ReportEmptyState({
+  title = 'No hay datos para mostrar',
+  description = 'Probá otro período o revisá los filtros seleccionados.',
+  compact = false
+}: {
+  title?: string;
+  description?: string;
+  compact?: boolean;
+}) {
+  return (
+    <div className={`rounded-[28px] border border-dashed border-zinc-300 bg-zinc-50 text-center ${compact ? 'p-8' : 'p-12'}`}>
+      <BarChart3 size={compact ? 28 : 36} className="mx-auto text-zinc-300" />
+      <p className="mt-3 text-sm font-black text-zinc-700">{title}</p>
+      <p className="mx-auto mt-1 max-w-lg text-xs font-medium text-zinc-500">{description}</p>
+    </div>
+  );
+}
+
 export default function ReportsModule() {
   const [activeTab, setActiveTab] = useState<'ventas' | 'clientes' | 'productos' | 'deudas' | 'finanzas' | 'ventas-periodo' | 'ventas-cliente' | 'productos-vendidos' | 'rentabilidad-producto' | 'cuentas-corrientes' | 'comisiones'>('ventas');
   const [dateRange, setDateRange] = useState({
@@ -105,6 +189,22 @@ export default function ReportsModule() {
   const [viewingClientSales, setViewingClientSales] = useState<{ id: number; nombre: string } | null>(null);
   const [clientSales, setClientSales] = useState<any[]>([]);
   const [loadingClientSales, setLoadingClientSales] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [clientSalesError, setClientSalesError] = useState<string | null>(null);
+
+  const clearError = (key: string) => {
+    setErrors((current) => {
+      if (!current[key]) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const saveError = (key: string, error: unknown) => {
+    setErrors((current) => ({ ...current, [key]: getErrorMessage(error) }));
+  };
+
   const [productSort, setProductSort] = useState<'cantidad' | 'total'>('cantidad');
   const [bestSellingSort, setBestSellingSort] = useState<'cantidad_vendida' | 'total_facturado' | 'total_ganancia'>('cantidad_vendida');
   const [profitabilitySort, setProfitabilitySort] = useState<'ganancia' | 'cantidad_vendida'>('ganancia');
@@ -112,6 +212,7 @@ export default function ReportsModule() {
 
   const fetchClientSales = async (clientId: number) => {
     setLoadingClientSales(true);
+    setClientSalesError(null);
     try {
       const queryParams = new URLSearchParams({
         from: dateRange.from,
@@ -124,6 +225,7 @@ export default function ReportsModule() {
       setClientSales(reportData.sales);
     } catch (error) {
       console.error("Error fetching client sales:", error);
+      setClientSalesError(getErrorMessage(error));
     } finally {
       setLoadingClientSales(false);
     }
@@ -153,6 +255,7 @@ export default function ReportsModule() {
 
   const fetchReportData = async () => {
     setLoading(true);
+    clearError('base');
     try {
       const queryParams = new URLSearchParams({
         from: dateRange.from,
@@ -166,6 +269,7 @@ export default function ReportsModule() {
       setData(reportData);
     } catch (error) {
       console.error("Error fetching report data:", error);
+      saveError('base', error);
     } finally {
       setLoading(false);
     }
@@ -173,6 +277,7 @@ export default function ReportsModule() {
 
   const fetchSalesPeriodData = async () => {
     setLoadingSalesPeriod(true);
+    clearError('ventas-periodo');
     try {
       const queryParams = new URLSearchParams({
         from: dateRange.from,
@@ -184,6 +289,7 @@ export default function ReportsModule() {
       setSalesPeriodData(reportData);
     } catch (error) {
       console.error("Error fetching sales period data:", error);
+      saveError('ventas-periodo', error);
     } finally {
       setLoadingSalesPeriod(false);
     }
@@ -191,6 +297,7 @@ export default function ReportsModule() {
 
   const fetchSalesByClientData = async () => {
     setLoadingSalesByClient(true);
+    clearError('ventas-cliente');
     try {
       const queryParams = new URLSearchParams({
         from: dateRange.from,
@@ -202,6 +309,7 @@ export default function ReportsModule() {
       setSalesByClientData(reportData);
     } catch (error) {
       console.error("Error fetching sales by client data:", error);
+      saveError('ventas-cliente', error);
     } finally {
       setLoadingSalesByClient(false);
     }
@@ -209,6 +317,7 @@ export default function ReportsModule() {
 
   const fetchBestSellingProductsData = async () => {
     setLoadingBestSellingProducts(true);
+    clearError('productos-vendidos');
     try {
       const queryParams = new URLSearchParams({
         from: dateRange.from,
@@ -220,6 +329,7 @@ export default function ReportsModule() {
       setBestSellingProductsData(reportData);
     } catch (error) {
       console.error("Error fetching best selling products data:", error);
+      saveError('productos-vendidos', error);
     } finally {
       setLoadingBestSellingProducts(false);
     }
@@ -227,6 +337,7 @@ export default function ReportsModule() {
 
   const fetchProfitabilityData = async () => {
     setLoadingProfitability(true);
+    clearError('rentabilidad-producto');
     try {
       const queryParams = new URLSearchParams({
         from: dateRange.from,
@@ -239,6 +350,7 @@ export default function ReportsModule() {
       setProfitabilityData(reportData);
     } catch (error) {
       console.error("Error fetching profitability data:", error);
+      saveError('rentabilidad-producto', error);
     } finally {
       setLoadingProfitability(false);
     }
@@ -246,6 +358,7 @@ export default function ReportsModule() {
 
   const fetchCurrentAccountsData = async () => {
     setLoadingCurrentAccounts(true);
+    clearError('cuentas-corrientes');
     try {
       const res = await apiFetch('/api/dashboard/current-accounts');
       const body = await res.json();
@@ -253,6 +366,7 @@ export default function ReportsModule() {
       setCurrentAccountsData(reportData);
     } catch (error) {
       console.error("Error fetching current accounts data:", error);
+      saveError('cuentas-corrientes', error);
     } finally {
       setLoadingCurrentAccounts(false);
     }
@@ -260,6 +374,7 @@ export default function ReportsModule() {
 
   const fetchCommissionsData = async () => {
     setLoadingCommissions(true);
+    clearError('comisiones');
     try {
       const queryParams = new URLSearchParams({
         from: dateRange.from,
@@ -271,42 +386,64 @@ export default function ReportsModule() {
       setCommissionsData(reportData);
     } catch (error) {
       console.error("Error fetching commissions data:", error);
+      saveError('comisiones', error);
     } finally {
       setLoadingCommissions(false);
     }
   };
 
+  const fetchActiveReport = () => {
+    if (activeTab === 'ventas-periodo') {
+      return fetchSalesPeriodData();
+    }
+    if (activeTab === 'ventas-cliente') {
+      return fetchSalesByClientData();
+    }
+    if (activeTab === 'productos-vendidos') {
+      return fetchBestSellingProductsData();
+    }
+    if (activeTab === 'rentabilidad-producto') {
+      return fetchProfitabilityData();
+    }
+    if (activeTab === 'cuentas-corrientes') {
+      return fetchCurrentAccountsData();
+    }
+    if (activeTab === 'comisiones') {
+      return fetchCommissionsData();
+    }
+    return fetchReportData();
+  };
+
   useEffect(() => {
     fetchClientes();
     fetchProducts();
-    fetchReportData();
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'ventas-periodo') {
-      fetchSalesPeriodData();
-    } else if (activeTab === 'ventas-cliente') {
-      fetchSalesByClientData();
-    } else if (activeTab === 'productos-vendidos') {
-      fetchBestSellingProductsData();
-    } else if (activeTab === 'rentabilidad-producto') {
-      fetchProfitabilityData();
-    } else if (activeTab === 'cuentas-corrientes') {
-      fetchCurrentAccountsData();
-    } else if (activeTab === 'comisiones') {
-      fetchCommissionsData();
-    } else {
-      fetchReportData();
-    }
+    fetchActiveReport();
   }, [dateRange, clienteId, activeTab, selectedProductId]);
 
-  if (loading && !data) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
-      </div>
-    );
-  }
+  const baseTabs = ['ventas', 'clientes', 'productos', 'deudas', 'finanzas'];
+  const activeErrorKey = baseTabs.includes(activeTab) ? 'base' : activeTab;
+  const activeError = errors[activeErrorKey] ?? null;
+
+  const isActiveLoading =
+    activeTab === 'ventas-periodo' ? loadingSalesPeriod :
+    activeTab === 'ventas-cliente' ? loadingSalesByClient :
+    activeTab === 'productos-vendidos' ? loadingBestSellingProducts :
+    activeTab === 'rentabilidad-producto' ? loadingProfitability :
+    activeTab === 'cuentas-corrientes' ? loadingCurrentAccounts :
+    activeTab === 'comisiones' ? loadingCommissions :
+    loading;
+
+  const hasActiveData =
+    activeTab === 'ventas-periodo' ? salesPeriodData !== null :
+    activeTab === 'ventas-cliente' ? salesByClientData !== null :
+    activeTab === 'productos-vendidos' ? bestSellingProductsData !== null :
+    activeTab === 'rentabilidad-producto' ? profitabilityData !== null :
+    activeTab === 'cuentas-corrientes' ? currentAccountsData !== null :
+    activeTab === 'comisiones' ? commissionsData !== null :
+    data !== null;
 
   return (
     <div className="h-full flex flex-col bg-zinc-50 overflow-hidden">
@@ -337,11 +474,15 @@ export default function ReportsModule() {
                 className="bg-transparent border-none text-xs font-bold outline-none focus:ring-0 w-32"
               />
             </div>
-            <button 
-              onClick={fetchReportData}
-              className="bg-zinc-900 text-white p-2 rounded-xl hover:bg-zinc-800 transition-all"
+            <button
+              type="button"
+              onClick={fetchActiveReport}
+              disabled={isActiveLoading}
+              title="Actualizar reporte con los filtros seleccionados"
+              aria-label="Actualizar reporte con los filtros seleccionados"
+              className="bg-zinc-900 text-white p-2 rounded-xl hover:bg-zinc-800 transition-all disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <Filter size={16} />
+              {isActiveLoading ? <Loader2 size={16} className="animate-spin" /> : <Filter size={16} />}
             </button>
           </div>
         </div>
@@ -379,13 +520,32 @@ export default function ReportsModule() {
 
       {/* Content Area */}
       <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
-        {(loading || loadingSalesPeriod || loadingCommissions) && (
-          <div className="fixed inset-0 bg-white/50 backdrop-blur-[1px] z-50 flex items-center justify-center pointer-events-none">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-zinc-900"></div>
+        {isActiveLoading && hasActiveData && (
+          <div className="mb-6 flex items-center gap-3 rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4 text-blue-900" role="status" aria-live="polite">
+            <Loader2 size={18} className="animate-spin" />
+            <div>
+              <p className="text-sm font-black">Actualizando reporte…</p>
+              <p className="text-xs font-medium text-blue-700">Se mantienen visibles los últimos datos mientras termina la consulta.</p>
+            </div>
           </div>
         )}
 
-        {(data || salesPeriodData || salesByClientData || bestSellingProductsData || profitabilityData || currentAccountsData || commissionsData) && (
+        {activeError && hasActiveData && (
+          <div className="mb-6">
+            <ReportErrorState message={activeError} onRetry={fetchActiveReport} compact />
+          </div>
+        )}
+
+        {isActiveLoading && !hasActiveData ? (
+          <ReportLoadingState />
+        ) : activeError && !hasActiveData ? (
+          <ReportErrorState message={activeError} onRetry={fetchActiveReport} />
+        ) : !hasActiveData ? (
+          <ReportEmptyState
+            title="No hay información disponible"
+            description="No se recibió información para este reporte. Probá actualizar o cambiar el período."
+          />
+        ) : (
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
             {activeTab === 'comisiones' && (
               <div className="space-y-8">
@@ -405,7 +565,7 @@ export default function ReportsModule() {
                     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
                     <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Generando reporte...</p>
                   </div>
-                ) : commissionsData ? (
+                ) : commissionsData && commissionsData.sales.length > 0 ? (
                   <>
                     <div className="bg-white rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden print:border-none print:shadow-none">
                       <div className="overflow-x-auto">
@@ -445,9 +605,10 @@ export default function ReportsModule() {
                     </div>
                   </>
                 ) : (
-                  <div className="bg-white p-20 rounded-[40px] border border-zinc-200 text-center">
-                    <p className="text-zinc-400 font-bold uppercase text-xs tracking-widest">No hay datos para el período seleccionado</p>
-                  </div>
+                  <ReportEmptyState
+                    title="No hay operaciones en el período"
+                    description="Probá ampliar las fechas o cambiar los filtros seleccionados."
+                  />
                 )}
               </div>
             )}
@@ -489,7 +650,7 @@ export default function ReportsModule() {
                     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
                     <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Generando reporte...</p>
                   </div>
-                ) : currentAccountsData ? (
+                ) : currentAccountsData && currentAccountsData.length > 0 ? (
                   <div className="bg-white rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden print:border-none print:shadow-none">
                     <div className="overflow-x-auto">
                       <table className="w-full text-left border-collapse">
@@ -527,9 +688,10 @@ export default function ReportsModule() {
                     </div>
                   </div>
                 ) : (
-                  <div className="bg-white p-20 rounded-[40px] border border-zinc-200 text-center">
-                    <p className="text-zinc-400 font-bold uppercase text-xs tracking-widest">No hay clientes con deuda actualmente</p>
-                  </div>
+                  <ReportEmptyState
+                    title="No hay clientes con deuda"
+                    description="Las cuentas corrientes no registran saldos pendientes actualmente."
+                  />
                 )}
               </div>
             )}
@@ -589,7 +751,7 @@ export default function ReportsModule() {
                     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
                     <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Generando reporte...</p>
                   </div>
-                ) : profitabilityData ? (
+                ) : profitabilityData && profitabilityData.length > 0 ? (
                   <div className="bg-white rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden print:border-none print:shadow-none">
                     <div className="overflow-x-auto">
                       <table className="w-full text-left border-collapse">
@@ -629,9 +791,10 @@ export default function ReportsModule() {
                     </div>
                   </div>
                 ) : (
-                  <div className="bg-white p-20 rounded-[40px] border border-zinc-200 text-center">
-                    <p className="text-zinc-400 font-bold uppercase text-xs tracking-widest">No hay datos para el período seleccionado</p>
-                  </div>
+                  <ReportEmptyState
+                    title="No hay operaciones en el período"
+                    description="Probá ampliar las fechas o cambiar los filtros seleccionados."
+                  />
                 )}
               </div>
             )}
@@ -682,7 +845,7 @@ export default function ReportsModule() {
                     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
                     <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Generando reporte...</p>
                   </div>
-                ) : bestSellingProductsData ? (
+                ) : bestSellingProductsData && bestSellingProductsData.length > 0 ? (
                   <div className="bg-white rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden print:border-none print:shadow-none">
                     <div className="overflow-x-auto">
                       <table className="w-full text-left border-collapse">
@@ -710,9 +873,10 @@ export default function ReportsModule() {
                     </div>
                   </div>
                 ) : (
-                  <div className="bg-white p-20 rounded-[40px] border border-zinc-200 text-center">
-                    <p className="text-zinc-400 font-bold uppercase text-xs tracking-widest">No hay datos para el período seleccionado</p>
-                  </div>
+                  <ReportEmptyState
+                    title="No hay operaciones en el período"
+                    description="Probá ampliar las fechas o cambiar los filtros seleccionados."
+                  />
                 )}
               </div>
             )}
@@ -735,7 +899,7 @@ export default function ReportsModule() {
                     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
                     <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Generando reporte...</p>
                   </div>
-                ) : salesByClientData ? (
+                ) : salesByClientData && salesByClientData.length > 0 ? (
                   <div className="bg-white rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden print:border-none print:shadow-none">
                     <div className="overflow-x-auto">
                       <table className="w-full text-left border-collapse">
@@ -773,9 +937,10 @@ export default function ReportsModule() {
                     </div>
                   </div>
                 ) : (
-                  <div className="bg-white p-20 rounded-[40px] border border-zinc-200 text-center">
-                    <p className="text-zinc-400 font-bold uppercase text-xs tracking-widest">No hay datos para el período seleccionado</p>
-                  </div>
+                  <ReportEmptyState
+                    title="No hay operaciones en el período"
+                    description="Probá ampliar las fechas o cambiar los filtros seleccionados."
+                  />
                 )}
               </div>
             )}
@@ -798,7 +963,7 @@ export default function ReportsModule() {
                     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
                     <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Generando reporte...</p>
                   </div>
-                ) : salesPeriodData ? (
+                ) : salesPeriodData && salesPeriodData.sales.length > 0 ? (
                   <>
                     <div className="bg-white rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden print:border-none print:shadow-none">
                       <div className="overflow-x-auto">
@@ -858,9 +1023,10 @@ export default function ReportsModule() {
                     </div>
                   </>
                 ) : (
-                  <div className="bg-white p-20 rounded-[40px] border border-zinc-200 text-center">
-                    <p className="text-zinc-400 font-bold uppercase text-xs tracking-widest">No hay datos para el período seleccionado</p>
-                  </div>
+                  <ReportEmptyState
+                    title="No hay operaciones en el período"
+                    description="Probá ampliar las fechas o cambiar los filtros seleccionados."
+                  />
                 )}
               </div>
             )}
@@ -956,6 +1122,7 @@ export default function ReportsModule() {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                   <div className="min-w-0 bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl">
                     <h3 className="text-xl font-black tracking-tight mb-8">Evolución de Ventas</h3>
+                    {data.ventas.porDia.length > 0 ? (
                     <div className="h-[300px] min-h-[300px] min-w-0 w-full overflow-hidden">
                       <ResponsiveContainer
                         width="100%"
@@ -994,10 +1161,19 @@ export default function ReportsModule() {
                         </AreaChart>
                       </ResponsiveContainer>
                     </div>
+                    ) : (
+                      <ReportEmptyState
+                        title="Sin evolución de ventas"
+                        description="No hay ventas para graficar en el período seleccionado."
+                        compact
+                      />
+                    )}
                   </div>
 
                   <div className="min-w-0 bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl">
                     <h3 className="text-xl font-black tracking-tight mb-8">Ventas por Método de Pago</h3>
+                    {data.ventas.porMetodoPago.length > 0 ? (
+                    <>
                     <div className="h-[300px] min-h-[300px] min-w-0 w-full overflow-hidden">
                       <ResponsiveContainer
                         width="100%"
@@ -1035,6 +1211,14 @@ export default function ReportsModule() {
                         </div>
                       ))}
                     </div>
+                    </>
+                    ) : (
+                      <ReportEmptyState
+                        title="Sin medios de pago para mostrar"
+                        description="No hay ventas registradas en el período seleccionado."
+                        compact
+                      />
+                    )}
                   </div>
                 </div>
               </div>
@@ -1073,7 +1257,7 @@ export default function ReportsModule() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-50">
-                        {data.clientes.listadoClientes.map((c, i) => (
+                        {data.clientes.listadoClientes.length > 0 ? data.clientes.listadoClientes.map((c, i) => (
                           <tr 
                             key={i} 
                             className="hover:bg-zinc-50 transition-colors cursor-pointer group"
@@ -1097,7 +1281,13 @@ export default function ReportsModule() {
                               <p className="text-[10px] text-zinc-400 font-mono">{new Date(c.ultima_compra).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                             </td>
                           </tr>
-                        ))}
+                        )) : (
+                          <tr>
+                            <td colSpan={4} className="px-8 py-16 text-center text-xs font-bold uppercase tracking-widest text-zinc-400">
+                              No hay clientes con compras en el período seleccionado
+                            </td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -1128,10 +1318,22 @@ export default function ReportsModule() {
 
                   <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
                     {loadingClientSales ? (
-                      <div className="flex flex-col items-center justify-center py-20 gap-4">
-                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
-                        <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Cargando historial...</p>
+                      <div className="flex items-center justify-center gap-3 py-20" role="status" aria-live="polite">
+                        <Loader2 size={26} className="animate-spin text-zinc-900" />
+                        <p className="text-xs font-black uppercase tracking-widest text-zinc-500">Cargando historial…</p>
                       </div>
+                    ) : clientSalesError ? (
+                      <ReportErrorState
+                        message={clientSalesError}
+                        onRetry={() => viewingClientSales && fetchClientSales(viewingClientSales.id)}
+                        compact
+                      />
+                    ) : clientSales.length === 0 ? (
+                      <ReportEmptyState
+                        title="Este cliente no tiene ventas en el período"
+                        description="Probá ampliar el rango de fechas seleccionado."
+                        compact
+                      />
                     ) : (
                       <div className="space-y-6">
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1194,6 +1396,8 @@ export default function ReportsModule() {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                   <div className="min-w-0 bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl">
                     <h3 className="text-xl font-black tracking-tight mb-8">Ventas por Familia</h3>
+                    {data.productos.porFamilia.length > 0 ? (
+                    <>
                     <div className="h-[300px] min-h-[300px] min-w-0 w-full overflow-hidden">
                       <ResponsiveContainer
                         width="100%"
@@ -1231,6 +1435,14 @@ export default function ReportsModule() {
                         </div>
                       ))}
                     </div>
+                    </>
+                    ) : (
+                      <ReportEmptyState
+                        title="Sin ventas por familia"
+                        description="No hay productos vendidos para agrupar en el período seleccionado."
+                        compact
+                      />
+                    )}
                   </div>
 
                   <div className="bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl">
@@ -1285,7 +1497,7 @@ export default function ReportsModule() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-50">
-                        {[...data.productos.listadoProductos]
+                        {data.productos.listadoProductos.length > 0 ? [...data.productos.listadoProductos]
                           .sort((a, b) => b[productSort] - a[productSort])
                           .map((p, i) => (
                           <tr key={i} className="hover:bg-zinc-50 transition-colors">
@@ -1299,7 +1511,13 @@ export default function ReportsModule() {
                               <p className="text-[10px] text-zinc-400 font-mono">{new Date(p.ultima_venta).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                             </td>
                           </tr>
-                        ))}
+                        )) : (
+                          <tr>
+                            <td colSpan={4} className="px-8 py-16 text-center text-xs font-bold uppercase tracking-widest text-zinc-400">
+                              No hay productos vendidos en el período seleccionado
+                            </td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -1340,7 +1558,7 @@ export default function ReportsModule() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-50">
-                        {data.deudas.rankingDeudores.map((d, i) => (
+                        {data.deudas.rankingDeudores.length > 0 ? data.deudas.rankingDeudores.map((d, i) => (
                           <tr 
                             key={i} 
                             className="hover:bg-zinc-50 transition-colors cursor-pointer group"
@@ -1378,7 +1596,13 @@ export default function ReportsModule() {
                               <span className="text-sm font-black text-red-600 font-mono">${d.saldo.toFixed(2)}</span>
                             </td>
                           </tr>
-                        ))}
+                        )) : (
+                          <tr>
+                            <td colSpan={4} className="px-8 py-16 text-center text-xs font-bold uppercase tracking-widest text-zinc-400">
+                              No hay clientes con deuda pendiente
+                            </td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -1408,6 +1632,7 @@ export default function ReportsModule() {
 
                 <div className="min-w-0 bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl">
                   <h3 className="text-xl font-black tracking-tight mb-8 text-center">Ingresos vs Egresos por Día</h3>
+                  {data.finanzas.flujoCaja.length > 0 ? (
                   <div className="h-[400px] min-h-[400px] min-w-0 w-full overflow-hidden">
                     <ResponsiveContainer
                       width="100%"
@@ -1440,6 +1665,13 @@ export default function ReportsModule() {
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
+                  ) : (
+                    <ReportEmptyState
+                      title="Sin movimientos financieros"
+                      description="No hay ingresos ni egresos para graficar en el período seleccionado."
+                      compact
+                    />
+                  )}
                 </div>
               </div>
             )}
