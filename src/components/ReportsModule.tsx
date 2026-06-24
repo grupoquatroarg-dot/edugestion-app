@@ -954,10 +954,17 @@ export default function ReportsModule() {
 
                 {/* Charts Row */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                  <div className="bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl">
+                  <div className="min-w-0 bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl">
                     <h3 className="text-xl font-black tracking-tight mb-8">Evolución de Ventas</h3>
-                    <div className="h-[300px] w-full">
-                      <ResponsiveContainer width="100%" height="100%">
+                    <div className="h-[300px] min-h-[300px] min-w-0 w-full overflow-hidden">
+                      <ResponsiveContainer
+                        width="100%"
+                        height="100%"
+                        minWidth={0}
+                        minHeight={300}
+                        debounce={100}
+                        initialDimension={{ width: 800, height: 300 }}
+                      >
                         <AreaChart data={data.ventas.porDia}>
                           <defs>
                             <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
@@ -989,10 +996,17 @@ export default function ReportsModule() {
                     </div>
                   </div>
 
-                  <div className="bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl">
+                  <div className="min-w-0 bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl">
                     <h3 className="text-xl font-black tracking-tight mb-8">Ventas por Método de Pago</h3>
-                    <div className="h-[300px] w-full">
-                      <ResponsiveContainer width="100%" height="100%">
+                    <div className="h-[300px] min-h-[300px] min-w-0 w-full overflow-hidden">
+                      <ResponsiveContainer
+                        width="100%"
+                        height="100%"
+                        minWidth={0}
+                        minHeight={300}
+                        debounce={100}
+                        initialDimension={{ width: 800, height: 300 }}
+                      >
                         <RePieChart>
                           <Pie
                             data={data.ventas.porMetodoPago}
@@ -1178,10 +1192,17 @@ export default function ReportsModule() {
             {activeTab === 'productos' && (
               <div className="space-y-8">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                  <div className="bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl">
+                  <div className="min-w-0 bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl">
                     <h3 className="text-xl font-black tracking-tight mb-8">Ventas por Familia</h3>
-                    <div className="h-[300px] w-full">
-                      <ResponsiveContainer width="100%" height="100%">
+                    <div className="h-[300px] min-h-[300px] min-w-0 w-full overflow-hidden">
+                      <ResponsiveContainer
+                        width="100%"
+                        height="100%"
+                        minWidth={0}
+                        minHeight={300}
+                        debounce={100}
+                        initialDimension={{ width: 800, height: 300 }}
+                      >
                         <RePieChart>
                           <Pie
                             data={data.productos.porFamilia}
@@ -1385,10 +1406,17 @@ export default function ReportsModule() {
                   </div>
                 </div>
 
-                <div className="bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl">
+                <div className="min-w-0 bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl">
                   <h3 className="text-xl font-black tracking-tight mb-8 text-center">Ingresos vs Egresos por Día</h3>
-                  <div className="h-[400px] w-full">
-                    <ResponsiveContainer width="100%" height="100%">
+                  <div className="h-[400px] min-h-[400px] min-w-0 w-full overflow-hidden">
+                    <ResponsiveContainer
+                      width="100%"
+                      height="100%"
+                      minWidth={0}
+                      minHeight={400}
+                      debounce={100}
+                      initialDimension={{ width: 1000, height: 400 }}
+                    >
                       <BarChart data={data.finanzas.flujoCaja}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
                         <XAxis 
