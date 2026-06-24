@@ -1316,7 +1316,7 @@ const handleChecklist = async (req: any, res: any) => {
               completed_at = $2,
               completed_by = $3
           WHERE id = $4
-          RETURNING checklist_id
+          RETURNING id, checklist_id, task_name, completed, completed_at, completed_by
         `,
         [
           completed,
@@ -1326,12 +1326,45 @@ const handleChecklist = async (req: any, res: any) => {
         ]
       );
 
-      const checklistId = toNumber(itemResult.rows[0]?.checklist_id);
-      if (checklistId) {
-        await updateChecklistCompletionStatus(pool, checklistId);
+      if (!itemResult.rowCount) {
+        return sendError(res, "Tarea de checklist no encontrada", 404);
       }
 
-      return sendSuccess(res, null, "Item de checklist actualizado");
+      const checklistId = toNumber(itemResult.rows[0]?.checklist_id);
+      await updateChecklistCompletionStatus(pool, checklistId);
+
+      const checklistResult = await pool.query(
+        `
+          SELECT
+            c.id,
+            c.status,
+            c.completed_at,
+            COUNT(ci.id)::int AS total_tasks,
+            COALESCE(SUM(CASE WHEN COALESCE(ci.completed, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS completed_tasks
+          FROM checklists c
+          LEFT JOIN checklist_items ci ON ci.checklist_id = c.id
+          WHERE c.id = $1
+          GROUP BY c.id
+        `,
+        [checklistId]
+      );
+
+      const checklistRow = checklistResult.rows[0];
+
+      return sendSuccess(
+        res,
+        {
+          item: mapChecklistItem(itemResult.rows[0]),
+          checklist: {
+            id: checklistId,
+            status: checklistRow?.status || "pendiente",
+            completed_at: checklistRow?.completed_at || null,
+            total_tasks: toNumber(checklistRow?.total_tasks),
+            completed_tasks: toNumber(checklistRow?.completed_tasks),
+          },
+        },
+        completed ? "Tarea marcada como completada" : "Tarea marcada como pendiente"
+      );
     } catch (error: any) {
       return sendError(res, error?.message || "Error al actualizar item", 400);
     }

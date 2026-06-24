@@ -27,7 +27,9 @@ import {
   ShoppingCart,
   DollarSign,
   Map,
-  ClipboardList
+  ClipboardList,
+  Loader2,
+  RefreshCw
 } from 'lucide-react';
 
 export default function ChecklistModule() {
@@ -45,6 +47,10 @@ export default function ChecklistModule() {
     pendingSupplierOrders: number;
   } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [startingTemplateId, setStartingTemplateId] = useState<number | null>(null);
+  const [updatingItemIds, setUpdatingItemIds] = useState<number[]>([]);
+  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [selectedChecklistForDetail, setSelectedChecklistForDetail] = useState<Checklist | null>(null);
 
   // Template Creation State
@@ -59,6 +65,20 @@ export default function ChecklistModule() {
     fetchInitialData();
   }, []);
 
+  const showNotification = (type: 'success' | 'error', message: string) => {
+    setNotification({ type, message });
+    window.setTimeout(() => setNotification(null), type === 'success' ? 3000 : 5000);
+  };
+
+  const readApiError = async (response: Response, fallback: string) => {
+    try {
+      const body = await response.json();
+      return body?.message || body?.error || fallback;
+    } catch {
+      return fallback;
+    }
+  };
+
   useEffect(() => {
     if (selectedChecklistForDetail && !selectedChecklistForDetail.items) {
       apiFetch(`/api/clientes?endpoint=checklist&id=${selectedChecklistForDetail.id}`)
@@ -71,10 +91,14 @@ export default function ChecklistModule() {
     }
   }, [selectedChecklistForDetail]);
 
-  const fetchInitialData = async () => {
-    setLoading(true);
+  const fetchInitialData = async (showFullLoader: boolean = true) => {
+    if (showFullLoader) {
+      setLoading(true);
+      setLoadError(null);
+    }
+
     try {
-      const [templatesRes, todayRes, historyRes, routeRes, summaryRes] = await Promise.all([
+      const responses = await Promise.all([
         apiFetch('/api/clientes?endpoint=checklist-templates'),
         apiFetch('/api/clientes?endpoint=checklists-today'),
         apiFetch('/api/clientes?endpoint=checklists'),
@@ -82,31 +106,49 @@ export default function ChecklistModule() {
         apiFetch('/api/clientes?endpoint=checklist-summary')
       ]);
 
-      const templatesBody = await templatesRes.json();
-      const todayBody = await todayRes.json();
-      const historyBody = await historyRes.json();
-      const routeBody = await routeRes.json();
-      const summaryBody = await summaryRes.json();
-
-      const templatesData = unwrapResponse(templatesBody);
-      const todayData = unwrapResponse(todayBody);
-      const historyData = unwrapResponse(historyBody);
-      const routeData = unwrapResponse(routeBody);
-      const summaryData = unwrapResponse(summaryBody);
-
-      setTemplates(templatesData);
-      setTodayChecklists(todayData);
-      setHistory(historyData);
-      setTodayRoute(routeData);
-      setSummary(summaryData);
-
-      if (todayData.length > 0 && !selectedActiveChecklistId) {
-        setSelectedActiveChecklistId(todayData[0].id);
+      const failedResponse = responses.find(response => !response.ok);
+      if (failedResponse) {
+        throw new Error(await readApiError(failedResponse, 'No se pudieron cargar los datos del checklist.'));
       }
-    } catch (error) {
+
+      const [templatesBody, todayBody, historyBody, routeBody, summaryBody] = await Promise.all(
+        responses.map(response => response.json())
+      );
+
+      const templatesData = unwrapResponse<Template[]>(templatesBody);
+      const todayData = unwrapResponse<Checklist[]>(todayBody);
+      const historyData = unwrapResponse<Checklist[]>(historyBody);
+      const routeData = unwrapResponse<any | null>(routeBody);
+      const summaryData = unwrapResponse<{
+        routeClients: number;
+        pendingMoney: number;
+        criticalStock: number;
+        pendingSupplierOrders: number;
+      }>(summaryBody);
+
+      const safeTemplates = Array.isArray(templatesData) ? templatesData : [];
+      const safeTodayChecklists = Array.isArray(todayData) ? todayData : [];
+      const safeHistory = Array.isArray(historyData) ? historyData : [];
+
+      setTemplates(safeTemplates);
+      setTodayChecklists(safeTodayChecklists);
+      setHistory(safeHistory);
+      setTodayRoute(routeData || null);
+      setSummary(summaryData || null);
+      setSelectedActiveChecklistId(currentId => {
+        if (currentId && safeTodayChecklists.some(checklist => checklist.id === currentId)) return currentId;
+        return safeTodayChecklists[0]?.id ?? null;
+      });
+    } catch (error: any) {
       console.error("Error fetching checklist data:", error);
+      const message = error?.message || 'No se pudieron cargar los datos del checklist.';
+      if (showFullLoader) {
+        setLoadError(message);
+      } else {
+        showNotification('error', message);
+      }
     } finally {
-      setLoading(false);
+      if (showFullLoader) setLoading(false);
     }
   };
 
@@ -180,7 +222,16 @@ export default function ChecklistModule() {
   };
 
   const handleStartTodayChecklist = async (templateId: number) => {
-    const today = new Date().toISOString().split('T')[0];
+    if (startingTemplateId !== null) return;
+
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Argentina/Buenos_Aires',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date());
+    setStartingTemplateId(templateId);
+
     try {
       const res = await apiFetch('/api/clientes?endpoint=checklists', {
         method: 'POST',
@@ -190,70 +241,124 @@ export default function ChecklistModule() {
           notes: ''
         })
       });
-      const body = await res.json();
 
-      if (res.ok) {
-        const newChecklist = unwrapResponse(body);
-        await fetchInitialData();
-        setSelectedActiveChecklistId(newChecklist.id);
-        setActiveTab('hoy');
+      if (!res.ok) {
+        throw new Error(await readApiError(res, 'No se pudo iniciar el checklist.'));
       }
-    } catch (error) {
+
+      const body = await res.json();
+      const newChecklist = unwrapResponse<{ id: number }>(body);
+      const newChecklistId = Number(newChecklist.id);
+
+      const detailRes = await apiFetch(`/api/clientes?endpoint=checklist&id=${newChecklistId}`);
+      if (!detailRes.ok) {
+        throw new Error(await readApiError(detailRes, 'El checklist se creó, pero no se pudo cargar su detalle.'));
+      }
+
+      const detailBody = await detailRes.json();
+      const checklistDetail = unwrapResponse<Checklist>(detailBody);
+
+      setTodayChecklists(previous => [
+        checklistDetail,
+        ...previous.filter(checklist => checklist.id !== checklistDetail.id)
+      ]);
+      setSelectedActiveChecklistId(checklistDetail.id);
+      setActiveTab('hoy');
+      showNotification('success', 'Checklist iniciado correctamente.');
+    } catch (error: any) {
       console.error("Error starting checklist:", error);
+      showNotification('error', error?.message || 'No se pudo iniciar el checklist.');
+    } finally {
+      setStartingTemplateId(null);
     }
   };
 
   const handleToggleItem = async (checklistId: number, itemId: number, currentStatus: number) => {
+    if (updatingItemIds.length > 0) return;
+
+    const nextCompleted = Number(currentStatus) === 1 ? 0 : 1;
+    const completedAt = nextCompleted === 1 ? new Date().toISOString() : null;
+    const completedBy = nextCompleted === 1 ? user?.name || 'Admin' : null;
+    const previousChecklists = todayChecklists;
+
+    setUpdatingItemIds(previous => [...previous, itemId]);
+
+    setTodayChecklists(previous => previous.map(checklist => {
+      if (checklist.id !== checklistId) return checklist;
+
+      const updatedItems = (checklist.items || []).map(item =>
+        item.id === itemId
+          ? {
+              ...item,
+              completed: nextCompleted,
+              completed_at: completedAt,
+              completed_by: completedBy
+            }
+          : item
+      );
+      const completedTasks = updatedItems.filter(item => Number(item.completed) === 1).length;
+
+      return {
+        ...checklist,
+        items: updatedItems,
+        total_tasks: updatedItems.length,
+        completed_tasks: completedTasks,
+        status: updatedItems.length > 0 && completedTasks === updatedItems.length ? 'completado' : 'pendiente'
+      };
+    }));
+
     try {
       const res = await apiFetch(`/api/clientes?endpoint=checklist-item&id=${itemId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ 
-          completed: currentStatus === 0 ? 1 : 0,
-          completed_by: currentStatus === 0 ? user?.name : null
+        body: JSON.stringify({
+          completed: nextCompleted,
+          completed_by: completedBy
         })
       });
 
-      if (res.ok) {
-        setTodayChecklists(prev => prev.map(cl => {
-          if (cl.id === checklistId) {
-            const updatedItems = cl.items?.map(item => 
-              item.id === itemId ? { 
-                ...item, 
-                completed: currentStatus === 0 ? 1 : 0, 
-                completed_at: currentStatus === 0 ? new Date().toISOString() : null,
-                completed_by: currentStatus === 0 ? user?.name : null
-              } : item
-            );
-            
-            // Check if all items are now completed
-            const allCompleted = updatedItems?.every(i => i.completed === 1);
-            
-            return {
-              ...cl,
-              items: updatedItems,
-              status: allCompleted ? 'completado' : 'pendiente'
-            };
-          }
-          return cl;
-        }));
-
-        // If the checklist was completed, we might want to refresh history and today's list
-        const updatedCl = todayChecklists.find(c => c.id === checklistId);
-        if (updatedCl) {
-          const updatedItems = updatedCl.items?.map(item => 
-            item.id === itemId ? { ...item, completed: currentStatus === 0 ? 1 : 0 } : item
-          );
-          if (updatedItems?.every(i => i.completed === 1)) {
-            // Give it a small delay to show the last check before it disappears from "Hoy"
-            setTimeout(() => {
-              fetchInitialData();
-              setSelectedActiveChecklistId(null);
-            }, 1000);
-          }
-        }
+      if (!res.ok) {
+        throw new Error(await readApiError(res, 'No se pudo actualizar la tarea.'));
       }
-    } catch (error) {
+
+      const body = await res.json();
+      const data = unwrapResponse<{
+        item?: ChecklistItem;
+        checklist?: {
+          id: number;
+          status: 'pendiente' | 'completado';
+          total_tasks: number;
+          completed_tasks: number;
+          completed_at?: string | null;
+        };
+      }>(body);
+
+      setTodayChecklists(previous => previous.map(checklist => {
+        if (checklist.id !== checklistId) return checklist;
+
+        const serverItem = data?.item;
+        const updatedItems = (checklist.items || []).map(item =>
+          item.id === itemId && serverItem ? { ...item, ...serverItem } : item
+        );
+        const completedTasks = data?.checklist?.completed_tasks
+          ?? updatedItems.filter(item => Number(item.completed) === 1).length;
+        const totalTasks = data?.checklist?.total_tasks ?? updatedItems.length;
+
+        return {
+          ...checklist,
+          items: updatedItems,
+          completed_tasks: completedTasks,
+          total_tasks: totalTasks,
+          status: data?.checklist?.status
+            ?? (totalTasks > 0 && completedTasks === totalTasks ? 'completado' : 'pendiente'),
+          completed_at: data?.checklist ? data.checklist.completed_at ?? null : checklist.completed_at
+        };
+      }));
+    } catch (error: any) {
       console.error("Error toggling item:", error);
+      setTodayChecklists(previousChecklists);
+      showNotification('error', error?.message || 'No se pudo actualizar la tarea.');
+    } finally {
+      setUpdatingItemIds(previous => previous.filter(id => id !== itemId));
     }
   };
 
@@ -287,12 +392,17 @@ export default function ChecklistModule() {
         body: JSON.stringify({ status: 'completado' })
       });
 
-      if (res.ok) {
-        setSelectedActiveChecklistId(null);
-        fetchInitialData();
+      if (!res.ok) {
+        throw new Error(await readApiError(res, 'No se pudo finalizar el checklist.'));
       }
-    } catch (error) {
+
+      setTodayChecklists(previous => previous.filter(checklist => checklist.id !== id));
+      setSelectedActiveChecklistId(previousId => previousId === id ? null : previousId);
+      showNotification('success', 'Checklist finalizado correctamente.');
+      void fetchInitialData(false);
+    } catch (error: any) {
       console.error("Error finishing checklist:", error);
+      showNotification('error', error?.message || 'No se pudo finalizar el checklist.');
     }
   };
 
@@ -308,14 +418,81 @@ export default function ChecklistModule() {
 
   if (loading) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
+      <div className="h-full min-h-[520px] flex flex-col bg-zinc-50" aria-busy="true" aria-live="polite">
+        <header className="bg-white border-b border-zinc-200 px-4 sm:px-6 lg:px-8 py-5 sm:py-6">
+          <div className="flex items-center gap-3">
+            <ClipboardCheck className="text-zinc-300" size={32} />
+            <div>
+              <h2 className="text-2xl sm:text-3xl font-black text-zinc-900 tracking-tight">CHECK LIST</h2>
+              <p className="text-zinc-500 text-sm font-medium mt-1">Cargando controles y tareas...</p>
+            </div>
+          </div>
+        </header>
+        <main className="flex-1 overflow-hidden p-4 sm:p-6 lg:p-8">
+          <div className="max-w-5xl mx-auto space-y-6 animate-pulse">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+              {[0, 1, 2, 3].map(item => (
+                <div key={item} className="h-32 bg-white border border-zinc-100 rounded-3xl shadow-sm p-5">
+                  <div className="h-3 w-24 bg-zinc-200 rounded mb-5" />
+                  <div className="h-8 w-16 bg-zinc-200 rounded mb-3" />
+                  <div className="h-2 w-32 bg-zinc-100 rounded" />
+                </div>
+              ))}
+            </div>
+            <div className="bg-white border border-zinc-100 rounded-[32px] p-6 sm:p-8 shadow-sm">
+              <div className="flex items-center gap-3 mb-6">
+                <Loader2 className="animate-spin text-zinc-400" size={22} />
+                <span className="font-bold text-zinc-700">Cargando datos del checklist...</span>
+              </div>
+              <div className="space-y-3">
+                {[0, 1, 2].map(item => (
+                  <div key={item} className="h-16 bg-zinc-100 rounded-2xl" />
+                ))}
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="h-full min-h-[520px] flex items-center justify-center bg-zinc-50 p-4">
+        <div className="max-w-md w-full bg-white border border-red-100 rounded-[32px] p-8 text-center shadow-sm">
+          <div className="w-16 h-16 rounded-2xl bg-red-50 text-red-500 flex items-center justify-center mx-auto mb-5">
+            <AlertCircle size={32} />
+          </div>
+          <h2 className="text-xl font-black text-zinc-900 mb-2">No se pudo cargar el Checklist</h2>
+          <p className="text-sm text-zinc-500 mb-6">{loadError}</p>
+          <button
+            onClick={() => fetchInitialData()}
+            className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-zinc-900 text-white rounded-2xl font-bold text-sm hover:bg-zinc-800 transition-all"
+          >
+            <RefreshCw size={18} />
+            Reintentar
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="h-full flex flex-col bg-zinc-50 overflow-hidden">
+      {notification && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`fixed top-4 right-4 left-4 sm:left-auto z-[70] p-4 rounded-2xl shadow-2xl border flex items-center gap-3 ${
+            notification.type === 'success'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : 'bg-red-50 border-red-200 text-red-800'
+          }`}
+        >
+          {notification.type === 'success' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
+          <span className="font-bold text-sm">{notification.message}</span>
+        </div>
+      )}
       {/* Header */}
       <header className="bg-white border-b border-zinc-200 px-4 sm:px-6 lg:px-8 py-4 sm:py-6 shrink-0">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4 sm:mb-6">
@@ -456,14 +633,25 @@ export default function ChecklistModule() {
                             <button
                               key={template.id}
                               onClick={() => hasPermission('checklist', 'create') && handleStartTodayChecklist(template.id)}
-                              disabled={!hasPermission('checklist', 'create')}
-                              className={`p-4 sm:p-5 bg-white border border-zinc-100 rounded-2xl sm:rounded-3xl hover:border-zinc-900 transition-all group shadow-sm text-left ${!hasPermission('checklist', 'create') ? 'opacity-50 cursor-not-allowed' : ''}`}
+                              disabled={!hasPermission('checklist', 'create') || startingTemplateId !== null}
+                              aria-label={`Usar hoy la plantilla ${template.name}`}
+                              className={`p-4 sm:p-5 bg-white border border-zinc-100 rounded-2xl sm:rounded-3xl hover:border-zinc-900 transition-all group shadow-sm text-left ${
+                                !hasPermission('checklist', 'create') || startingTemplateId !== null
+                                  ? 'opacity-60 cursor-not-allowed'
+                                  : ''
+                              }`}
                             >
                               <div className="flex items-center justify-between mb-2">
-                                <ChevronRight size={14} className="text-zinc-300 group-hover:text-zinc-900 ml-auto" />
+                                {startingTemplateId === template.id ? (
+                                  <Loader2 size={16} className="animate-spin text-zinc-500 ml-auto" />
+                                ) : (
+                                  <ChevronRight size={14} className="text-zinc-300 group-hover:text-zinc-900 ml-auto" />
+                                )}
                               </div>
                               <h4 className="font-bold text-zinc-900 text-sm line-clamp-1">{template.name}</h4>
-                              <p className="text-[10px] text-zinc-400 mt-1 line-clamp-1">{template.description}</p>
+                              <p className="text-[10px] text-zinc-400 mt-1 line-clamp-1">
+                                {startingTemplateId === template.id ? 'Iniciando checklist...' : template.description}
+                              </p>
                             </button>
                           ))}
                         </div>
@@ -504,7 +692,7 @@ export default function ChecklistModule() {
                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                               selectedActiveChecklistId === cl.id ? 'bg-white/20 text-white' : 'bg-zinc-100 text-zinc-500'
                             }`}>
-                              {cl.items?.filter(i => i.completed).length}/{cl.items?.length}
+                              {cl.items?.filter(i => Number(i.completed) === 1).length}/{cl.items?.length || 0}
                             </span>
                           </div>
                           <p className={`text-[10px] font-medium ${selectedActiveChecklistId === cl.id ? 'text-zinc-400' : 'text-zinc-500'}`}>
@@ -525,7 +713,9 @@ export default function ChecklistModule() {
                               <div className="p-4 sm:p-6 lg:p-8 border-b border-zinc-100 bg-zinc-50/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                                 <div>
                                   <h3 className="text-xl font-black text-zinc-900">{cl.template_name}</h3>
-                                  <p className="text-sm text-zinc-500 font-medium">Control activo del día</p>
+                                  <p className="text-sm text-zinc-500 font-medium">
+                                    Control activo del día • {cl.items?.filter(item => Number(item.completed) === 1).length || 0}/{cl.items?.length || 0} tareas completadas
+                                  </p>
                                 </div>
                                 <button
                                   onClick={() => handleFinishChecklist(cl.id)}
@@ -539,21 +729,26 @@ export default function ChecklistModule() {
                                   <button
                                     key={item.id}
                                     onClick={() => handleToggleItem(cl.id, item.id, item.completed)}
-                                    className={`w-full flex items-start sm:items-center gap-3 sm:gap-4 p-4 sm:p-5 rounded-2xl sm:rounded-3xl border transition-all text-left ${
-                                      item.completed 
-                                        ? 'bg-emerald-50 border-emerald-100 text-emerald-900' 
+                                    disabled={updatingItemIds.length > 0 || !hasPermission('checklist', 'edit')}
+                                    aria-label={`${Number(item.completed) === 1 ? 'Desmarcar' : 'Marcar'} tarea: ${item.task_name}`}
+                                    title={!hasPermission('checklist', 'edit') ? 'No tenés permiso para modificar tareas' : undefined}
+                                    className={`w-full flex items-start sm:items-center gap-3 sm:gap-4 p-4 sm:p-5 rounded-2xl sm:rounded-3xl border transition-all text-left disabled:cursor-not-allowed ${
+                                      Number(item.completed) === 1
+                                        ? 'bg-emerald-50 border-emerald-100 text-emerald-900'
                                         : 'bg-white border-zinc-100 hover:border-zinc-300 text-zinc-900'
-                                    }`}
+                                    } ${updatingItemIds.includes(item.id) ? 'opacity-70' : ''}`}
                                   >
-                                    {item.completed ? (
+                                    {updatingItemIds.includes(item.id) ? (
+                                      <Loader2 size={24} className="animate-spin text-zinc-400 shrink-0" />
+                                    ) : Number(item.completed) === 1 ? (
                                       <CheckCircle2 size={24} className="text-emerald-500 shrink-0" />
                                     ) : (
                                       <Circle size={24} className="text-zinc-200 shrink-0" />
                                     )}
-                                    <span className={`font-bold ${item.completed ? 'line-through opacity-50' : ''}`}>
+                                    <span className={`font-bold ${Number(item.completed) === 1 ? 'line-through opacity-50' : ''}`}>
                                       {item.task_name}
                                     </span>
-                                    {item.completed && (
+                                    {Number(item.completed) === 1 && (
                                       <div className="ml-auto flex flex-col items-end">
                                         <span className="text-[10px] font-bold text-emerald-400 uppercase">
                                           {new Date(item.completed_at!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -746,12 +941,13 @@ export default function ChecklistModule() {
                         {template.active ? 'Activa' : 'Inactiva'}
                       </button>
                       {hasPermission('checklist', 'create') && (
-                        <button 
+                        <button
                           onClick={() => handleStartTodayChecklist(template.id)}
-                          disabled={!template.active}
-                          className="text-sm font-bold text-zinc-900 hover:underline disabled:opacity-30"
+                          disabled={!template.active || startingTemplateId !== null}
+                          className="inline-flex items-center gap-2 text-sm font-bold text-zinc-900 hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
                         >
-                          Usar hoy
+                          {startingTemplateId === template.id && <Loader2 size={16} className="animate-spin" />}
+                          {startingTemplateId === template.id ? 'Iniciando...' : 'Usar hoy'}
                         </button>
                       )}
                     </div>
