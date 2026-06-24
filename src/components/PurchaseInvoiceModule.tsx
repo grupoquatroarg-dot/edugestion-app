@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Search, X, FileText, Calendar, User, Trash2, Save, Eye } from 'lucide-react';
+import { Plus, Search, X, FileText, Calendar, User, Trash2, Save, Eye, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { Product, PurchaseInvoice } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { unwrapResponse, apiFetch } from '../utils/api';
@@ -40,6 +40,9 @@ export default function PurchaseInvoiceModule() {
   const [newProductName, setNewProductName] = useState('');
   const [providerForm, setProviderForm] = useState<ProviderForm>(emptyProviderForm);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [isSubmittingInvoice, setIsSubmittingInvoice] = useState(false);
+  const [invoiceSubmitError, setInvoiceSubmitError] = useState('');
+  const [invoiceSuccessMessage, setInvoiceSuccessMessage] = useState('');
   const [selectedInvoiceForPayment, setSelectedInvoiceForPayment] = useState<PurchaseInvoice | null>(null);
   const [paymentForm, setPaymentForm] = useState({
     metodo_pago_real: 'efectivo',
@@ -65,6 +68,16 @@ export default function PurchaseInvoiceModule() {
     fetchProducts();
     fetchProveedores();
   }, []);
+
+  useEffect(() => {
+    if (!invoiceSuccessMessage) return;
+
+    const timer = window.setTimeout(() => {
+      setInvoiceSuccessMessage('');
+    }, 5000);
+
+    return () => window.clearTimeout(timer);
+  }, [invoiceSuccessMessage]);
 
   const handleApiJson = async (res: Response) => {
     const body = await res.json();
@@ -258,15 +271,25 @@ export default function PurchaseInvoiceModule() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (isSubmittingInvoice) return;
+
+    setInvoiceSubmitError('');
     const finalItems = getPendingItemsForSubmit();
 
     if (finalItems.length === 0) {
-      alert('Debe agregar al menos un producto a la lista usando el boton +');
+      setInvoiceSubmitError('Debe agregar al menos un producto a la factura.');
       return;
     }
 
     if (formData.proveedor_id === 0) {
-      alert('Seleccione un proveedor');
+      setInvoiceSubmitError('Seleccione un proveedor.');
+      return;
+    }
+
+    const invoiceNumber = formData.numero_factura.trim();
+    if (!invoiceNumber) {
+      setInvoiceSubmitError('Ingrese el numero de factura.');
       return;
     }
 
@@ -308,12 +331,14 @@ export default function PurchaseInvoiceModule() {
       if (!confirmed) return;
     }
 
+    setIsSubmittingInvoice(true);
+
     try {
       const res = await apiFetch('/api/purchase-invoices', {
         method: 'POST',
         body: JSON.stringify({
           proveedor_id: formData.proveedor_id,
-          numero_factura: formData.numero_factura,
+          numero_factura: invoiceNumber,
           fecha: formData.fecha_compra,
           metodo_pago: formData.metodo_pago,
           total,
@@ -322,12 +347,18 @@ export default function PurchaseInvoiceModule() {
       });
 
       await handleApiJson(res);
+
       setIsModalOpen(false);
       resetForm();
+      setInvoiceSubmitError('');
+      setInvoiceSuccessMessage(`Factura ${invoiceNumber} guardada correctamente.`);
+
       await Promise.all([fetchInvoices(), fetchProducts(), fetchProveedores()]);
     } catch (error: any) {
       console.error('Error submitting invoice:', error);
-      alert(error?.message || 'Error al registrar factura');
+      setInvoiceSubmitError(error?.message || 'No se pudo guardar la factura. Revise los datos e intente nuevamente.');
+    } finally {
+      setIsSubmittingInvoice(false);
     }
   };
 
@@ -347,6 +378,29 @@ export default function PurchaseInvoiceModule() {
 
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto h-full w-full flex flex-col overflow-hidden">
+      {invoiceSuccessMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed top-4 left-4 right-4 sm:left-auto sm:right-6 sm:max-w-md z-[80] flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-800 shadow-lg"
+        >
+          <CheckCircle2 size={20} className="mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <p className="font-bold">Factura guardada correctamente</p>
+            <p className="text-sm">{invoiceSuccessMessage}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setInvoiceSuccessMessage('')}
+            className="rounded-md p-1 text-emerald-700 hover:bg-emerald-100"
+            aria-label="Cerrar mensaje"
+            title="Cerrar mensaje"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6 sm:mb-8">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-zinc-900">Facturas de Compra</h1>
@@ -354,7 +408,10 @@ export default function PurchaseInvoiceModule() {
         </div>
         {hasPermission('products', 'create') && (
           <button
-            onClick={() => setIsModalOpen(true)}
+            onClick={() => {
+              setInvoiceSubmitError('');
+              setIsModalOpen(true);
+            }}
             className="w-full sm:w-auto flex items-center justify-center gap-2 bg-zinc-900 text-white px-5 sm:px-6 py-3 rounded-xl hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200 font-bold"
           >
             <FileText size={20} />
@@ -444,12 +501,37 @@ export default function PurchaseInvoiceModule() {
                 <FileText className="text-zinc-400" />
                 Registrar Factura de Compra
               </h2>
-              <button onClick={() => setIsModalOpen(false)} className="text-zinc-400 hover:text-zinc-600">
+              <button
+                type="button"
+                onClick={() => {
+                  if (isSubmittingInvoice) return;
+                  setInvoiceSubmitError('');
+                  setIsModalOpen(false);
+                }}
+                disabled={isSubmittingInvoice}
+                className="text-zinc-400 hover:text-zinc-600 disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="Cerrar formulario de factura"
+                title="Cerrar formulario"
+              >
                 <X size={24} />
               </button>
             </div>
 
             <form onSubmit={handleSubmit} className="flex-1 min-h-0 overflow-y-auto flex flex-col">
+              {invoiceSubmitError && (
+                <div
+                  role="alert"
+                  aria-live="assertive"
+                  className="mx-4 mt-4 sm:mx-6 sm:mt-6 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-800"
+                >
+                  <AlertCircle size={20} className="mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-bold">No se pudo guardar la factura</p>
+                    <p className="text-sm">{invoiceSubmitError}</p>
+                  </div>
+                </div>
+              )}
+
               <div className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 border-b border-zinc-100 shrink-0">
                 <div>
                   <div className="flex items-center justify-between mb-2">
@@ -653,13 +735,35 @@ export default function PurchaseInvoiceModule() {
                   )}
                 </div>
                 <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-                  <button type="button" onClick={() => setIsModalOpen(false)} className="w-full sm:w-auto px-6 py-2 rounded-xl border border-zinc-200 text-zinc-600 font-bold hover:bg-white transition-all">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isSubmittingInvoice) return;
+                      setInvoiceSubmitError('');
+                      setIsModalOpen(false);
+                    }}
+                    disabled={isSubmittingInvoice}
+                    className="w-full sm:w-auto px-6 py-2 rounded-xl border border-zinc-200 text-zinc-600 font-bold hover:bg-white transition-all disabled:cursor-not-allowed disabled:opacity-50"
+                  >
                     Cancelar
                   </button>
                   {hasPermission('products', 'edit') && (
-                    <button type="submit" className="w-full sm:w-auto px-8 py-2 rounded-xl bg-zinc-900 text-white font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200 flex items-center justify-center gap-2">
-                      <Save size={18} />
-                      Guardar factura
+                    <button
+                      type="submit"
+                      disabled={isSubmittingInvoice}
+                      className="w-full sm:w-auto px-8 py-2 rounded-xl bg-zinc-900 text-white font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200 flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isSubmittingInvoice ? (
+                        <>
+                          <Loader2 size={18} className="animate-spin" />
+                          Guardando factura...
+                        </>
+                      ) : (
+                        <>
+                          <Save size={18} />
+                          Guardar factura
+                        </>
+                      )}
                     </button>
                   )}
                 </div>
