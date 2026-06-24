@@ -131,7 +131,7 @@ export default async function handler(req: any, res: any) {
         );
       }
 
-      return sendError(res, "Endpoint de configuraciÃ³n no encontrado", 404);
+      return sendError(res, "Endpoint de configuración no encontrado", 404);
     }
 
 
@@ -311,7 +311,7 @@ export default async function handler(req: any, res: any) {
       const expectedPassword = String(process.env.RESET_APP_PASSWORD || "admin123");
 
       if (!adminPassword || adminPassword !== expectedPassword) {
-        return sendError(res, "ContraseÃ±a de administrador incorrecta", 403);
+        return sendError(res, "Contraseña de administrador incorrecta", 403);
       }
 
       if (confirmation !== "REESTABLECER") {
@@ -446,7 +446,7 @@ export default async function handler(req: any, res: any) {
             );
           }
           await client.query("COMMIT");
-          return sendSuccess(res, null, "ConfiguraciÃ³n guardada");
+          return sendSuccess(res, null, "Configuración guardada");
         } catch (error) {
           await client.query("ROLLBACK");
           throw error;
@@ -464,7 +464,7 @@ export default async function handler(req: any, res: any) {
            RETURNING id, name, tipo, activo`,
           [name, tipo]
         );
-        return sendSuccess(res, mapPaymentMethod(result.rows[0]), "MÃ©todo de pago creado", 201);
+        return sendSuccess(res, mapPaymentMethod(result.rows[0]), "Método de pago creado", 201);
       }
 
       if (endpoint === "product-categories") {
@@ -475,7 +475,7 @@ export default async function handler(req: any, res: any) {
            RETURNING id, name, description, estado`,
           [name, body.description || null, body.estado || "activo"]
         );
-        return sendSuccess(res, mapCategory(result.rows[0]), "CategorÃ­a creada", 201);
+        return sendSuccess(res, mapCategory(result.rows[0]), "Categoría creada", 201);
       }
 
       if (endpoint === "product-families" || endpoint === "families") {
@@ -565,11 +565,11 @@ export default async function handler(req: any, res: any) {
         );
       }
 
-      return sendError(res, "Endpoint de configuraciÃ³n no encontrado", 404);
+      return sendError(res, "Endpoint de configuración no encontrado", 404);
     }
 
     return sendError(res, "Method not allowed", 405);
   } catch (error: any) {
-    return sendError(res, error?.message || "Error en configuraciÃ³n", 400);
+    return sendError(res, error?.message || "Error en configuración", 400);
   }
 }

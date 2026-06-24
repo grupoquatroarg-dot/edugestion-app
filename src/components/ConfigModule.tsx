@@ -349,7 +349,7 @@ export default function ConfigModule() {
     e.preventDefault();
 
     if (!resetAdminPassword.trim()) {
-      showStatus('Ingrese la contraseÃ±a del administrador', 'error');
+      showStatus('Ingrese la contraseña del administrador', 'error');
       return;
     }
 
@@ -572,7 +572,7 @@ const renderTabs = () => {
                     <h3 className="text-sm font-black text-red-700 uppercase tracking-widest">Zona de peligro</h3>
                     <p className="text-xs text-red-600/80 font-bold mt-1 leading-relaxed">
                       Restablece todos los datos operativos de la app para empezar pruebas desde cero.
-                      Se conservan usuarios, permisos, configuraciÃ³n base y formas de pago.
+                      Se conservan usuarios, permisos, configuración base y formas de pago.
                     </p>
                   </div>
                 </div>
@@ -1170,16 +1170,16 @@ const renderTabs = () => {
               <div>
                 <h3 className="text-xl sm:text-2xl font-black tracking-tight">Restablecer datos</h3>
                 <p className="text-xs sm:text-sm text-white/80 font-bold mt-1">
-                  Esta acciÃ³n borra datos operativos y no se puede deshacer.
+                  Esta acción borra datos operativos y no se puede deshacer.
                 </p>
               </div>
             </div>
 
             <div className="p-5 sm:p-8 space-y-5">
               <div className="p-4 rounded-2xl bg-red-50 border border-red-100 text-red-700 text-xs font-bold leading-relaxed">
-                Se eliminarÃ¡n productos, clientes, ventas, compras, finanzas, rutas, checklist,
-                reportes operativos, pedidos a proveedor, proveedores, categorÃ­as y familias.
-                Se conservarÃ¡n usuarios, permisos, datos del negocio y formas de pago.
+                Se eliminarán productos, clientes, ventas, compras, finanzas, rutas, checklist,
+                reportes operativos, pedidos a proveedor, proveedores, categorías y familias.
+                Se conservarán usuarios, permisos, datos del negocio y formas de pago.
               </div>
 
               <div className="p-4 rounded-2xl bg-amber-50 border border-amber-100 text-amber-800 text-xs font-bold leading-relaxed space-y-3">
@@ -1201,21 +1201,21 @@ const renderTabs = () => {
 
               <div className="space-y-2">
                 <label className="text-xs font-black uppercase tracking-widest text-zinc-400">
-                  ContraseÃ±a del administrador
+                  Contraseña del administrador
                 </label>
                 <input
                   type="password"
                   value={resetAdminPassword}
                   onChange={(e) => setResetAdminPassword(e.target.value)}
                   className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-red-500 outline-none transition-all"
-                  placeholder="Ingrese la contraseÃ±a"
+                  placeholder="Ingrese la contraseña"
                   autoComplete="current-password"
                 />
               </div>
 
               <div className="space-y-2">
                 <label className="text-xs font-black uppercase tracking-widest text-zinc-400">
-                  ConfirmaciÃ³n
+                  Confirmación
                 </label>
                 <input
                   type="text"

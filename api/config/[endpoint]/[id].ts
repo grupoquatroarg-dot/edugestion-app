@@ -13,7 +13,7 @@ export default async function handler(req: any, res: any) {
   const id = getId(req);
 
   if (!id) {
-    return sendError(res, "ID invÃ¡lido", 400);
+    return sendError(res, "ID inválido", 400);
   }
 
   try {
@@ -32,7 +32,7 @@ export default async function handler(req: any, res: any) {
           "UPDATE payment_methods SET name = $1, tipo = $2, activo = $3 WHERE id = $4",
           [name, body.tipo || "Efectivo", body.activo !== undefined ? Number(body.activo) : 1, id]
         );
-        return sendSuccess(res, null, "MÃ©todo de pago actualizado");
+        return sendSuccess(res, null, "Método de pago actualizado");
       }
 
       if (endpoint === "product-categories") {
@@ -40,7 +40,7 @@ export default async function handler(req: any, res: any) {
           "UPDATE product_categories SET name = $1, description = $2, estado = $3 WHERE id = $4",
           [name, body.description || null, body.estado || "activo", id]
         );
-        return sendSuccess(res, null, "CategorÃ­a actualizada");
+        return sendSuccess(res, null, "Categoría actualizada");
       }
 
       if (endpoint === "product-families" || endpoint === "families") {
@@ -52,7 +52,7 @@ export default async function handler(req: any, res: any) {
         return sendSuccess(res, null, "Familia actualizada");
       }
 
-      return sendError(res, "Endpoint de configuraciÃ³n no encontrado", 404);
+      return sendError(res, "Endpoint de configuración no encontrado", 404);
     }
 
     if (req.method === "DELETE") {
@@ -64,12 +64,12 @@ export default async function handler(req: any, res: any) {
 
       if (endpoint === "payment-methods") {
         await pool.query("DELETE FROM payment_methods WHERE id = $1", [id]);
-        return sendSuccess(res, null, "MÃ©todo de pago eliminado");
+        return sendSuccess(res, null, "Método de pago eliminado");
       }
 
       if (endpoint === "product-categories") {
         await pool.query("DELETE FROM product_categories WHERE id = $1", [id]);
-        return sendSuccess(res, null, "CategorÃ­a eliminada");
+        return sendSuccess(res, null, "Categoría eliminada");
       }
 
       if (endpoint === "product-families" || endpoint === "families") {
@@ -77,7 +77,7 @@ export default async function handler(req: any, res: any) {
         return sendSuccess(res, null, "Familia eliminada");
       }
 
-      return sendError(res, "Endpoint de configuraciÃ³n no encontrado", 404);
+      return sendError(res, "Endpoint de configuración no encontrado", 404);
     }
 
     return sendError(res, "Method not allowed", 405);
@@ -85,6 +85,6 @@ export default async function handler(req: any, res: any) {
     if (error?.code === "23503") {
       return sendError(res, "No se puede eliminar porque tiene datos relacionados.", 400);
     }
-    return sendError(res, error?.message || "Error en configuraciÃ³n", 400);
+    return sendError(res, error?.message || "Error en configuración", 400);
   }
 }
