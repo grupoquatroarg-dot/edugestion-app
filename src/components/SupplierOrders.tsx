@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Clock, CheckCircle2, Package, AlertCircle, User, Trash2, Send, Download, Edit2, Plus, Minus, X, Search, Calendar, BarChart3 } from 'lucide-react';
+import { Clock, CheckCircle2, Package, AlertCircle, User, Trash2, Send, Download, Edit2, Plus, Minus, X, Search, Calendar, BarChart3, RefreshCw, FileText, Truck, FilterX, Loader2 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { useAuth } from '../contexts/AuthContext';
@@ -42,6 +42,11 @@ export default function SupplierOrders() {
   const [allProducts, setAllProducts] = useState<any[]>([]);
   const [businessSettings, setBusinessSettings] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [updatingOrderId, setUpdatingOrderId] = useState<number | null>(null);
+  const [deletingOrderId, setDeletingOrderId] = useState<number | null>(null);
+  const [savingChanges, setSavingChanges] = useState(false);
   
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingOrder, setEditingOrder] = useState<SupplierOrder | null>(null);
@@ -58,7 +63,7 @@ export default function SupplierOrders() {
   const [reportDateTo, setReportDateTo] = useState('');
 
   useEffect(() => {
-    fetchOrders();
+    fetchOrders(true);
     fetchBusinessSettings();
     fetchAllProducts();
   }, []);
@@ -85,29 +90,46 @@ export default function SupplierOrders() {
     }
   };
 
-  const fetchOrders = async () => {
+  const fetchOrders = async (initialLoad = false) => {
+    if (initialLoad) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
+
+    setLoadError('');
+
     try {
       const res = await apiFetch('/api/sales?endpoint=supplier-orders');
       const body = await res.json();
-      const data = unwrapResponse(body);
+      const data = unwrapResponse<SupplierOrder[]>(body);
+
+      if (!Array.isArray(data)) {
+        throw new Error('La respuesta de pedidos no tiene el formato esperado.');
+      }
+
       setOrders(data);
     } catch (error) {
       console.error("Error fetching supplier orders:", error);
+      setLoadError(error instanceof Error ? error.message : 'No se pudieron cargar los pedidos a proveedor.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
   const handleCompleteSale = async (id: number) => {
     if (!window.confirm("¿Deseas completar la entrega del pedido? Si viene de una venta ya registrada, no duplicará la venta. Si viene de un pedido de cliente, solo cargará stock para poder entregarlo luego.")) return;
 
+    setUpdatingOrderId(id);
+
     try {
       const res = await apiFetch(`/api/sales?endpoint=supplier-order-complete&id=${id}`, {
         method: 'POST'
       });
-      
+
       await unwrapResponse(res);
-      
+
       alert("Pedido completado correctamente. Si era un faltante de pedido cliente, el stock ya quedó cargado para entregar.");
       // Find the order to generate the remito
       const order = orders.find(o => o.id === id);
@@ -118,6 +140,8 @@ export default function SupplierOrders() {
     } catch (error) {
       console.error("Error completing sale:", error);
       alert("Error al completar la venta");
+    } finally {
+      setUpdatingOrderId(null);
     }
   };
 
@@ -337,12 +361,14 @@ export default function SupplierOrders() {
   };
 
   const updateStatus = async (id: number, newStatus: string) => {
+    setUpdatingOrderId(id);
+
     try {
       const res = await apiFetch(`/api/sales?endpoint=supplier-order-status&id=${id}`, {
         method: 'POST',
         body: JSON.stringify({ estado: newStatus })
       });
-      
+
       await unwrapResponse(res);
 
       setOrders(prev => prev.map(o => {
@@ -358,22 +384,29 @@ export default function SupplierOrders() {
     } catch (error) {
       console.error("Error updating status:", error);
       alert("Error al actualizar el estado");
+    } finally {
+      setUpdatingOrderId(null);
     }
   };
 
   const deleteOrder = async (id: number) => {
     if (!window.confirm("¿Estás seguro de eliminar este pedido?")) return;
+
+    setDeletingOrderId(id);
+
     try {
       const res = await apiFetch(`/api/sales?endpoint=supplier-order&id=${id}`, {
         method: 'DELETE'
       });
-      
+
       await unwrapResponse(res);
-      
+
       setOrders(prev => prev.filter(o => o.id !== id));
     } catch (error) {
       console.error("Error deleting order:", error);
       alert("Error al eliminar el pedido");
+    } finally {
+      setDeletingOrderId(null);
     }
   };
 
@@ -416,13 +449,16 @@ export default function SupplierOrders() {
   };
 
   const handleSaveChanges = async () => {
-    if (!editingOrder) return;
+    if (!editingOrder || savingChanges) return;
+
+    setSavingChanges(true);
+
     try {
       const res = await apiFetch(`/api/sales?endpoint=supplier-order-items&id=${editingOrder.id}`, {
         method: 'PUT',
         body: JSON.stringify({ items: editingItems, notes: editingNotes })
       });
-      
+
       await unwrapResponse(res);
 
       setIsEditModalOpen(false);
@@ -430,6 +466,8 @@ export default function SupplierOrders() {
     } catch (error) {
       console.error("Error saving changes:", error);
       alert("Error al guardar los cambios");
+    } finally {
+      setSavingChanges(false);
     }
   };
 
@@ -453,6 +491,17 @@ export default function SupplierOrders() {
       return matchCliente && matchEstado && matchFecha && matchProducto;
     });
   }, [orders, filterCliente, filterEstado, filterFecha, filterProducto]);
+
+  const hasActiveFilters = Boolean(
+    filterCliente || filterProducto || filterEstado !== 'todos' || filterFecha
+  );
+
+  const clearFilters = () => {
+    setFilterCliente('');
+    setFilterProducto('');
+    setFilterEstado('todos');
+    setFilterFecha('');
+  };
 
 
 
@@ -641,74 +690,188 @@ export default function SupplierOrders() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
+      <div className="p-4 sm:p-6 max-w-7xl mx-auto min-h-full" aria-live="polite" aria-busy="true">
+        <div className="mb-8">
+          <div className="h-9 w-72 max-w-full bg-zinc-200 rounded-lg animate-pulse" />
+          <div className="h-4 w-96 max-w-full bg-zinc-100 rounded mt-3 animate-pulse" />
+        </div>
+
+        <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm p-6 mb-8">
+          <div className="flex items-center gap-3 mb-6">
+            <Loader2 className="animate-spin text-zinc-700" size={22} />
+            <div>
+              <p className="font-bold text-zinc-900">Cargando pedidos a proveedor…</p>
+              <p className="text-sm text-zinc-500">Estamos consultando pedidos, productos y estados.</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {[0, 1, 2, 3].map((item) => (
+              <div key={item} className="space-y-2">
+                <div className="h-3 w-20 bg-zinc-100 rounded animate-pulse" />
+                <div className="h-10 w-full bg-zinc-100 rounded-xl animate-pulse" />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-5">
+          {[0, 1].map((item) => (
+            <div key={item} className="bg-white rounded-2xl border border-zinc-200 overflow-hidden animate-pulse">
+              <div className="p-6 bg-zinc-50 flex items-center gap-4">
+                <div className="h-12 w-12 bg-zinc-200 rounded-xl" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-5 w-48 bg-zinc-200 rounded" />
+                  <div className="h-3 w-64 max-w-full bg-zinc-100 rounded" />
+                </div>
+              </div>
+              <div className="p-6 space-y-3">
+                <div className="h-4 w-full bg-zinc-100 rounded" />
+                <div className="h-4 w-5/6 bg-zinc-100 rounded" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError && orders.length === 0) {
+    return (
+      <div className="p-4 sm:p-6 max-w-7xl mx-auto min-h-full flex items-center justify-center">
+        <div className="w-full max-w-xl bg-white rounded-2xl border border-red-200 shadow-sm p-8 text-center">
+          <div className="w-14 h-14 mx-auto rounded-2xl bg-red-50 text-red-600 flex items-center justify-center mb-4">
+            <AlertCircle size={28} />
+          </div>
+          <h1 className="text-xl font-black text-zinc-900">No pudimos cargar los pedidos</h1>
+          <p className="text-sm text-zinc-500 mt-2">{loadError}</p>
+          <button
+            type="button"
+            onClick={() => fetchOrders(true)}
+            className="mt-6 inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-zinc-900 text-white text-sm font-bold hover:bg-zinc-800 transition-colors"
+          >
+            <RefreshCw size={17} />
+            Reintentar
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto h-full overflow-y-auto custom-scrollbar">
+    <div className="p-4 sm:p-6 max-w-7xl mx-auto h-full overflow-y-auto custom-scrollbar">
       <div className="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
           <h1 className="text-3xl font-bold text-zinc-900">Pedidos a Proveedor</h1>
           <p className="text-zinc-500 mt-1">Gestión de productos sin stock agrupados por cliente</p>
         </div>
+        <button
+          type="button"
+          onClick={() => fetchOrders()}
+          disabled={refreshing}
+          aria-label="Actualizar pedidos a proveedor"
+          title="Actualizar pedidos a proveedor"
+          className="w-full md:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-zinc-200 rounded-xl text-sm font-bold text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+        >
+          <RefreshCw size={17} className={refreshing ? 'animate-spin' : ''} />
+          {refreshing ? 'Actualizando…' : 'Actualizar pedidos'}
+        </button>
       </div>
 
-      {/* Filters Bar */}
-      <div className="mb-8 p-6 bg-white rounded-2xl border border-zinc-200 shadow-sm grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="space-y-2">
-          <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</label>
-          <div className="relative">
-            <User className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
-            <input 
-              type="text"
-              placeholder="Buscar por cliente..."
-              value={filterCliente}
-              onChange={(e) => setFilterCliente(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all"
-            />
+      {loadError && (
+        <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3" role="alert">
+          <div className="flex items-start gap-3">
+            <AlertCircle size={20} className="text-amber-600 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-bold text-amber-900">No se pudo actualizar la información</p>
+              <p className="text-sm text-amber-700">{loadError}</p>
+            </div>
           </div>
-        </div>
-        <div className="space-y-2">
-          <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Producto / Código</label>
-          <div className="relative">
-            <Package className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
-            <input 
-              type="text"
-              placeholder="Buscar producto..."
-              value={filterProducto}
-              onChange={(e) => setFilterProducto(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all"
-            />
-          </div>
-        </div>
-        <div className="space-y-2">
-          <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Estado</label>
-          <select 
-            value={filterEstado}
-            onChange={(e) => setFilterEstado(e.target.value)}
-            className="w-full px-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all font-medium"
+          <button
+            type="button"
+            onClick={() => fetchOrders()}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-white border border-amber-200 rounded-xl text-sm font-bold text-amber-800 hover:bg-amber-100 transition-colors"
           >
-            <option value="todos">Todos los estados</option>
-            <option value="pendiente">Pendiente</option>
-            <option value="pedido_realizado">Pedido Realizado</option>
-            <option value="auditar_pedido">Auditar Pedido</option>
-            <option value="entregado">Entregado</option>
-          </select>
+            <RefreshCw size={16} />
+            Reintentar
+          </button>
         </div>
-        <div className="space-y-2">
-          <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</label>
-          <div className="relative">
-            <Clock className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
-            <input 
-              type="date"
-              value={filterFecha}
-              onChange={(e) => setFilterFecha(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-zinc-50 border border-zinc-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all"
-            />
+      )}
+
+      {/* Filters Bar */}
+      <div className="mb-8 p-5 sm:p-6 bg-white rounded-2xl border border-zinc-200 shadow-sm">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          <div className="space-y-2">
+            <label htmlFor="supplier-filter-client" className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</label>
+            <div className="relative">
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
+              <input
+                id="supplier-filter-client"
+                type="text"
+                placeholder="Buscar por cliente..."
+                value={filterCliente}
+                onChange={(e) => setFilterCliente(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 bg-zinc-50 border border-zinc-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all"
+              />
+            </div>
           </div>
+          <div className="space-y-2">
+            <label htmlFor="supplier-filter-product" className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Producto o código</label>
+            <div className="relative">
+              <Package className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
+              <input
+                id="supplier-filter-product"
+                type="text"
+                placeholder="Buscar producto o código..."
+                value={filterProducto}
+                onChange={(e) => setFilterProducto(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 bg-zinc-50 border border-zinc-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all"
+              />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <label htmlFor="supplier-filter-status" className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Estado</label>
+            <select
+              id="supplier-filter-status"
+              value={filterEstado}
+              onChange={(e) => setFilterEstado(e.target.value)}
+              className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all font-medium"
+            >
+              <option value="todos">Todos los estados</option>
+              <option value="pendiente">Pendiente</option>
+              <option value="pedido_realizado">Pedido realizado</option>
+              <option value="auditar_pedido">Auditar pedido</option>
+              <option value="entregado">Entregado</option>
+            </select>
+          </div>
+          <div className="space-y-2">
+            <label htmlFor="supplier-filter-date" className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</label>
+            <div className="relative">
+              <Clock className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
+              <input
+                id="supplier-filter-date"
+                type="date"
+                value={filterFecha}
+                onChange={(e) => setFilterFecha(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 bg-zinc-50 border border-zinc-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900/5 transition-all"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5 pt-4 border-t border-zinc-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <p className="text-sm text-zinc-500" aria-live="polite">
+            Mostrando <span className="font-bold text-zinc-900">{filteredOrders.length}</span> de{' '}
+            <span className="font-bold text-zinc-900">{orders.length}</span> pedidos.
+          </p>
+          <button
+            type="button"
+            onClick={clearFilters}
+            disabled={!hasActiveFilters}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-zinc-600 hover:bg-zinc-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <FilterX size={16} />
+            Limpiar filtros
+          </button>
         </div>
       </div>
       <div className="mb-8 p-6 bg-white rounded-2xl border border-zinc-200 shadow-sm">
@@ -856,37 +1019,57 @@ export default function SupplierOrders() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
-                <select
-                  value={order.estado}
-                  onChange={(e) => updateStatus(order.id, e.target.value)}
-                  disabled={order.estado === 'entregado' || !hasPermission('suppliers', 'edit')}
-                  className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border outline-none transition-all ${getStatusStyles(order.estado)} ${order.estado === 'entregado' || !hasPermission('suppliers', 'edit') ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  <option value="pendiente">Pendiente</option>
-                  <option value="pedido_realizado">Pedido Realizado</option>
-                  <option value="auditar_pedido">Auditar Pedido</option>
-                  {order.estado === 'entregado' && <option value="entregado">Entregado</option>}
-                </select>
-
-                {hasPermission('suppliers', 'delete') && (
-                  <button
-                    onClick={() => deleteOrder(order.id)}
-                    className="p-2 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                    title="Eliminar pedido"
+              <div className="flex flex-col sm:flex-row sm:items-end gap-3 w-full lg:w-auto">
+                <div className="space-y-1.5 min-w-[190px]">
+                  <label
+                    htmlFor={`supplier-order-status-${order.id}`}
+                    className="block text-[9px] font-black uppercase tracking-widest text-zinc-400"
                   >
-                    <Trash2 size={18} />
-                  </button>
-                )}
-
-                {order.estado === 'auditar_pedido' && hasPermission('suppliers', 'edit') && (
-                  <button
-                    onClick={() => handleStartEdit(order)}
-                    className="flex items-center gap-2 px-3 py-1.5 bg-zinc-100 text-zinc-700 rounded-lg text-xs font-bold hover:bg-zinc-200 transition-all"
+                    Cambiar estado manualmente
+                  </label>
+                  <select
+                    id={`supplier-order-status-${order.id}`}
+                    value={order.estado}
+                    onChange={(e) => updateStatus(order.id, e.target.value)}
+                    disabled={order.estado === 'entregado' || !hasPermission('suppliers', 'edit') || updatingOrderId === order.id}
+                    aria-label={`Cambiar estado del pedido ${order.numero_pedido || order.id}`}
+                    title="Cambiar manualmente el estado del pedido"
+                    className={`w-full px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border outline-none transition-all ${getStatusStyles(order.estado)} ${order.estado === 'entregado' || !hasPermission('suppliers', 'edit') || updatingOrderId === order.id ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
-                    <Edit2 size={14} /> Editar
-                  </button>
-                )}
+                    <option value="pendiente">Pendiente</option>
+                    <option value="pedido_realizado">Pedido realizado</option>
+                    <option value="auditar_pedido">Auditar pedido</option>
+                    {order.estado === 'entregado' && <option value="entregado">Entregado</option>}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {order.estado === 'auditar_pedido' && hasPermission('suppliers', 'edit') && (
+                    <button
+                      type="button"
+                      onClick={() => handleStartEdit(order)}
+                      disabled={updatingOrderId === order.id}
+                      aria-label={`Editar productos del pedido ${order.numero_pedido || order.id}`}
+                      title="Editar productos y observaciones"
+                      className="flex items-center justify-center gap-2 px-3 py-2 bg-zinc-100 text-zinc-700 rounded-lg text-xs font-bold hover:bg-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    >
+                      <Edit2 size={14} /> Editar pedido
+                    </button>
+                  )}
+
+                  {hasPermission('suppliers', 'delete') && (
+                    <button
+                      type="button"
+                      onClick={() => deleteOrder(order.id)}
+                      disabled={deletingOrderId === order.id || updatingOrderId === order.id}
+                      className="p-2.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                      title="Eliminar pedido"
+                      aria-label={`Eliminar pedido ${order.numero_pedido || order.id}`}
+                    >
+                      {deletingOrderId === order.id ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />}
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -934,77 +1117,130 @@ export default function SupplierOrders() {
             </div>
 
             {/* Footer Actions */}
-            <div className="p-4 bg-zinc-50/30 border-t border-zinc-100 flex justify-end gap-3">
-               <button 
-                onClick={() => generatePDF(order)}
-                className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-zinc-600 hover:bg-zinc-100 rounded-lg transition-all"
-               >
-                  <Download size={14} /> Generar PDF pedido proveedor
-               </button>
-               {order.estado === 'pendiente' && hasPermission('suppliers', 'edit') && (
-                 <button 
-                  onClick={() => updateStatus(order.id, 'pedido_realizado')}
-                  className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-zinc-900 text-white hover:bg-zinc-800 rounded-lg transition-all shadow-sm"
-                 >
-                    <Send size={14} /> Marcar como Pedido Realizado
-                 </button>
-               )}
-               {order.estado === 'pedido_realizado' && hasPermission('suppliers', 'edit') && (
-                 <button 
-                  onClick={() => updateStatus(order.id, 'auditar_pedido')}
-                  className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-zinc-900 text-white hover:bg-zinc-800 rounded-lg transition-all shadow-sm"
-                 >
-                    <Send size={14} /> Pasar a Auditar Pedido
-                 </button>
-               )}
-               {order.estado === 'auditar_pedido' && hasPermission('suppliers', 'edit') && (
-                 <>
-                   <button 
-                    onClick={() => handleCompleteSale(order.id)}
-                    className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-zinc-900 text-white hover:bg-zinc-800 rounded-lg transition-all shadow-sm"
-                   >
-                      <CheckCircle2 size={14} /> Completar Entrega
-                   </button>
-                 </>
-               )}
-               {order.estado === 'entregado' && (
-                 <>
-                   <button 
+            <div className="p-4 sm:p-5 bg-zinc-50/40 border-t border-zinc-100 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                <span className="text-[9px] font-black uppercase tracking-widest text-zinc-400 sm:mr-1">Documentos</span>
+                <button
+                  type="button"
+                  onClick={() => generatePDF(order)}
+                  aria-label={`Descargar PDF del pedido ${order.numero_pedido || order.id}`}
+                  title="Descargar el detalle del pedido en PDF"
+                  className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold text-zinc-700 bg-white border border-zinc-200 hover:bg-zinc-100 rounded-lg transition-all"
+                >
+                  <FileText size={15} /> PDF del pedido
+                </button>
+
+                {order.estado === 'entregado' && (
+                  <button
+                    type="button"
                     onClick={() => generateRemitoPDF(order)}
-                    className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
-                   >
-                      <Download size={14} /> Descargar remito
-                   </button>
-                   <div className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-emerald-600 bg-emerald-50 rounded-lg">
-                      <CheckCircle2 size={14} /> Entrega Realizada
-                   </div>
-                 </>
-               )}
+                    aria-label={`Descargar remito del pedido ${order.numero_pedido || order.id}`}
+                    title="Descargar el remito de entrega"
+                    className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 rounded-lg transition-all"
+                  >
+                    <Truck size={15} /> Remito de entrega
+                  </button>
+                )}
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                <span className="text-[9px] font-black uppercase tracking-widest text-zinc-400 sm:mr-1">Siguiente acción</span>
+
+                {order.estado === 'pendiente' && hasPermission('suppliers', 'edit') && (
+                  <button
+                    type="button"
+                    onClick={() => updateStatus(order.id, 'pedido_realizado')}
+                    disabled={updatingOrderId === order.id}
+                    aria-label={`Confirmar pedido realizado para el pedido ${order.numero_pedido || order.id}`}
+                    title="Avanzar el pedido al estado Pedido realizado"
+                    className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed rounded-lg transition-all shadow-sm"
+                  >
+                    {updatingOrderId === order.id ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+                    {updatingOrderId === order.id ? 'Actualizando…' : 'Confirmar pedido realizado'}
+                  </button>
+                )}
+
+                {order.estado === 'pedido_realizado' && hasPermission('suppliers', 'edit') && (
+                  <button
+                    type="button"
+                    onClick={() => updateStatus(order.id, 'auditar_pedido')}
+                    disabled={updatingOrderId === order.id}
+                    aria-label={`Enviar a auditoría el pedido ${order.numero_pedido || order.id}`}
+                    title="Avanzar el pedido al estado Auditar pedido"
+                    className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold bg-orange-600 text-white hover:bg-orange-700 disabled:opacity-60 disabled:cursor-not-allowed rounded-lg transition-all shadow-sm"
+                  >
+                    {updatingOrderId === order.id ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+                    {updatingOrderId === order.id ? 'Actualizando…' : 'Enviar a auditoría'}
+                  </button>
+                )}
+
+                {order.estado === 'auditar_pedido' && hasPermission('suppliers', 'edit') && (
+                  <button
+                    type="button"
+                    onClick={() => handleCompleteSale(order.id)}
+                    disabled={updatingOrderId === order.id}
+                    aria-label={`Completar entrega del pedido ${order.numero_pedido || order.id}`}
+                    title="Completar la entrega y actualizar el stock correspondiente"
+                    className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed rounded-lg transition-all shadow-sm"
+                  >
+                    {updatingOrderId === order.id ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+                    {updatingOrderId === order.id ? 'Completando…' : 'Completar entrega y stock'}
+                  </button>
+                )}
+
+                {order.estado === 'entregado' && (
+                  <div className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg">
+                    <CheckCircle2 size={15} /> Entrega realizada
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         ))}
 
         {filteredOrders.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-32 text-zinc-300 bg-white rounded-2xl border border-zinc-200 border-dashed">
-            <AlertCircle size={64} className="mb-4 opacity-10" />
-            <p className="text-lg font-medium">No se encontraron pedidos con los filtros aplicados</p>
-            <p className="text-sm">Ajusta los filtros para ver más resultados</p>
+          <div className="flex flex-col items-center justify-center py-20 px-6 text-center bg-white rounded-2xl border border-zinc-200 border-dashed">
+            <div className="w-16 h-16 rounded-2xl bg-zinc-100 text-zinc-400 flex items-center justify-center mb-5">
+              {orders.length === 0 ? <Package size={30} /> : <Search size={30} />}
+            </div>
+            <p className="text-lg font-bold text-zinc-800">
+              {orders.length === 0 ? 'No hay pedidos a proveedor' : 'No hay resultados para estos filtros'}
+            </p>
+            <p className="text-sm text-zinc-500 mt-2 max-w-lg">
+              {orders.length === 0
+                ? 'Los pedidos aparecerán aquí cuando una venta o un pedido de cliente necesite productos sin stock.'
+                : 'Probá modificando los criterios de búsqueda o limpiando todos los filtros.'}
+            </p>
+            {orders.length > 0 && hasActiveFilters && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="mt-5 inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-zinc-900 text-white rounded-xl text-sm font-bold hover:bg-zinc-800 transition-colors"
+              >
+                <FilterX size={16} />
+                Limpiar filtros
+              </button>
+            )}
           </div>
         )}
       </div>
 
       {/* Edit Modal */}
       {isEditModalOpen && editingOrder && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
-          <div className="bg-white rounded-[32px] shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="edit-supplier-order-title">
+          <div className="bg-white rounded-[28px] sm:rounded-[32px] shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
             <div className="p-8 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
               <div>
-                <h2 className="text-2xl font-black text-zinc-900">Editar Pedido #{editingOrder.numero_pedido || editingOrder.id}</h2>
+                <h2 id="edit-supplier-order-title" className="text-2xl font-black text-zinc-900">Editar Pedido #{editingOrder.numero_pedido || editingOrder.id}</h2>
                 <p className="text-zinc-500 text-sm">Cliente: {editingOrder.cliente}</p>
               </div>
-              <button 
+              <button
+                type="button"
                 onClick={() => setIsEditModalOpen(false)}
-                className="p-2 hover:bg-zinc-100 rounded-full transition-all"
+                disabled={savingChanges}
+                aria-label="Cerrar edición del pedido"
+                title="Cerrar"
+                className="p-2 hover:bg-zinc-100 rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-all"
               >
                 <X size={24} className="text-zinc-400" />
               </button>
@@ -1023,22 +1259,31 @@ export default function SupplierOrders() {
                       </div>
                       <div className="flex items-center gap-4">
                         <div className="flex items-center gap-2 bg-white border border-zinc-200 rounded-lg p-1">
-                          <button 
+                          <button
+                            type="button"
                             onClick={() => handleUpdateQuantity(item.product_id, -1)}
-                            className="w-6 h-6 flex items-center justify-center hover:bg-zinc-50 rounded text-zinc-400"
+                            aria-label={`Reducir cantidad de ${item.product_name}`}
+                            title="Reducir cantidad"
+                            className="w-7 h-7 flex items-center justify-center hover:bg-zinc-50 rounded text-zinc-500"
                           >
                             <Minus size={14} />
                           </button>
                           <span className="w-8 text-center font-mono font-bold text-sm">{item.cantidad}</span>
-                          <button 
+                          <button
+                            type="button"
                             onClick={() => handleUpdateQuantity(item.product_id, 1)}
-                            className="w-6 h-6 flex items-center justify-center hover:bg-zinc-50 rounded text-zinc-400"
+                            aria-label={`Aumentar cantidad de ${item.product_name}`}
+                            title="Aumentar cantidad"
+                            className="w-7 h-7 flex items-center justify-center hover:bg-zinc-50 rounded text-zinc-500"
                           >
                             <Plus size={14} />
                           </button>
                         </div>
-                        <button 
+                        <button
+                          type="button"
                           onClick={() => handleRemoveItem(item.product_id)}
+                          aria-label={`Quitar ${item.product_name} del pedido`}
+                          title="Quitar producto"
                           className="p-2 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
                         >
                           <Trash2 size={16} />
@@ -1060,7 +1305,7 @@ export default function SupplierOrders() {
                 <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">Agregar productos</h3>
                 <div className="relative">
                   <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
-                  <input 
+                  <input
                     type="text"
                     placeholder="Buscar por nombre o código..."
                     value={productSearch}
@@ -1073,7 +1318,10 @@ export default function SupplierOrders() {
                   {filteredProducts.map((product) => (
                     <button
                       key={product.id}
+                      type="button"
                       onClick={() => handleAddItem(product)}
+                      aria-label={`Agregar ${product.name} al pedido`}
+                      title="Agregar producto"
                       className="w-full flex items-center justify-between p-4 hover:bg-zinc-50 border border-transparent hover:border-zinc-100 rounded-2xl transition-all text-left"
                     >
                       <div>
@@ -1104,17 +1352,22 @@ export default function SupplierOrders() {
             </div>
 
             <div className="p-8 border-t border-zinc-100 bg-zinc-50/50 flex justify-end gap-4">
-              <button 
+              <button
+                type="button"
                 onClick={() => setIsEditModalOpen(false)}
-                className="px-6 py-3 text-sm font-bold text-zinc-500 hover:bg-zinc-100 rounded-2xl transition-all"
+                disabled={savingChanges}
+                className="px-6 py-3 text-sm font-bold text-zinc-500 hover:bg-zinc-100 disabled:opacity-50 disabled:cursor-not-allowed rounded-2xl transition-all"
               >
                 Cancelar
               </button>
-              <button 
+              <button
+                type="button"
                 onClick={handleSaveChanges}
-                className="px-8 py-3 bg-zinc-900 text-white rounded-2xl font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200"
+                disabled={savingChanges || editingItems.length === 0}
+                className="px-8 py-3 bg-zinc-900 text-white rounded-2xl font-bold hover:bg-zinc-800 disabled:opacity-60 disabled:cursor-not-allowed transition-all shadow-lg shadow-zinc-200 flex items-center justify-center gap-2"
               >
-                Guardar Cambios
+                {savingChanges && <Loader2 size={17} className="animate-spin" />}
+                {savingChanges ? 'Guardando…' : 'Guardar cambios'}
               </button>
             </div>
           </div>
