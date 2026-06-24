@@ -33,6 +33,14 @@ import { unwrapResponse, apiFetch } from '../utils/api';
 
 const socket = getSocket();
 
+const getDefaultSalePaymentMethod = (methods: any[]) => {
+  const cashMethod = methods.find(
+    method => String(method?.name || '').trim().toLowerCase() === 'efectivo'
+  );
+
+  return cashMethod?.name || methods[0]?.name || '';
+};
+
 export default function SalesModule() {
   const { hasPermission } = useAuth();
   const [activeTab, setActiveTab] = useState<'nueva' | 'historial' | 'saldos' | 'pedidos-clientes'>('nueva');
@@ -226,9 +234,10 @@ export default function SalesModule() {
       const data = unwrapResponse(body);
       setPaymentMethods(data);
       if (data.length > 0) {
-        setMetodoPago(data[0].name);
-        setMetodoPagoParcial(data[0].name);
-        setQuickPaymentForm(prev => ({ ...prev, metodo_pago: data[0].name }));
+        const defaultPaymentMethod = getDefaultSalePaymentMethod(data);
+        setMetodoPago(defaultPaymentMethod);
+        setMetodoPagoParcial(defaultPaymentMethod);
+        setQuickPaymentForm(prev => ({ ...prev, metodo_pago: defaultPaymentMethod }));
       }
     } catch (error) {
       console.error("Error fetching payment methods:", error);
@@ -559,8 +568,9 @@ export default function SalesModule() {
 
       setCart([]);
       setSelectedClienteId(1);
-      setMetodoPago(paymentMethods.length > 0 ? paymentMethods[0].name : '');
-      setMetodoPagoParcial(paymentMethods.length > 0 ? paymentMethods[0].name : '');
+      const defaultPaymentMethod = getDefaultSalePaymentMethod(paymentMethods);
+      setMetodoPago(defaultPaymentMethod);
+      setMetodoPagoParcial(defaultPaymentMethod);
       setMontoPagado('');
       setNotes('');
       setChequeData({
