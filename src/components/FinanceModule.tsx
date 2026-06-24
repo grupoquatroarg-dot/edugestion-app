@@ -40,6 +40,21 @@ type Movimiento = {
   nombre_cliente?: string;
 };
 
+const readApiJson = async (response: Response) => {
+  const contentType = response.headers.get('content-type') || '';
+
+  if (!contentType.toLowerCase().includes('application/json')) {
+    throw new Error(
+      response.ok
+        ? 'El servidor devolvió una respuesta inválida.'
+        : `No se pudo completar la solicitud al servidor (${response.status}).`
+    );
+  }
+
+  const body = await response.json();
+  return unwrapResponse(body);
+};
+
 export default function FinanceModule() {
   const { hasPermission } = useAuth();
   const [activeTab, setActiveTab] = useState<'resumen' | 'caja' | 'egresos' | 'movimientos' | 'cheques'>('resumen');
@@ -55,6 +70,8 @@ export default function FinanceModule() {
   const [chequesEstadoFilter, setChequesEstadoFilter] = useState('todos');
   const [chequesVencimientoFilter, setChequesVencimientoFilter] = useState('');
   const [proveedores, setProveedores] = useState<any[]>([]);
+  const [proveedoresLoading, setProveedoresLoading] = useState(false);
+  const [proveedoresError, setProveedoresError] = useState('');
   const [selectedCheque, setSelectedCheque] = useState<any>(null);
   const [showChequeDetailModal, setShowChequeDetailModal] = useState(false);
   const [egresoForm, setEgresoForm] = useState({
@@ -70,9 +87,8 @@ export default function FinanceModule() {
   const fetchMovimientos = async () => {
     try {
       const res = await apiFetch('/api/finanzas?endpoint=movimientos');
-      const body = await res.json();
-      const data = unwrapResponse(body);
-      setMovimientos(data);
+      const data = await readApiJson(res);
+      setMovimientos(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error("Error fetching movements:", error);
     }
@@ -81,22 +97,32 @@ export default function FinanceModule() {
   const fetchCheques = async () => {
     try {
       const res = await apiFetch('/api/finanzas?endpoint=cheques');
-      const body = await res.json();
-      const data = unwrapResponse(body);
-      setCheques(data);
+      const data = await readApiJson(res);
+      setCheques(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error("Error fetching cheques:", error);
     }
   };
 
   const fetchProveedores = async () => {
+    setProveedoresLoading(true);
+    setProveedoresError('');
+
     try {
-      const res = await apiFetch('/api/proveedores');
-      const body = await res.json();
-      const data = unwrapResponse(body);
+      const res = await apiFetch('/api/finanzas?endpoint=proveedores');
+      const data = await readApiJson(res);
+
+      if (!Array.isArray(data)) {
+        throw new Error('La respuesta de proveedores no tiene el formato esperado.');
+      }
+
       setProveedores(data);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching suppliers:", error);
+      setProveedores([]);
+      setProveedoresError(error?.message || 'No se pudieron cargar los proveedores.');
+    } finally {
+      setProveedoresLoading(false);
     }
   };
 
@@ -1075,15 +1101,42 @@ export default function FinanceModule() {
                       <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-2 tracking-widest">Proveedor Destino</label>
                       <select
                         required
-                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-4 focus:ring-red-500/10 focus:border-red-500 outline-none text-sm font-bold"
+                        disabled={proveedoresLoading || !!proveedoresError}
+                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-4 focus:ring-red-500/10 focus:border-red-500 outline-none text-sm font-bold disabled:opacity-60 disabled:cursor-not-allowed"
                         value={egresoForm.proveedor_id}
                         onChange={(e) => setEgresoForm({ ...egresoForm, proveedor_id: e.target.value })}
+                        aria-label="Seleccionar proveedor destino"
                       >
-                        <option value="">Seleccione un proveedor...</option>
+                        <option value="">
+                          {proveedoresLoading
+                            ? 'Cargando proveedores...'
+                            : proveedores.length === 0
+                              ? 'No hay proveedores disponibles'
+                              : 'Seleccione un proveedor...'}
+                        </option>
                         {proveedores.map(p => (
                           <option key={p.id} value={p.id}>{p.nombre}</option>
                         ))}
                       </select>
+
+                      {proveedoresError && (
+                        <div className="mt-3 flex flex-col sm:flex-row sm:items-center gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3" role="alert">
+                          <div className="flex items-start gap-2 flex-1">
+                            <AlertCircle size={18} className="text-red-600 shrink-0 mt-0.5" />
+                            <div>
+                              <p className="text-xs font-black text-red-700">No se pudieron cargar los proveedores</p>
+                              <p className="text-xs text-red-600 mt-1">{proveedoresError}</p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={fetchProveedores}
+                            className="px-4 py-2 rounded-xl bg-white border border-red-200 text-xs font-black text-red-700 hover:bg-red-100 transition-colors"
+                          >
+                            Reintentar
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

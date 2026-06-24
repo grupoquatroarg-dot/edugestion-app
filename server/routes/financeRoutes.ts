@@ -1,11 +1,25 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { financeRepository } from '../repositories/financeRepository.js';
+import { providerRepository } from '../repositories/providerRepository.js';
 import { requireAuth, requirePermission } from '../middleware/authMiddleware.js';
 import { validate } from '../middleware/validate.js';
 import { sendError, sendSuccess } from '../utils/response.js';
 
 const router = Router();
+
+router.get('/', requireAuth, requirePermission('current_accounts', 'view'), async (req, res) => {
+  if (String(req.query.endpoint || '') !== 'proveedores') {
+    return sendError(res, 'Endpoint de finanzas no encontrado', 404);
+  }
+
+  try {
+    const proveedores = await providerRepository.findAll();
+    return sendSuccess(res, proveedores);
+  } catch (error: any) {
+    return sendError(res, error.message || 'Error al obtener proveedores', error.statusCode || 400, error.errors || []);
+  }
+});
 
 const expenseSchema = z.object({
   body: z.object({

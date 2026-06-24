@@ -1,4 +1,5 @@
 import { financeRepository } from "../server/repositories/financeRepository.js";
+import { providerRepository } from "../server/repositories/providerRepository.js";
 import { UserRepository } from "../server/repositories/userRepository.js";
 import { verifyToken } from "../server/utils/jwt.js";
 import { sendError, sendSuccess } from "../server/utils/response.js";
@@ -95,6 +96,18 @@ export default async function handler(req: any, res: any) {
       return sendSuccess(res, cheques);
     } catch (error: any) {
       return sendError(res, error?.message || "Error al obtener cheques", error?.statusCode || 400, error?.errors || []);
+    }
+  }
+
+  if (req.method === "GET" && endpoint === "proveedores") {
+    const user = await requireCurrentAccountsPermission(req, res, "view");
+    if (!user) return;
+
+    try {
+      const proveedores = await providerRepository.findAll();
+      return sendSuccess(res, proveedores);
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al obtener proveedores", error?.statusCode || 400, error?.errors || []);
     }
   }
 
