@@ -13,6 +13,52 @@ interface PriceUpdateHistory {
   productos_afectados: number;
 }
 
+type PriceScope = 'all' | 'family' | 'company' | 'manual';
+type PriceChangeType = 'increase_pct' | 'decrease_pct' | 'increase_fixed' | 'decrease_fixed' | 'replace_margin' | 'recalculate_peps';
+type PriceTargetField = 'cost' | 'sale_price';
+
+interface PreviewConfiguration {
+  scope: PriceScope;
+  familyId: string;
+  company: string;
+  productId: string;
+  activeOnly: boolean;
+  changeType: PriceChangeType;
+  changeValue: number;
+  targetField: PriceTargetField;
+  updateSalePrice: boolean;
+  newMargin: number;
+}
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat('es-AR', {
+    style: 'currency',
+    currency: 'ARS',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+
+const scopeLabels: Record<PriceScope, string> = {
+  all: 'Todos los productos',
+  family: 'Familia',
+  company: 'Proveedor/Empresa',
+  manual: 'Producto individual',
+};
+
+const changeTypeLabels: Record<PriceChangeType, string> = {
+  increase_pct: 'Aumentar porcentaje',
+  decrease_pct: 'Disminuir porcentaje',
+  increase_fixed: 'Aumentar importe fijo',
+  decrease_fixed: 'Disminuir importe fijo',
+  replace_margin: 'Aplicar nuevo margen',
+  recalculate_peps: 'Recalcular desde costo',
+};
+
+const targetFieldLabels: Record<PriceTargetField, string> = {
+  cost: 'Costo',
+  sale_price: 'Precio de venta',
+};
+
 export default function BulkPriceUpdate() {
   const [products, setProducts] = useState<Product[]>([]);
   const [families, setFamilies] = useState<ProductFamily[]>([]);
@@ -21,19 +67,21 @@ export default function BulkPriceUpdate() {
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [confirmationText, setConfirmationText] = useState('');
+  const [previewConfig, setPreviewConfig] = useState<PreviewConfiguration | null>(null);
   const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
   // Filters
-  const [scope, setScope] = useState<'all' | 'family' | 'company' | 'manual'>('all');
+  const [scope, setScope] = useState<PriceScope>('manual');
   const [selectedFamilyId, setSelectedFamilyId] = useState<string>('');
   const [selectedCompany, setSelectedCompany] = useState<string>('');
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [activeOnly, setActiveOnly] = useState(true);
 
   // Change logic
-  const [changeType, setChangeType] = useState<'increase_pct' | 'decrease_pct' | 'increase_fixed' | 'decrease_fixed' | 'replace_margin' | 'recalculate_peps'>('increase_pct');
+  const [changeType, setChangeType] = useState<PriceChangeType>('increase_pct');
   const [changeValue, setChangeValue] = useState<number>(0);
-  const [targetField, setTargetField] = useState<'cost' | 'sale_price'>('sale_price');
+  const [targetField, setTargetField] = useState<PriceTargetField>('sale_price');
   const [updateSalePrice, setUpdateSalePrice] = useState(false);
   const [newMargin, setNewMargin] = useState<number>(30);
 
@@ -42,6 +90,24 @@ export default function BulkPriceUpdate() {
     fetchProducts();
     fetchHistory();
   }, []);
+
+  useEffect(() => {
+    setPreviewProducts([]);
+    setPreviewConfig(null);
+    setShowConfirm(false);
+    setConfirmationText('');
+  }, [
+    scope,
+    selectedFamilyId,
+    selectedCompany,
+    selectedProductId,
+    activeOnly,
+    changeType,
+    changeValue,
+    targetField,
+    updateSalePrice,
+    newMargin,
+  ]);
 
   const fetchFamilies = async () => {
     const res = await apiFetch('/api/config/product-families');
@@ -64,78 +130,103 @@ export default function BulkPriceUpdate() {
     setHistory(data);
   };
 
-  const fetchPreview = async () => {
-    setLoading(true);
-    try {
-      let productIdToPreview = selectedProductId;
-      if (scope === 'manual' && selectedProductId) {
-        const found = products.find(p => p.id.toString() === selectedProductId || p.name === selectedProductId);
-        if (found) productIdToPreview = found.id.toString();
-      }
+  const resolveProductId = (value: string) => {
+    const normalizedValue = value.trim();
+    if (!normalizedValue) return '';
 
-      const params = new URLSearchParams({
-        scope,
-        family_id: selectedFamilyId,
-        company: selectedCompany,
-        product_id: productIdToPreview,
-        active_only: activeOnly.toString(),
-        change_type: changeType,
-        value: changeValue.toString()
-      });
-      const res = await apiFetch(`/api/products?endpoint=bulk-price-preview&${params}`);
-      const body = await res.json();
-      if (!res.ok) {
-        const errorData = unwrapResponse(body);
-        throw new Error(errorData.message || "Error al obtener vista previa");
-      }
-      const data = unwrapResponse(body);
-      setPreviewProducts(data);
-      if (data.length === 0) {
-        setNotification({ type: 'error', message: "No se encontraron productos con los filtros seleccionados" });
-        setTimeout(() => setNotification(null), 3000);
-      }
-    } catch (error: any) {
-      console.error("Error fetching preview:", error);
-      setNotification({ type: 'error', message: error.message || "Error al obtener vista previa" });
-      setTimeout(() => setNotification(null), 3000);
-    } finally {
-      setLoading(false);
-    }
+    const found = products.find(
+      (product) =>
+        product.id.toString() === normalizedValue ||
+        product.name.toLocaleLowerCase('es-AR') === normalizedValue.toLocaleLowerCase('es-AR')
+    );
+
+    return found?.id.toString() || '';
   };
 
-  const calculateNewValues = (product: Product) => {
+  const buildCurrentConfiguration = (): PreviewConfiguration => ({
+    scope,
+    familyId: selectedFamilyId,
+    company: selectedCompany,
+    productId: scope === 'manual' ? resolveProductId(selectedProductId) : '',
+    activeOnly,
+    changeType,
+    changeValue,
+    targetField,
+    updateSalePrice: targetField === 'cost' ? updateSalePrice : false,
+    newMargin,
+  });
+
+  const validateConfiguration = (config: PreviewConfiguration) => {
+    if (config.scope === 'family' && !config.familyId) {
+      return 'Seleccioná una familia antes de generar la vista previa.';
+    }
+
+    if (config.scope === 'company' && !config.company) {
+      return 'Seleccioná una empresa antes de generar la vista previa.';
+    }
+
+    if (config.scope === 'manual' && !config.productId) {
+      return 'Seleccioná un producto válido de la lista antes de continuar.';
+    }
+
+    if (!Number.isFinite(config.changeValue) || config.changeValue <= 0) {
+      return 'Ingresá un valor de cambio mayor a cero.';
+    }
+
+    if (config.changeType === 'decrease_pct' && config.changeValue >= 100) {
+      return 'La disminución porcentual debe ser menor al 100%.';
+    }
+
+    if (
+      (config.changeType === 'replace_margin' || config.changeType === 'recalculate_peps') &&
+      config.changeValue >= 100
+    ) {
+      return 'El margen debe ser menor al 100%.';
+    }
+
+    if (
+      config.targetField === 'cost' &&
+      config.updateSalePrice &&
+      (!Number.isFinite(config.newMargin) || config.newMargin < 0 || config.newMargin >= 100)
+    ) {
+      return 'El margen para recalcular el precio de venta debe estar entre 0% y 99,99%.';
+    }
+
+    return null;
+  };
+
+  const calculateNewValues = (product: Product, config: PreviewConfiguration) => {
     let newCost = product.cost;
     let newSalePrice = product.sale_price;
-    const val = changeValue;
+    const val = config.changeValue;
 
-    if (targetField === 'cost') {
-      if (changeType === 'increase_pct') {
+    if (config.targetField === 'cost') {
+      if (config.changeType === 'increase_pct') {
         newCost = product.cost * (1 + val / 100);
-      } else if (changeType === 'decrease_pct') {
+      } else if (config.changeType === 'decrease_pct') {
         newCost = product.cost * (1 - val / 100);
-      } else if (changeType === 'increase_fixed') {
+      } else if (config.changeType === 'increase_fixed') {
         newCost = product.cost + val;
-      } else if (changeType === 'decrease_fixed') {
+      } else if (config.changeType === 'decrease_fixed') {
         newCost = product.cost - val;
       }
 
-      if (updateSalePrice) {
-        const margin = newMargin / 100;
+      if (config.updateSalePrice) {
+        const margin = config.newMargin / 100;
         if (margin < 1) {
           newSalePrice = newCost / (1 - margin);
         }
       }
     } else {
-      // targetField === 'sale_price'
-      if (changeType === 'increase_pct') {
+      if (config.changeType === 'increase_pct') {
         newSalePrice = product.sale_price * (1 + val / 100);
-      } else if (changeType === 'decrease_pct') {
+      } else if (config.changeType === 'decrease_pct') {
         newSalePrice = product.sale_price * (1 - val / 100);
-      } else if (changeType === 'increase_fixed') {
+      } else if (config.changeType === 'increase_fixed') {
         newSalePrice = product.sale_price + val;
-      } else if (changeType === 'decrease_fixed') {
+      } else if (config.changeType === 'decrease_fixed') {
         newSalePrice = product.sale_price - val;
-      } else if (changeType === 'replace_margin' || changeType === 'recalculate_peps') {
+      } else if (config.changeType === 'replace_margin' || config.changeType === 'recalculate_peps') {
         const margin = val / 100;
         if (margin < 1) {
           newSalePrice = product.cost / (1 - margin);
@@ -143,51 +234,194 @@ export default function BulkPriceUpdate() {
       }
     }
 
-    return { newCost, newSalePrice };
+    return {
+      newCost: Math.max(0, Number(newCost.toFixed(2))),
+      newSalePrice: Math.max(0, Number(newSalePrice.toFixed(2))),
+    };
+  };
+
+  const getScopeDescription = (config: PreviewConfiguration) => {
+    if (config.scope === 'family') {
+      return families.find((family) => family.id.toString() === config.familyId)?.name || 'Familia seleccionada';
+    }
+
+    if (config.scope === 'company') {
+      return config.company;
+    }
+
+    if (config.scope === 'manual') {
+      return products.find((product) => product.id.toString() === config.productId)?.name || 'Producto seleccionado';
+    }
+
+    return config.activeOnly ? 'Todos los productos activos' : 'Todos los productos';
+  };
+
+  const fetchPreview = async () => {
+    const configuration = buildCurrentConfiguration();
+    const validationError = validateConfiguration(configuration);
+
+    if (validationError) {
+      setNotification({ type: 'error', message: validationError });
+      setTimeout(() => setNotification(null), 5000);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        scope: configuration.scope,
+        family_id: configuration.familyId,
+        company: configuration.company,
+        product_id: configuration.productId,
+        active_only: configuration.activeOnly.toString(),
+        change_type: configuration.changeType,
+        value: configuration.changeValue.toString(),
+      });
+
+      const res = await apiFetch(`/api/products?endpoint=bulk-price-preview&${params}`);
+      const body = await res.json();
+
+      if (!res.ok) {
+        const errorData = unwrapResponse(body);
+        throw new Error((errorData as any)?.message || 'Error al obtener vista previa');
+      }
+
+      const data = unwrapResponse<Product[]>(body);
+
+      if (data.length === 0) {
+        setPreviewProducts([]);
+        setPreviewConfig(null);
+        setNotification({ type: 'error', message: 'No se encontraron productos con los filtros seleccionados.' });
+        setTimeout(() => setNotification(null), 5000);
+        return;
+      }
+
+      const invalidProducts = data.filter((product) => {
+        const { newCost, newSalePrice } = calculateNewValues(product, configuration);
+        return (
+          (configuration.targetField === 'cost' && newCost <= 0) ||
+          (configuration.targetField === 'sale_price' && newSalePrice <= 0) ||
+          (configuration.targetField === 'cost' && configuration.updateSalePrice && newSalePrice <= 0)
+        );
+      });
+
+      if (invalidProducts.length > 0) {
+        setPreviewProducts([]);
+        setPreviewConfig(null);
+        setNotification({
+          type: 'error',
+          message: `El cambio dejaría ${invalidProducts.length} producto(s) con costo o precio igual a cero. Ajustá el valor antes de continuar.`,
+        });
+        setTimeout(() => setNotification(null), 6000);
+        return;
+      }
+
+      setPreviewProducts(data);
+      setPreviewConfig(configuration);
+      setConfirmationText('');
+    } catch (error: any) {
+      console.error('Error fetching preview:', error);
+      setPreviewProducts([]);
+      setPreviewConfig(null);
+      setNotification({ type: 'error', message: error.message || 'Error al obtener vista previa.' });
+      setTimeout(() => setNotification(null), 5000);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const previewSummary = useMemo(() => {
+    if (!previewConfig || previewProducts.length === 0) return null;
+
+    const rows = previewProducts.map((product) => {
+      const { newCost, newSalePrice } = calculateNewValues(product, previewConfig);
+      return {
+        current: previewConfig.targetField === 'cost' ? product.cost : product.sale_price,
+        next: previewConfig.targetField === 'cost' ? newCost : newSalePrice,
+      };
+    });
+
+    const currentValues = rows.map((row) => row.current);
+    const nextValues = rows.map((row) => row.next);
+    const average = (values: number[]) => values.reduce((total, value) => total + value, 0) / values.length;
+
+    return {
+      currentAverage: average(currentValues),
+      nextAverage: average(nextValues),
+      currentMin: Math.min(...currentValues),
+      nextMin: Math.min(...nextValues),
+      currentMax: Math.max(...currentValues),
+      nextMax: Math.max(...nextValues),
+    };
+  }, [previewConfig, previewProducts]);
+
+  const confirmationPhrase = previewProducts.length > 0 ? `ACTUALIZAR ${previewProducts.length}` : '';
+  const confirmationIsValid =
+    confirmationText.trim().toLocaleUpperCase('es-AR') === confirmationPhrase.toLocaleUpperCase('es-AR');
+
+  const openConfirmation = () => {
+    if (!previewConfig || previewProducts.length === 0) {
+      setNotification({ type: 'error', message: 'Generá una vista previa válida antes de aplicar cambios.' });
+      setTimeout(() => setNotification(null), 5000);
+      return;
+    }
+
+    setConfirmationText('');
+    setShowConfirm(true);
   };
 
   const handleApply = async () => {
-    setShowConfirm(false);
+    if (!previewConfig || previewProducts.length === 0 || !confirmationIsValid || applying) {
+      return;
+    }
+
     setApplying(true);
     try {
-      // If scope is manual, ensure we have a valid ID
-      let productIdToApply = selectedProductId;
-      if (scope === 'manual' && selectedProductId) {
-        const found = products.find(p => p.id.toString() === selectedProductId || p.name === selectedProductId);
-        if (found) productIdToApply = found.id.toString();
-      }
-
       const res = await apiFetch('/api/products?endpoint=bulk-price-apply', {
         method: 'POST',
         body: JSON.stringify({
-          scope,
-          family_id: selectedFamilyId,
-          company: selectedCompany,
-          product_id: productIdToApply,
-          active_only: activeOnly,
-          target_field: targetField,
-          change_type: changeType,
-          value: changeValue,
-          update_sale_price: updateSalePrice,
-          new_margin: newMargin,
-          user_email: 'grupoquatroarg@gmail.com' // From context
-        })
+          scope: previewConfig.scope,
+          family_id: previewConfig.familyId,
+          company: previewConfig.company,
+          product_id: previewConfig.productId,
+          active_only: previewConfig.activeOnly,
+          target_field: previewConfig.targetField,
+          change_type: previewConfig.changeType,
+          value: previewConfig.changeValue,
+          update_sale_price: previewConfig.updateSalePrice,
+          new_margin: previewConfig.newMargin,
+          expected_product_ids: previewProducts.map((product) => product.id),
+          user_email: 'grupoquatroarg@gmail.com',
+        }),
       });
+
       const body = await res.json();
 
-      if (res.ok) {
-        setNotification({ type: 'success', message: "Precios actualizados correctamente" });
-        setPreviewProducts([]);
-        fetchHistory();
-        setTimeout(() => setNotification(null), 3000);
-      } else {
+      if (!res.ok) {
         const errorData = unwrapResponse(body);
-        setNotification({ type: 'error', message: errorData.message || "Error al aplicar cambios" });
-        setTimeout(() => setNotification(null), 5000);
+        throw new Error((errorData as any)?.message || 'Error al aplicar cambios');
       }
-    } catch (error) {
-      setNotification({ type: 'error', message: "Error de conexión" });
+
+      const result = unwrapResponse<{ count: number }>(body);
+      const updatedCount = Number(result?.count || previewProducts.length);
+
+      setShowConfirm(false);
+      setConfirmationText('');
+      setPreviewProducts([]);
+      setPreviewConfig(null);
+      setNotification({
+        type: 'success',
+        message: `Precios actualizados correctamente en ${updatedCount} producto(s).`,
+      });
+
+      await Promise.all([fetchHistory(), fetchProducts()]);
       setTimeout(() => setNotification(null), 5000);
+    } catch (error: any) {
+      setNotification({
+        type: 'error',
+        message: error.message || 'No se pudieron aplicar los cambios. La vista previa sigue disponible.',
+      });
+      setTimeout(() => setNotification(null), 6000);
     } finally {
       setApplying(false);
     }
@@ -206,54 +440,172 @@ export default function BulkPriceUpdate() {
       )}
 
       {/* Confirmation Modal */}
-      {showConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-6 animate-in zoom-in-95 duration-200">
-            <div className="flex items-center gap-4 text-amber-600">
-              <div className="w-12 h-12 rounded-full bg-amber-50 flex items-center justify-center">
-                <AlertCircle size={24} />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-zinc-900">Confirmar Actualización</h3>
-                <p className="text-sm text-zinc-500">Esta acción modificará los precios de {previewProducts.length} productos.</p>
-              </div>
-            </div>
-            
-            <div className="bg-zinc-50 p-4 rounded-xl space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-zinc-500">Tipo de cambio:</span>
-                <span className="font-bold text-zinc-900 uppercase">{changeType.replace('_', ' ')}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-zinc-500">Valor:</span>
-                <span className="font-bold text-zinc-900">
-                  {changeType.includes('pct') || changeType.includes('margin') || changeType === 'recalculate_peps' ? `${changeValue}%` : `$${changeValue}`}
-                </span>
+      {showConfirm && previewConfig && previewSummary && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-6 bg-zinc-950/70 backdrop-blur-sm animate-in fade-in duration-200">
+          <div
+            className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[92vh] overflow-y-auto animate-in zoom-in-95 duration-200"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="bulk-price-confirm-title"
+          >
+            <div className="p-5 md:p-6 border-b border-red-100 bg-red-50">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 shrink-0 rounded-full bg-red-100 text-red-700 flex items-center justify-center">
+                  <AlertCircle size={26} />
+                </div>
+                <div>
+                  <h3 id="bulk-price-confirm-title" className="text-lg md:text-xl font-bold text-zinc-950">
+                    Confirmación obligatoria
+                  </h3>
+                  <p className="text-sm text-red-800 mt-1">
+                    Esta acción modificará precios reales y no tiene deshacer automático.
+                  </p>
+                </div>
               </div>
             </div>
 
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowConfirm(false)}
-                className="flex-1 py-3 px-4 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 rounded-xl font-bold transition-all"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleApply}
-                disabled={applying}
-                className="flex-1 py-3 px-4 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2"
-              >
-                {applying ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div> : 'Confirmar'}
-              </button>
+            <div className="p-5 md:p-6 space-y-5">
+              {previewConfig.scope === 'all' && (
+                <div className="rounded-xl border-2 border-red-300 bg-red-50 p-4 text-red-900">
+                  <p className="font-bold">Atención: seleccionaste todos los productos.</p>
+                  <p className="text-sm mt-1">
+                    Se actualizarán {previewProducts.length} productos {previewConfig.activeOnly ? 'activos' : 'activos e inactivos'}.
+                  </p>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+                  <p className="text-[11px] uppercase font-bold text-zinc-500">Productos afectados</p>
+                  <p className="text-2xl font-bold text-zinc-950 mt-1">{previewProducts.length}</p>
+                </div>
+                <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+                  <p className="text-[11px] uppercase font-bold text-zinc-500">Alcance</p>
+                  <p className="font-bold text-zinc-950 mt-1">{scopeLabels[previewConfig.scope]}</p>
+                  <p className="text-xs text-zinc-500 mt-1">{getScopeDescription(previewConfig)}</p>
+                </div>
+                <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+                  <p className="text-[11px] uppercase font-bold text-zinc-500">Campo y modificación</p>
+                  <p className="font-bold text-zinc-950 mt-1">{targetFieldLabels[previewConfig.targetField]}</p>
+                  <p className="text-xs text-zinc-500 mt-1">{changeTypeLabels[previewConfig.changeType]}</p>
+                </div>
+                <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+                  <p className="text-[11px] uppercase font-bold text-zinc-500">Valor aplicado</p>
+                  <p className="font-bold text-zinc-950 mt-1">
+                    {previewConfig.changeType.includes('pct') ||
+                    previewConfig.changeType.includes('margin') ||
+                    previewConfig.changeType === 'recalculate_peps'
+                      ? `${previewConfig.changeValue}%`
+                      : formatCurrency(previewConfig.changeValue)}
+                  </p>
+                  {previewConfig.targetField === 'cost' && previewConfig.updateSalePrice && (
+                    <p className="text-xs text-zinc-500 mt-1">
+                      También recalcula venta con margen de {previewConfig.newMargin}%.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-zinc-200 overflow-hidden">
+                <div className="px-4 py-3 bg-zinc-100 border-b border-zinc-200">
+                  <p className="font-bold text-zinc-900">Resumen de valores antes y después</p>
+                </div>
+                <div className="grid grid-cols-3 text-sm">
+                  <div className="p-3 font-bold text-zinc-500 bg-zinc-50">Referencia</div>
+                  <div className="p-3 font-bold text-zinc-500 bg-zinc-50 text-right">Antes</div>
+                  <div className="p-3 font-bold text-zinc-500 bg-zinc-50 text-right">Después</div>
+
+                  <div className="p-3 border-t border-zinc-100">Promedio</div>
+                  <div className="p-3 border-t border-zinc-100 text-right font-mono">{formatCurrency(previewSummary.currentAverage)}</div>
+                  <div className="p-3 border-t border-zinc-100 text-right font-mono font-bold">{formatCurrency(previewSummary.nextAverage)}</div>
+
+                  <div className="p-3 border-t border-zinc-100">Mínimo</div>
+                  <div className="p-3 border-t border-zinc-100 text-right font-mono">{formatCurrency(previewSummary.currentMin)}</div>
+                  <div className="p-3 border-t border-zinc-100 text-right font-mono font-bold">{formatCurrency(previewSummary.nextMin)}</div>
+
+                  <div className="p-3 border-t border-zinc-100">Máximo</div>
+                  <div className="p-3 border-t border-zinc-100 text-right font-mono">{formatCurrency(previewSummary.currentMax)}</div>
+                  <div className="p-3 border-t border-zinc-100 text-right font-mono font-bold">{formatCurrency(previewSummary.nextMax)}</div>
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="bulk-price-confirmation" className="block text-sm font-bold text-zinc-900 mb-2">
+                  Para confirmar, escribí exactamente:
+                </label>
+                <div className="rounded-lg bg-zinc-950 text-white px-4 py-3 font-mono font-bold text-center tracking-wide mb-3">
+                  {confirmationPhrase}
+                </div>
+                <input
+                  id="bulk-price-confirmation"
+                  type="text"
+                  value={confirmationText}
+                  onChange={(event) => setConfirmationText(event.target.value)}
+                  disabled={applying}
+                  autoComplete="off"
+                  className={`w-full px-4 py-3 rounded-xl border-2 outline-none font-mono ${
+                    confirmationText.length === 0
+                      ? 'border-zinc-200 focus:border-zinc-500'
+                      : confirmationIsValid
+                        ? 'border-emerald-500 bg-emerald-50'
+                        : 'border-red-300 bg-red-50'
+                  }`}
+                  placeholder={confirmationPhrase}
+                  aria-describedby="bulk-price-confirmation-help"
+                />
+                <p id="bulk-price-confirmation-help" className="text-xs text-zinc-500 mt-2">
+                  El botón permanecerá bloqueado hasta que la frase coincida.
+                </p>
+              </div>
+
+              <div className="flex flex-col-reverse sm:flex-row gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowConfirm(false);
+                    setConfirmationText('');
+                  }}
+                  disabled={applying}
+                  className="flex-1 py-3 px-4 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 rounded-xl font-bold transition-all disabled:opacity-50"
+                >
+                  Cancelar y revisar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleApply}
+                  disabled={applying || !confirmationIsValid}
+                  className="flex-1 py-3 px-4 bg-red-700 hover:bg-red-800 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {applying ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                      Aplicando cambios…
+                    </>
+                  ) : (
+                    'Confirmar actualización'
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      <div className="mb-6 md:mb-8">
-        <h1 className="text-2xl md:text-3xl font-bold text-zinc-900">Actualización Masiva de Precios</h1>
-        <p className="text-sm text-zinc-500 mt-1">Modifica precios en lote con filtros avanzados</p>
+      <div className="mb-6 md:mb-8 space-y-4">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold text-zinc-900">Actualización Masiva de Precios</h1>
+          <p className="text-sm text-zinc-500 mt-1">Revisá la vista previa antes de modificar precios reales.</p>
+        </div>
+
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 flex items-start gap-3 text-amber-950">
+          <AlertCircle size={22} className="shrink-0 mt-0.5" />
+          <div>
+            <p className="font-bold">Acción protegida</p>
+            <p className="text-sm mt-1">
+              El alcance inicial es un producto individual. Para aplicar cambios será obligatorio generar una vista previa y escribir una confirmación.
+            </p>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8">
@@ -529,20 +881,20 @@ export default function BulkPriceUpdate() {
                 <h2 className="text-lg md:text-xl font-bold text-zinc-900">Vista Previa de Cambios</h2>
                 <p className="text-xs md:text-sm text-zinc-500">{previewProducts.length} productos seleccionados</p>
               </div>
-              {previewProducts.length > 0 && (
+              {previewProducts.length > 0 && previewConfig && (
                 <button
-                  onClick={() => setShowConfirm(true)}
+                  onClick={openConfirmation}
                   disabled={applying}
-                  className="w-full sm:w-auto px-6 py-2 bg-zinc-900 text-white rounded-lg font-bold flex items-center justify-center gap-2 hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200"
+                  className="w-full sm:w-auto px-6 py-2 bg-red-700 text-white rounded-lg font-bold flex items-center justify-center gap-2 hover:bg-red-800 transition-all shadow-lg shadow-red-100"
                 >
                   {applying ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div> : <CheckCircle2 size={18} />}
-                  Aplicar Cambios
+                  Revisar y confirmar
                 </button>
               )}
             </div>
 
             <div className="flex-1 overflow-auto">
-              {previewProducts.length > 0 ? (
+              {previewProducts.length > 0 && previewConfig ? (
                 <div className="min-w-full inline-block align-middle">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse">
@@ -556,9 +908,9 @@ export default function BulkPriceUpdate() {
                       </thead>
                       <tbody className="divide-y divide-zinc-100">
                         {previewProducts.map(p => {
-                          const { newCost, newSalePrice } = calculateNewValues(p);
-                          const diff = targetField === 'cost' ? newCost - p.cost : newSalePrice - p.sale_price;
-                          const base = targetField === 'cost' ? p.cost : p.sale_price;
+                          const { newCost, newSalePrice } = calculateNewValues(p, previewConfig!);
+                          const diff = previewConfig.targetField === 'cost' ? newCost - p.cost : newSalePrice - p.sale_price;
+                          const base = previewConfig.targetField === 'cost' ? p.cost : p.sale_price;
                           const pct = base !== 0 ? (diff / base) * 100 : 0;
                           
                           return (
@@ -569,13 +921,13 @@ export default function BulkPriceUpdate() {
                               </td>
                               <td className="px-4 md:px-6 py-4 text-right">
                                 <div className="text-[10px] text-zinc-400 font-mono">${p.cost.toFixed(2)}</div>
-                                <div className={`font-mono font-bold text-sm ${targetField === 'cost' ? 'text-zinc-900' : 'text-zinc-500'}`}>
+                                <div className={`font-mono font-bold text-sm ${previewConfig.targetField === 'cost' ? 'text-zinc-900' : 'text-zinc-500'}`}>
                                   ${newCost.toFixed(2)}
                                 </div>
                               </td>
                               <td className="px-4 md:px-6 py-4 text-right">
                                 <div className="text-[10px] text-zinc-400 font-mono">${p.sale_price.toFixed(2)}</div>
-                                <div className={`font-mono font-bold text-sm ${targetField === 'sale_price' || updateSalePrice ? 'text-zinc-900' : 'text-zinc-500'}`}>
+                                <div className={`font-mono font-bold text-sm ${previewConfig.targetField === 'sale_price' || previewConfig.updateSalePrice ? 'text-zinc-900' : 'text-zinc-500'}`}>
                                   ${newSalePrice.toFixed(2)}
                                 </div>
                               </td>

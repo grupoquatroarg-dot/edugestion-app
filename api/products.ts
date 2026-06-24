@@ -3,7 +3,7 @@ import db from "../server/db.js";
 import { ProductRepository } from "../server/repositories/productRepository.js";
 import { UserRepository } from "../server/repositories/userRepository.js";
 import { getPostgresPool, isPostgresConfigured } from "../server/utils/postgres.js";
-import { sendError, sendSuccess } from "../server/utils/response.js";
+import { AppError, sendError, sendSuccess } from "../server/utils/response.js";
 import { verifyToken } from "../server/utils/jwt.js";
 
 const productSchema = z.object({
@@ -31,6 +31,7 @@ const bulkApplySchema = z.object({
   value: z.number(),
   update_sale_price: z.boolean().optional(),
   new_margin: z.number().optional(),
+  expected_product_ids: z.array(z.number().int().positive()).min(1).optional(),
   user_email: z.string().optional(),
 });
 
@@ -231,6 +232,24 @@ const buildBulkFiltersSqlite = (source: any, params: any[]) => {
   return where;
 };
 
+const assertPreviewSelectionStillMatches = (actualProducts: any[], expectedProductIds?: number[]) => {
+  if (!expectedProductIds?.length) return;
+
+  const actualIds = actualProducts.map((product) => Number(product.id)).sort((a, b) => a - b);
+  const expectedIds = [...new Set(expectedProductIds.map(Number))].sort((a, b) => a - b);
+
+  const selectionMatches =
+    actualIds.length === expectedIds.length &&
+    actualIds.every((id, index) => id === expectedIds[index]);
+
+  if (!selectionMatches) {
+    throw new AppError(
+      "La selección de productos cambió después de generar la vista previa. Volvé a revisar antes de aplicar.",
+      409
+    );
+  }
+};
+
 const getBulkPreview = async (req: any) => {
   const filters = {
     scope: String(req.query?.scope || "all"),
@@ -279,6 +298,11 @@ const applyBulkPriceUpdate = async (payload: z.infer<typeof bulkApplySchema>, us
       const params: any[] = [];
       const where = buildBulkFiltersSqlite(payload, params);
       const productsToUpdate = db.prepare(`SELECT p.id, p.cost, p.sale_price FROM products p ${where}`).all(...params) as any[];
+      assertPreviewSelectionStillMatches(productsToUpdate, payload.expected_product_ids);
+
+      if (productsToUpdate.length === 0) {
+        throw new AppError("No hay productos para actualizar con el alcance seleccionado.", 400);
+      }
 
       for (const product of productsToUpdate) {
         const { newCost, newSalePrice } = calculateNewPrices({
@@ -331,6 +355,12 @@ const applyBulkPriceUpdate = async (payload: z.infer<typeof bulkApplySchema>, us
       `SELECT p.id, p.cost, p.sale_price FROM products p ${where} ORDER BY p.id ASC FOR UPDATE`,
       params
     );
+
+    assertPreviewSelectionStillMatches(productsResult.rows, payload.expected_product_ids);
+
+    if (!productsResult.rowCount) {
+      throw new AppError("No hay productos para actualizar con el alcance seleccionado.", 400);
+    }
 
     const updatedProducts: any[] = [];
 
