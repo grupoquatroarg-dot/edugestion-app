@@ -42,6 +42,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
   const [data, setData] = useState<any>(null);
   const [movimientos, setMovimientos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedSale, setSelectedSale] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'ventas' | 'movimientos' | 'pedidos'>(initialTab);
   const [accountSummary, setAccountSummary] = useState({ total_sales: 0, total_payments: 0, pending_balance: 0, pending_sales: 0, paid_sales: 0 });
@@ -65,26 +66,30 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
   });
   const [submittingPayment, setSubmittingPayment] = useState(false);
 
-  const fetchStats = async () => {
+  const fetchStats = async (): Promise<boolean> => {
     try {
       const res = await apiFetch(`/api/clientes?endpoint=client-detail&id=${clienteId}`);
       const body = await res.json();
       const stats = unwrapResponse(body);
       setData(stats);
+      return true;
     } catch (error) {
       console.error("Error fetching stats:", error);
+      return false;
     }
   };
 
-  const fetchMovimientos = async () => {
+  const fetchMovimientos = async (): Promise<boolean> => {
     try {
       const res = await apiFetch(`/api/clientes?endpoint=client-account&id=${clienteId}`);
       const body = await res.json();
       const account = unwrapResponse(body) as any;
       setMovimientos(account.movements || []);
       setAccountSummary(account.summary || { total_sales: 0, total_payments: 0, pending_balance: 0, pending_sales: 0, paid_sales: 0 });
+      return true;
     } catch (error) {
       console.error("Error fetching movements:", error);
+      return false;
     }
   };
 
@@ -177,13 +182,22 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
     }
   };
 
+  const loadCustomerData = async () => {
+    setLoading(true);
+    setLoadError(null);
+
+    const [statsOk, movementsOk] = await Promise.all([fetchStats(), fetchMovimientos()]);
+    await Promise.allSettled([fetchBusinessSettings(), fetchPaymentMethods()]);
+
+    if (!statsOk || !movementsOk) {
+      setLoadError('No se pudo cargar la ficha completa del cliente. Revisá tu conexión e intentá nuevamente.');
+    }
+
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const init = async () => {
-      setLoading(true);
-      await Promise.all([fetchStats(), fetchMovimientos(), fetchBusinessSettings(), fetchPaymentMethods()]);
-      setLoading(false);
-    };
-    init();
+    loadCustomerData();
 
     // Real-time updates
     socket.on('sale_confirmed', (sale) => {
@@ -244,13 +258,136 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
 
   if (loading) {
     return (
-      <div className="absolute inset-0 bg-white z-30 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
+      <div
+        className="absolute inset-0 bg-zinc-50 z-30 flex flex-col overflow-hidden"
+        role="status"
+        aria-live="polite"
+        aria-label="Cargando ficha del cliente"
+      >
+        <div className="bg-white border-b border-zinc-200 px-3 sm:px-6 py-3 sm:py-4 flex items-center gap-4 shadow-sm">
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 hover:bg-zinc-100 rounded-full transition-all text-zinc-500"
+            aria-label="Volver a clientes"
+            title="Volver a clientes"
+          >
+            <ArrowLeft size={24} />
+          </button>
+          <div className="flex-1 space-y-2">
+            <div className="h-6 w-48 max-w-full bg-zinc-200 rounded-lg animate-pulse" />
+            <div className="h-3 w-72 max-w-full bg-zinc-100 rounded animate-pulse" />
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 hover:bg-zinc-100 rounded-full transition-all text-zinc-400"
+            aria-label="Cerrar ficha del cliente"
+            title="Cerrar"
+          >
+            <X size={24} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-3 sm:p-8">
+          <div className="max-w-7xl mx-auto space-y-6">
+            <div className="bg-white border border-zinc-200 rounded-2xl px-4 py-3 shadow-sm">
+              <div className="flex items-center gap-3 text-sm font-bold text-zinc-600">
+                <div className="animate-spin rounded-full h-5 w-5 border-2 border-zinc-200 border-t-zinc-900" />
+                Cargando ficha del cliente...
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <div key={index} className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm flex items-center gap-4">
+                  <div className="w-12 h-12 bg-zinc-200 rounded-2xl animate-pulse" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-3 w-1/2 bg-zinc-100 rounded animate-pulse" />
+                    <div className="h-7 w-3/4 bg-zinc-200 rounded animate-pulse" />
+                    <div className="h-3 w-2/3 bg-zinc-100 rounded animate-pulse" />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden min-h-[420px]">
+              <div className="flex gap-4 border-b border-zinc-100 px-6 py-4">
+                <div className="h-4 w-32 bg-zinc-200 rounded animate-pulse" />
+                <div className="h-4 w-32 bg-zinc-100 rounded animate-pulse" />
+                <div className="h-4 w-32 bg-zinc-100 rounded animate-pulse" />
+              </div>
+              <div className="p-6 space-y-4">
+                {Array.from({ length: 5 }).map((_, index) => (
+                  <div key={index} className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+                    {Array.from({ length: 5 }).map((__, cellIndex) => (
+                      <div key={cellIndex} className="h-4 bg-zinc-100 rounded animate-pulse" />
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
 
-  if (!data || !data.cliente) return null;
+  if (loadError || !data || !data.cliente) {
+    return (
+      <div className="absolute inset-0 bg-zinc-50 z-30 flex flex-col overflow-hidden">
+        <div className="bg-white border-b border-zinc-200 px-3 sm:px-6 py-3 sm:py-4 flex items-center justify-between shadow-sm">
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 hover:bg-zinc-100 rounded-full transition-all text-zinc-500"
+            aria-label="Volver a clientes"
+            title="Volver a clientes"
+          >
+            <ArrowLeft size={24} />
+          </button>
+          <p className="text-sm font-black text-zinc-700">Ficha del cliente</p>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 hover:bg-zinc-100 rounded-full transition-all text-zinc-400"
+            aria-label="Cerrar ficha del cliente"
+            title="Cerrar"
+          >
+            <X size={24} />
+          </button>
+        </div>
+
+        <div className="flex-1 p-4 flex items-center justify-center">
+          <div className="w-full max-w-lg bg-white border border-red-200 rounded-3xl p-6 sm:p-8 text-center shadow-sm">
+            <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center">
+              <AlertCircle size={28} />
+            </div>
+            <h2 className="text-xl font-black text-zinc-900">No se pudo cargar la ficha</h2>
+            <p className="mt-2 text-sm text-zinc-500">
+              {loadError || 'La respuesta del cliente no contiene la información esperada.'}
+            </p>
+            <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-6 py-3 bg-zinc-100 text-zinc-800 rounded-xl font-bold hover:bg-zinc-200 transition-all"
+              >
+                Volver a clientes
+              </button>
+              <button
+                type="button"
+                onClick={loadCustomerData}
+                className="px-6 py-3 bg-zinc-900 text-white rounded-xl font-bold hover:bg-zinc-800 transition-all"
+              >
+                Reintentar
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const { cliente, summary, sales, total_payments, pending_orders, top_products } = data;
 

@@ -37,6 +37,7 @@ export default function CustomerModule() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isMovementsModalOpen, setIsMovementsModalOpen] = useState(false);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
@@ -81,15 +82,27 @@ export default function CustomerModule() {
 
   const fetchClientes = async () => {
     try {
+      setLoadError(null);
       const res = await apiFetch('/api/clientes');
       const body = await res.json();
       const data = unwrapResponse(body);
+
+      if (!Array.isArray(data)) {
+        throw new Error('La respuesta de clientes no tiene el formato esperado');
+      }
+
       setClientes(data);
     } catch (error) {
       console.error("Error fetching customers:", error);
+      setLoadError('No se pudieron cargar los clientes. Revisá tu conexión e intentá nuevamente.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const retryFetchClientes = () => {
+    setLoading(true);
+    fetchClientes();
   };
 
   const filteredClientes = useMemo(() => {
@@ -240,8 +253,70 @@ export default function CustomerModule() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
+      <div
+        className="p-4 sm:p-6 max-w-7xl mx-auto min-h-full"
+        role="status"
+        aria-live="polite"
+        aria-label="Cargando clientes"
+      >
+        <div className="mb-8 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
+          <div className="space-y-3">
+            <div className="h-8 w-56 max-w-full bg-zinc-200 rounded-lg animate-pulse" />
+            <div className="h-4 w-80 max-w-full bg-zinc-100 rounded animate-pulse" />
+          </div>
+          <div className="h-12 w-full sm:w-40 bg-zinc-200 rounded-xl animate-pulse" />
+        </div>
+
+        <div className="mb-6 bg-white border border-zinc-200 rounded-xl px-4 py-3 shadow-sm">
+          <div className="flex items-center gap-3 text-sm font-bold text-zinc-600">
+            <div className="animate-spin rounded-full h-5 w-5 border-2 border-zinc-200 border-t-zinc-900" />
+            Cargando clientes...
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <div key={index} className="bg-white rounded-2xl border border-zinc-200 p-6 space-y-5">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-zinc-200 rounded-xl animate-pulse" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-4 w-2/3 bg-zinc-200 rounded animate-pulse" />
+                  <div className="h-3 w-1/2 bg-zinc-100 rounded animate-pulse" />
+                </div>
+              </div>
+              <div className="space-y-3">
+                <div className="h-3 w-full bg-zinc-100 rounded animate-pulse" />
+                <div className="h-3 w-3/4 bg-zinc-100 rounded animate-pulse" />
+                <div className="h-3 w-2/3 bg-zinc-100 rounded animate-pulse" />
+              </div>
+              <div className="pt-4 border-t border-zinc-100 flex justify-between">
+                <div className="h-6 w-20 bg-zinc-100 rounded-full animate-pulse" />
+                <div className="h-6 w-24 bg-zinc-100 rounded animate-pulse" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError && clientes.length === 0) {
+    return (
+      <div className="p-4 sm:p-6 max-w-7xl mx-auto min-h-full flex items-center justify-center">
+        <div className="w-full max-w-lg bg-white border border-red-200 rounded-3xl p-6 sm:p-8 text-center shadow-sm">
+          <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center">
+            <AlertCircle size={28} />
+          </div>
+          <h2 className="text-xl font-black text-zinc-900">No se pudieron cargar los clientes</h2>
+          <p className="mt-2 text-sm text-zinc-500">{loadError}</p>
+          <button
+            type="button"
+            onClick={retryFetchClientes}
+            className="mt-6 w-full sm:w-auto px-6 py-3 bg-zinc-900 text-white rounded-xl font-bold hover:bg-zinc-800 transition-all"
+          >
+            Reintentar
+          </button>
+        </div>
       </div>
     );
   }
@@ -384,9 +459,36 @@ export default function CustomerModule() {
         </div>
 
         {filteredClientes.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-20 text-zinc-400">
-            <User size={48} className="mb-4 opacity-10" />
-            <p className="font-medium">No se encontraron clientes</p>
+          <div className="flex flex-col items-center justify-center py-16 sm:py-20 px-4 text-center bg-white border border-dashed border-zinc-300 rounded-3xl">
+            <div className="w-16 h-16 mb-4 rounded-2xl bg-zinc-100 text-zinc-400 flex items-center justify-center">
+              <User size={32} />
+            </div>
+            <p className="font-black text-zinc-800">
+              {searchTerm.trim() ? 'No hay clientes que coincidan con la búsqueda' : 'Todavía no hay clientes registrados'}
+            </p>
+            <p className="mt-2 text-sm text-zinc-500 max-w-md">
+              {searchTerm.trim()
+                ? 'Probá con otro nombre, razón social o localidad.'
+                : 'Creá el primer cliente para comenzar a registrar ventas, pedidos y movimientos de cuenta corriente.'}
+            </p>
+            {searchTerm.trim() ? (
+              <button
+                type="button"
+                onClick={() => setSearchTerm('')}
+                className="mt-5 px-5 py-2.5 bg-zinc-100 text-zinc-800 rounded-xl font-bold hover:bg-zinc-200 transition-all"
+              >
+                Limpiar búsqueda
+              </button>
+            ) : hasPermission('customers', 'create') ? (
+              <button
+                type="button"
+                onClick={() => openModal()}
+                className="mt-5 px-5 py-2.5 bg-zinc-900 text-white rounded-xl font-bold hover:bg-zinc-800 transition-all flex items-center gap-2"
+              >
+                <UserPlus size={18} />
+                Crear primer cliente
+              </button>
+            ) : null}
           </div>
         )}
       </div>
