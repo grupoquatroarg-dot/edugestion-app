@@ -14,7 +14,9 @@ import {
   ArrowDownRight,
   Filter,
   X,
-  Settings
+  Settings,
+  Loader2,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { unwrapResponse, apiFetch } from '../utils/api';
@@ -68,11 +70,18 @@ export default function Dashboard() {
   }, []);
 
   const fetchSummary = async () => {
+    setLoading(true);
+    setError(null);
+
     try {
-      setError(null);
       const res = await apiFetch('/api/dashboard/summary');
       const body = await res.json();
-      const data = unwrapResponse(body);
+      const data = unwrapResponse<DashboardSummary>(body);
+
+      if (!data || typeof data !== 'object') {
+        throw new Error('La respuesta del dashboard no contiene datos válidos');
+      }
+
       setSummary(data);
     } catch (error) {
       console.error("Error fetching dashboard summary:", error);
@@ -121,24 +130,41 @@ export default function Dashboard() {
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
-      </div>
-    );
+    return <DashboardLoadingState />;
   }
 
   if (error || !summary) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-4">
-        <AlertTriangle size={48} className="text-amber-500" />
-        <p className="text-zinc-500 font-medium">{error || "No se pudo cargar el resumen"}</p>
-        <button 
-          onClick={() => { setLoading(true); fetchSummary(); }}
-          className="px-6 py-2 bg-zinc-900 text-white rounded-xl font-bold uppercase tracking-widest text-xs"
-        >
-          Reintentar
-        </button>
+      <div className="min-h-full bg-zinc-50 p-4 sm:p-6 lg:p-8">
+        <div className="max-w-7xl mx-auto">
+          <header>
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-black text-zinc-900 tracking-tight">DASHBOARD</h1>
+            <p className="text-sm md:text-base text-zinc-500 font-medium">Indicadores clave del negocio en tiempo real</p>
+          </header>
+
+          <div
+            role="alert"
+            className="mt-8 min-h-[360px] bg-white border border-zinc-200 rounded-3xl sm:rounded-[40px] shadow-sm flex flex-col items-center justify-center text-center gap-4 p-6"
+          >
+            <div className="w-16 h-16 rounded-2xl bg-amber-50 flex items-center justify-center">
+              <AlertTriangle size={32} className="text-amber-500" />
+            </div>
+            <div className="space-y-1">
+              <h2 className="text-lg sm:text-xl font-black text-zinc-900">No pudimos cargar el Dashboard</h2>
+              <p className="text-sm text-zinc-500 font-medium max-w-md">
+                {error || 'No se pudo cargar el resumen. Revisá la conexión e intentá nuevamente.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={fetchSummary}
+              className="inline-flex items-center gap-2 px-5 py-3 bg-zinc-900 text-white rounded-xl font-bold uppercase tracking-widest text-xs hover:bg-zinc-800 transition-colors"
+            >
+              <RefreshCw size={16} />
+              Reintentar
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -349,6 +375,12 @@ export default function Dashboard() {
                     <span className="text-sm font-black text-zinc-400 shrink-0">{p.total_qty} un.</span>
                   </div>
                 ))}
+                {(summary?.ventas?.topProductos ?? []).length === 0 && (
+                  <div className="py-4 text-center">
+                    <Package size={28} className="mx-auto text-zinc-200 mb-2" />
+                    <p className="text-sm font-medium text-zinc-400">No hay productos vendidos este mes.</p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -795,6 +827,61 @@ export default function Dashboard() {
     </div>
   );
 }
+
+function DashboardLoadingState() {
+  const cardGroups = [3, 4, 3, 3];
+
+  return (
+    <div
+      className="min-h-full overflow-y-auto bg-zinc-50 p-4 sm:p-6 lg:p-8 custom-scrollbar"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <div className="max-w-7xl mx-auto space-y-6 sm:space-y-8 lg:space-y-10">
+        <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-black text-zinc-900 tracking-tight">DASHBOARD</h1>
+            <p className="text-sm md:text-base text-zinc-500 font-medium">Indicadores clave del negocio en tiempo real</p>
+          </div>
+          <div className="inline-flex items-center gap-2 self-start sm:self-auto px-4 py-2 bg-white border border-zinc-200 rounded-xl text-sm font-bold text-zinc-500 shadow-sm">
+            <Loader2 size={17} className="animate-spin text-zinc-900" />
+            Cargando datos…
+          </div>
+        </header>
+
+        {cardGroups.map((cardCount, sectionIndex) => (
+          <section key={sectionIndex} className="space-y-4 sm:space-y-6 animate-pulse">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-zinc-200 rounded-xl" />
+              <div className="h-5 w-28 sm:w-36 bg-zinc-200 rounded-lg" />
+            </div>
+            <div className={`grid grid-cols-1 sm:grid-cols-2 ${cardCount === 4 ? 'xl:grid-cols-4' : 'xl:grid-cols-3'} gap-4 sm:gap-6`}>
+              {Array.from({ length: cardCount }).map((_, cardIndex) => (
+                <div
+                  key={cardIndex}
+                  className="min-h-[180px] bg-white border border-zinc-200 rounded-3xl sm:rounded-[40px] p-5 sm:p-7 shadow-sm"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-4 flex-1">
+                      <div className="h-3 w-28 bg-zinc-200 rounded" />
+                      <div className="h-8 w-3/4 bg-zinc-200 rounded-lg" />
+                      <div className="h-3 w-2/3 bg-zinc-100 rounded" />
+                    </div>
+                    <div className="w-11 h-11 bg-zinc-100 rounded-2xl shrink-0" />
+                  </div>
+                  <div className="h-8 w-full bg-zinc-100 rounded-xl mt-7" />
+                </div>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+      <span className="sr-only">Cargando datos del Dashboard.</span>
+    </div>
+  );
+}
+
 
 function DashboardCard({ 
   title, 
