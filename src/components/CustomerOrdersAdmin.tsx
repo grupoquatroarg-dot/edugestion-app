@@ -644,7 +644,7 @@ export default function CustomerOrdersAdmin({
   }
 
   return (
-    <div className="p-4 sm:p-8 h-full overflow-y-auto custom-scrollbar">
+    <div className="h-full overflow-y-auto overflow-x-hidden p-3 sm:p-5 lg:p-6 custom-scrollbar">
       <div className="max-w-7xl mx-auto space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
@@ -664,7 +664,7 @@ export default function CustomerOrdersAdmin({
           </button>
         </div>
 
-        <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
+        <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 xl:grid-cols-4 sm:gap-4">
           <button
             onClick={() => setStatusFilter('pendiente_aprobacion')}
             className="text-left bg-white rounded-3xl border border-zinc-200 p-4 sm:p-5 shadow-sm"
@@ -846,7 +846,7 @@ export default function CustomerOrdersAdmin({
                     )}
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2 min-w-full lg:min-w-[360px]">
+                  <div className="grid w-full grid-cols-1 gap-2 min-[420px]:grid-cols-3 lg:w-auto lg:min-w-[360px]">
                     <div className="bg-zinc-50 rounded-2xl p-3">
                       <p className="text-[9px] font-black text-zinc-400 uppercase">
                         Subtotal
@@ -926,12 +926,12 @@ export default function CustomerOrdersAdmin({
                   </div>
                 )}
 
-                <div className="p-5 grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-5">
+                <div className="grid grid-cols-1 gap-5 p-4 sm:p-5 2xl:grid-cols-[minmax(0,1fr)_380px]">
                   <div className="space-y-2">
                     {items.map((item: any) => (
                       <div
                         key={item.id}
-                        className="flex items-center justify-between gap-3 p-3 bg-zinc-50 rounded-2xl"
+                        className="flex flex-col gap-3 rounded-2xl bg-zinc-50 p-3 min-[520px]:flex-row min-[520px]:items-center min-[520px]:justify-between"
                       >
                         <div className="flex items-center gap-3 min-w-0">
                           <div className="w-9 h-9 rounded-xl bg-white border border-zinc-100 flex items-center justify-center text-zinc-400 shrink-0">
@@ -939,7 +939,7 @@ export default function CustomerOrdersAdmin({
                           </div>
 
                           <div className="min-w-0">
-                            <p className="text-sm font-black text-zinc-900 truncate">
+                            <p className="break-words text-sm font-black text-zinc-900">
                               {item.product_name}
                             </p>
                             <p className="text-[10px] text-zinc-400 font-bold">
@@ -961,7 +961,7 @@ export default function CustomerOrdersAdmin({
                         </div>
 
                         {editing ? (
-                          <div className="flex items-center gap-2">
+                          <div className="flex w-full items-center gap-2 min-[520px]:w-auto">
                             <input
                               type="number"
                               min="1"
@@ -973,13 +973,13 @@ export default function CustomerOrdersAdmin({
                                   Number(event.target.value)
                                 )
                               }
-                              className="w-20 px-2 py-2 bg-white border border-zinc-200 rounded-xl text-center font-black"
+                              className="min-h-11 min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-2 py-2 text-center font-black min-[520px]:w-20 min-[520px]:flex-none"
                             />
                             <button
                               onClick={() =>
                                 removeDraftItem(order.id, item.id)
                               }
-                              className="p-2 text-red-500 bg-red-50 rounded-xl"
+                              className="flex min-h-11 min-w-11 items-center justify-center rounded-xl bg-red-50 p-2 text-red-500"
                             >
                               <Trash2 size={16} />
                             </button>
@@ -999,7 +999,7 @@ export default function CustomerOrdersAdmin({
                   </div>
 
                   <div className="space-y-3">
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
                       <button
                         onClick={() => downloadOrderPdf(order)}
                         className="py-3 bg-zinc-100 text-zinc-700 rounded-xl font-black uppercase text-[10px] flex items-center justify-center gap-2"
@@ -1077,7 +1077,7 @@ export default function CustomerOrdersAdmin({
                         />
 
                         {editing ? (
-                          <div className="grid grid-cols-2 gap-2">
+                          <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
                             <button
                               disabled={actionLoading === order.id}
                               onClick={() => saveOrderChanges(order)}
@@ -1179,7 +1179,7 @@ export default function CustomerOrdersAdmin({
                             {paymentLines.map((line, index) => (
                               <div
                                 key={`${order.id}-payment-${index}`}
-                                className="grid grid-cols-[1fr_110px_40px] gap-2"
+                                className="grid grid-cols-1 gap-2 min-[520px]:grid-cols-[minmax(0,1fr)_110px_44px]"
                               >
                                 <select
                                   value={line.metodo_pago}
@@ -1221,9 +1221,12 @@ export default function CustomerOrdersAdmin({
                                 <button
                                   disabled={paymentLines.length === 1}
                                   onClick={() => removePaymentLine(index)}
-                                  className="p-2 bg-red-50 text-red-500 rounded-xl disabled:opacity-30"
+                                  className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-red-50 p-2 text-red-500 disabled:opacity-30"
+                                  title="Quitar medio de pago"
+                                  aria-label="Quitar medio de pago"
                                 >
                                   <Trash2 size={16} />
+                                  <span className="text-xs font-black min-[520px]:hidden">Quitar medio</span>
                                 </button>
                               </div>
                             ))}

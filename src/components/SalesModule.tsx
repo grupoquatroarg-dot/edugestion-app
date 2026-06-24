@@ -595,14 +595,14 @@ export default function SalesModule() {
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-zinc-50">
+    <div className="flex min-h-full flex-col overflow-x-hidden bg-slate-50">
       {/* Tabs Header */}
-      <div className="bg-white border-b border-zinc-200 px-2 sm:px-8 flex items-center justify-between overflow-x-auto no-scrollbar shrink-0">
-        <div className="flex whitespace-nowrap">
+      <div className="shrink-0 border-b border-slate-200 bg-white px-3 py-3 sm:px-5 lg:px-6">
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
           <button 
             onClick={() => setActiveTab('nueva')}
-            className={`px-4 sm:px-8 py-4 sm:py-5 text-sm font-bold transition-all border-b-2 flex items-center gap-2 ${
-              activeTab === 'nueva' ? 'border-zinc-900 text-zinc-900' : 'border-transparent text-zinc-400 hover:text-zinc-600'
+            className={`min-h-11 min-w-0 rounded-xl border px-3 py-2.5 text-xs font-black transition-all flex items-center justify-center gap-2 sm:text-sm ${
+              activeTab === 'nueva' ? 'border-indigo-200 bg-indigo-50 text-indigo-700 shadow-sm' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-800'
             }`}
           >
             <ShoppingCart size={18} />
@@ -610,8 +610,8 @@ export default function SalesModule() {
           </button>
           <button 
             onClick={() => setActiveTab('historial')}
-            className={`px-4 sm:px-8 py-4 sm:py-5 text-sm font-bold transition-all border-b-2 flex items-center gap-2 ${
-              activeTab === 'historial' ? 'border-zinc-900 text-zinc-900' : 'border-transparent text-zinc-400 hover:text-zinc-600'
+            className={`min-h-11 min-w-0 rounded-xl border px-3 py-2.5 text-xs font-black transition-all flex items-center justify-center gap-2 sm:text-sm ${
+              activeTab === 'historial' ? 'border-indigo-200 bg-indigo-50 text-indigo-700 shadow-sm' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-800'
             }`}
           >
             <History size={18} />
@@ -619,8 +619,8 @@ export default function SalesModule() {
           </button>
           <button 
             onClick={() => setActiveTab('saldos')}
-            className={`px-4 sm:px-8 py-4 sm:py-5 text-sm font-bold transition-all border-b-2 flex items-center gap-2 ${
-              activeTab === 'saldos' ? 'border-zinc-900 text-zinc-900' : 'border-transparent text-zinc-400 hover:text-zinc-600'
+            className={`min-h-11 min-w-0 rounded-xl border px-3 py-2.5 text-xs font-black transition-all flex items-center justify-center gap-2 sm:text-sm ${
+              activeTab === 'saldos' ? 'border-indigo-200 bg-indigo-50 text-indigo-700 shadow-sm' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-800'
             }`}
           >
             <DollarSign size={18} />
@@ -628,8 +628,8 @@ export default function SalesModule() {
           </button>
           <button 
             onClick={() => setActiveTab('pedidos-clientes')}
-            className={`px-4 sm:px-8 py-4 sm:py-5 text-sm font-bold transition-all border-b-2 flex items-center gap-2 ${
-              activeTab === 'pedidos-clientes' ? 'border-zinc-900 text-zinc-900' : 'border-transparent text-zinc-400 hover:text-zinc-600'
+            className={`min-h-11 min-w-0 rounded-xl border px-3 py-2.5 text-xs font-black transition-all flex items-center justify-center gap-2 sm:text-sm ${
+              activeTab === 'pedidos-clientes' ? 'border-indigo-200 bg-indigo-50 text-indigo-700 shadow-sm' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-800'
             }`}
           >
             <ShoppingCart size={18} />
@@ -638,11 +638,11 @@ export default function SalesModule() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-hidden">
+      <div className="min-h-0 flex-1">
         {activeTab === 'nueva' ? (
-          <div className="flex h-full overflow-y-auto xl:overflow-hidden flex-col xl:flex-row">
+          <div className="flex min-h-full flex-col overflow-y-auto 2xl:h-full 2xl:flex-row 2xl:overflow-hidden">
             {/* Product Selection */}
-            <div className="shrink-0 xl:flex-1 flex flex-col p-4 lg:p-6 xl:p-8 xl:border-r border-zinc-200 overflow-visible xl:overflow-hidden">
+            <div className="flex min-w-0 flex-col p-3 sm:p-5 lg:p-6 2xl:flex-1 2xl:overflow-hidden 2xl:border-r 2xl:border-slate-200">
               <div className="mb-4 lg:mb-6 flex flex-col sm:flex-row items-start justify-between gap-4">
                 <div>
                   <h1 className="text-2xl lg:text-3xl font-black text-zinc-900 tracking-tight">Nueva Venta</h1>
@@ -687,8 +687,8 @@ export default function SalesModule() {
                 />
               </div>
 
-              <div className="shrink-0 xl:flex-1 overflow-y-auto pr-2 custom-scrollbar max-h-[44dvh] xl:max-h-none">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-6">
+              <div className="min-h-0 overflow-y-auto pr-1 sm:pr-2 custom-scrollbar max-h-[52dvh] 2xl:max-h-none 2xl:flex-1">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-2">
                   {filteredProducts.map(product => (
                     <button
                       key={product.id}
@@ -735,7 +735,7 @@ export default function SalesModule() {
             </div>
 
             {/* Cart / Order Summary */}
-            <div className="w-full xl:w-[560px] 2xl:w-[600px] bg-white flex flex-col shadow-2xl z-10 border-t xl:border-t-0 xl:border-l border-zinc-200 min-h-0 shrink-0">
+            <div className="z-10 flex min-h-0 w-full shrink-0 flex-col border-t border-slate-200 bg-white shadow-xl 2xl:w-[520px] 2xl:border-l 2xl:border-t-0">
               <div className="p-3 lg:p-4 border-b border-zinc-100 flex items-center justify-between gap-3 shrink-0">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="w-10 h-10 bg-zinc-900 text-white rounded-xl flex items-center justify-center shrink-0">
@@ -752,7 +752,7 @@ export default function SalesModule() {
                 </div>
               </div>
 
-              <div className="shrink-0 overflow-y-auto p-3 lg:p-4 space-y-3 max-h-[28dvh] xl:max-h-[30dvh] custom-scrollbar border-b border-zinc-100">
+              <div className="shrink-0 space-y-3 overflow-y-auto border-b border-slate-100 p-3 sm:p-4 max-h-[42dvh] 2xl:max-h-[32dvh] custom-scrollbar">
                 {cart.map(item => {
                   const discountedUnitPrice = calculateDiscountedUnitPrice(item);
                   const itemSubtotal = discountedUnitPrice * item.quantity;
@@ -931,7 +931,7 @@ export default function SalesModule() {
                       <CreditCard className="w-4 h-4 text-zinc-400" />
                       <span className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest">Datos del Cheque</span>
                     </div>
-                    <div className="grid grid-cols-2 gap-2.5">
+                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                       <div>
                         <label className="block text-[9px] font-bold text-zinc-400 uppercase mb-1 tracking-widest">Banco</label>
                         <input
@@ -994,7 +994,7 @@ export default function SalesModule() {
               </div>
 
               <div className="shrink-0 p-3 lg:p-4 bg-white border-t border-zinc-200 space-y-3">
-                <div className="flex justify-between items-end gap-4">
+                <div className="flex flex-col gap-2 min-[420px]:flex-row min-[420px]:items-end min-[420px]:justify-between">
                   <div>
                     <span className="block text-zinc-500 font-bold text-[10px] uppercase tracking-widest">Total a cobrar</span>
                     {metodoPago === 'mixto' && parseFloat(montoPagado) > 0 && (
@@ -1031,26 +1031,26 @@ export default function SalesModule() {
 
               {/* History Summary */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="bg-white p-6 rounded-[32px] border border-zinc-200 shadow-sm flex items-center gap-6">
-                  <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center shrink-0">
+                <div className="flex min-w-0 items-center gap-4 rounded-3xl border border-zinc-200 bg-white p-4 shadow-sm sm:gap-6 sm:p-6">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 sm:h-16 sm:w-16">
                     <TrendingDown size={32} />
                   </div>
                   <div>
                     <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Total Ventas Filtradas</p>
-                    <p className="text-3xl font-black text-zinc-900 font-mono tracking-tighter">
+                    <p className="break-all text-2xl font-black text-zinc-900 font-mono tracking-tighter sm:text-3xl">
                       ${filteredSalesHistory.reduce((acc, sale) => acc + sale.total, 0).toFixed(2)}
                     </p>
                     <p className="text-[10px] text-emerald-600 font-bold uppercase">Monto acumulado</p>
                   </div>
                 </div>
 
-                <div className="bg-white p-6 rounded-[32px] border border-zinc-200 shadow-sm flex items-center gap-6">
-                  <div className="w-16 h-16 bg-zinc-900 text-white rounded-2xl flex items-center justify-center shrink-0">
+                <div className="flex min-w-0 items-center gap-4 rounded-3xl border border-zinc-200 bg-white p-4 shadow-sm sm:gap-6 sm:p-6">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-zinc-900 text-white sm:h-16 sm:w-16">
                     <History size={32} />
                   </div>
                   <div>
                     <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Cantidad de Operaciones</p>
-                    <p className="text-3xl font-black text-zinc-900 font-mono tracking-tighter">{filteredSalesHistory.length}</p>
+                    <p className="break-all text-2xl font-black text-zinc-900 font-mono tracking-tighter sm:text-3xl">{filteredSalesHistory.length}</p>
                     <p className="text-[10px] text-zinc-400 font-bold uppercase">Ventas encontradas</p>
                   </div>
                 </div>
@@ -1098,90 +1098,92 @@ export default function SalesModule() {
                 </div>
               </div>
 
-              <div className="bg-white rounded-3xl border border-zinc-200 shadow-xl overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-zinc-50/50">
-                        <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">ID</th>
-                        <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</th>
-                        <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
-                        <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Forma de Pago</th>
-                        <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Total</th>
-                        <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Acciones</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-50">
-                      {filteredSalesHistory.map((sale: any) => (
-                        <tr key={sale.id} className="hover:bg-zinc-50/50 transition-colors group">
-                          <td className="px-8 py-5 text-xs font-mono text-zinc-400">#{sale.id}</td>
-                          <td className="px-8 py-5 text-xs text-zinc-600">
-                            {new Date(sale.fecha).toLocaleDateString()} <span className="text-zinc-400 ml-1">{new Date(sale.fecha).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                          </td>
-                          <td className="px-8 py-5">
-                            <p className="text-sm font-bold text-zinc-900">{sale.nombre_cliente}</p>
-                            <p className="text-[10px] text-zinc-400 uppercase font-bold">ID Cliente: {sale.cliente_id}</p>
-                          </td>
-                          <td className="px-8 py-5">
-                            <span className="text-[10px] font-bold uppercase bg-zinc-100 text-zinc-600 px-3 py-1 rounded-full border border-zinc-200">
-                              {sale.metodo_pago}
-                            </span>
-                          </td>
-                          <td className="px-8 py-5 text-sm font-black text-zinc-900 font-mono text-right">
-                            ${sale.total.toFixed(2)}
-                          </td>
-                          <td className="px-8 py-5 text-center">
-                            <div className="flex items-center justify-center gap-2">
-                              {hasPermission('sales', 'view') && (
-                                <button 
-                                  onClick={() => fetchSaleDetails(sale.id)}
-                                  className="p-2.5 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-xl transition-all"
-                                  title="Ver Detalle"
-                                >
-                                  <Eye size={18} />
-                                </button>
+              <div className="space-y-3">
+                {filteredSalesHistory.map((sale: any) => (
+                  <article
+                    key={sale.id}
+                    className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-indigo-200 hover:shadow-md sm:p-5"
+                  >
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="min-w-0">
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                            Venta #{sale.numero_venta || sale.id}
+                          </span>
+                          <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-black uppercase text-slate-600">
+                            {sale.metodo_pago}
+                          </span>
+                        </div>
+                        <h3 className="break-words text-base font-black text-slate-900">
+                          {sale.nombre_cliente}
+                        </h3>
+                        <p className="mt-1 text-xs font-medium text-slate-500">
+                          {new Date(sale.fecha).toLocaleDateString()} · {new Date(sale.fecha).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-col gap-3 min-[420px]:flex-row min-[420px]:items-center lg:justify-end">
+                        <div className="rounded-2xl bg-slate-900 px-4 py-3 text-left text-white min-[420px]:text-right">
+                          <p className="text-[9px] font-black uppercase tracking-widest text-white/50">Total</p>
+                          <p className="text-xl font-black font-mono">${sale.total.toFixed(2)}</p>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
+                          {hasPermission('sales', 'view') && (
+                            <button
+                              onClick={() => fetchSaleDetails(sale.id)}
+                              className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 hover:bg-slate-50"
+                              title="Ver detalle"
+                              aria-label={`Ver detalle de la venta ${sale.numero_venta || sale.id}`}
+                            >
+                              <Eye size={16} />
+                              <span>Detalle</span>
+                            </button>
+                          )}
+                          {hasPermission('sales', 'view') && (
+                            <button
+                              onClick={() => handleDownloadReceipt(sale.id)}
+                              disabled={downloadingSaleId === sale.id}
+                              className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 text-xs font-black text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                              title="Descargar PDF"
+                              aria-label={`Descargar PDF de la venta ${sale.numero_venta || sale.id}`}
+                            >
+                              {downloadingSaleId === sale.id ? (
+                                <div className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-600 border-t-transparent" />
+                              ) : (
+                                <FileDown size={16} />
                               )}
-                              {hasPermission('sales', 'view') && (
-                                <button 
-                                  onClick={() => handleDownloadReceipt(sale.id)}
-                                  disabled={downloadingSaleId === sale.id}
-                                  className="p-2.5 text-zinc-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all disabled:opacity-50"
-                                  title="Descargar PDF"
-                                >
-                                  {downloadingSaleId === sale.id ? (
-                                    <div className="w-4 h-4 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
-                                  ) : (
-                                    <FileDown size={18} />
-                                  )}
-                                </button>
+                              <span>PDF</span>
+                            </button>
+                          )}
+                          {hasPermission('sales', 'view') && (
+                            <button
+                              onClick={() => handleSendReceiptWhatsApp(sale.id)}
+                              disabled={whatsAppSendingSaleId === sale.id}
+                              className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-green-200 bg-green-50 px-3 text-xs font-black text-green-700 hover:bg-green-100 disabled:opacity-50"
+                              title="Preparar envío por WhatsApp"
+                              aria-label={`Preparar WhatsApp de la venta ${sale.numero_venta || sale.id}`}
+                            >
+                              {whatsAppSendingSaleId === sale.id ? (
+                                <div className="h-4 w-4 animate-spin rounded-full border-2 border-green-600 border-t-transparent" />
+                              ) : (
+                                <MessageCircle size={16} />
                               )}
-                              {hasPermission('sales', 'view') && (
-                                <button 
-                                  onClick={() => handleSendReceiptWhatsApp(sale.id)}
-                                  disabled={whatsAppSendingSaleId === sale.id}
-                                  className="p-2.5 text-zinc-400 hover:text-green-600 hover:bg-green-50 rounded-xl transition-all disabled:opacity-50"
-                                  title="Preparar envío por WhatsApp"
-                                >
-                                  {whatsAppSendingSaleId === sale.id ? (
-                                    <div className="w-4 h-4 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
-                                  ) : (
-                                    <MessageCircle size={18} />
-                                  )}
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {filteredSalesHistory.length === 0 && (
-                    <div className="p-24 text-center text-zinc-400">
-                      <History size={64} className="mx-auto mb-4 opacity-10" />
-                      <p className="text-lg font-medium">No se encontraron ventas con los filtros aplicados</p>
+                              <span>WhatsApp</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  )}
-                </div>
+                  </article>
+                ))}
+
+                {filteredSalesHistory.length === 0 && (
+                  <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-10 text-center text-slate-400 sm:p-16">
+                    <History size={52} className="mx-auto mb-4 opacity-20" />
+                    <p className="font-bold">No se encontraron ventas con los filtros aplicados</p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1199,105 +1201,97 @@ export default function SalesModule() {
 
               {/* Summary Cards */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-white p-6 rounded-[32px] border border-zinc-200 shadow-sm flex items-center gap-6">
-                  <div className="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center shrink-0">
+                <div className="flex min-w-0 items-center gap-4 rounded-3xl border border-zinc-200 bg-white p-4 shadow-sm sm:gap-6 sm:p-6">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-red-50 text-red-600 sm:h-16 sm:w-16">
                     <DollarSign size={32} />
                   </div>
                   <div>
                     <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Deuda General</p>
-                    <p className="text-3xl font-black text-zinc-900 font-mono tracking-tighter">${saldosSummary.totalDebt.toFixed(2)}</p>
+                    <p className="break-all text-2xl font-black text-zinc-900 font-mono tracking-tighter sm:text-3xl">${saldosSummary.totalDebt.toFixed(2)}</p>
                     <p className="text-[10px] text-red-600 font-bold uppercase">Total por cobrar</p>
                   </div>
                 </div>
 
-                <div className="bg-white p-6 rounded-[32px] border border-zinc-200 shadow-sm flex items-center gap-6">
-                  <div className="w-16 h-16 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center shrink-0">
+                <div className="flex min-w-0 items-center gap-4 rounded-3xl border border-zinc-200 bg-white p-4 shadow-sm sm:gap-6 sm:p-6">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-50 text-amber-600 sm:h-16 sm:w-16">
                     <Users size={32} />
                   </div>
                   <div>
                     <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Clientes con Deuda</p>
-                    <p className="text-3xl font-black text-zinc-900 font-mono tracking-tighter">{saldosSummary.customersWithDebt}</p>
+                    <p className="break-all text-2xl font-black text-zinc-900 font-mono tracking-tighter sm:text-3xl">{saldosSummary.customersWithDebt}</p>
                     <p className="text-[10px] text-amber-600 font-bold uppercase">Cuentas activas</p>
                   </div>
                 </div>
 
-                <div className="bg-white p-6 rounded-[32px] border border-zinc-200 shadow-sm flex items-center gap-6">
-                  <div className="w-16 h-16 bg-zinc-900 text-white rounded-2xl flex items-center justify-center shrink-0">
+                <div className="flex min-w-0 items-center gap-4 rounded-3xl border border-zinc-200 bg-white p-4 shadow-sm sm:gap-6 sm:p-6">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-zinc-900 text-white sm:h-16 sm:w-16">
                     <History size={32} />
                   </div>
                   <div>
                     <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Ventas Pendientes</p>
-                    <p className="text-3xl font-black text-zinc-900 font-mono tracking-tighter">{saldosSummary.pendingSalesCount}</p>
+                    <p className="break-all text-2xl font-black text-zinc-900 font-mono tracking-tighter sm:text-3xl">{saldosSummary.pendingSalesCount}</p>
                     <p className="text-[10px] text-zinc-400 font-bold uppercase">Operaciones sin saldar</p>
                   </div>
                 </div>
               </div>
 
               {/* Saldos List */}
-              <div className="bg-white rounded-3xl border border-zinc-200 shadow-xl overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-zinc-50/50">
-                        <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
-                        <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Total Adeudado</th>
-                        <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Última Compra</th>
-                        <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Estado</th>
-                        <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Acciones</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-50">
-                      {saldosList.map((entry: any) => (
-                        <tr key={entry.id} className="hover:bg-zinc-50/50 transition-colors group">
-                          <td className="px-8 py-5">
-                            <button 
-                              onClick={() => setSelectedCustomerForSaldos(entry)}
-                              className="text-left group-hover:translate-x-1 transition-transform"
-                            >
-                              <p className="text-sm font-bold text-zinc-900 group-hover:text-emerald-600 transition-colors">{entry.nombre}</p>
-                              <p className="text-[10px] text-zinc-400 uppercase font-bold">ID: {entry.id}</p>
-                            </button>
-                          </td>
-                          <td className="px-8 py-5 text-right">
-                            <p className="text-lg font-black text-red-600 font-mono tracking-tighter">${entry.totalAdeudado.toFixed(2)}</p>
-                          </td>
-                          <td className="px-8 py-5 text-xs text-zinc-600">
-                            {new Date(entry.ultimaCompra).toLocaleDateString()}
-                          </td>
-                          <td className="px-8 py-5 text-center">
-                            <span className="text-[9px] font-black uppercase px-3 py-1 rounded-full border bg-red-50 text-red-600 border-red-100">
-                              Con Deuda
-                            </span>
-                          </td>
-                          <td className="px-8 py-5 text-center">
-                            <div className="flex items-center justify-center gap-2">
-                              <button 
-                                onClick={() => setSelectedCustomerForSaldos(entry)}
-                                className="p-2.5 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-xl transition-all"
-                                title="Ver Ventas Pendientes"
-                              >
-                                <Eye size={18} />
-                              </button>
-                              <button 
-                                onClick={() => setShowCustomerFichaId(entry.id)}
-                                className="p-2.5 text-zinc-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all"
-                                title="Ver Ficha Cliente"
-                              >
-                                <ArrowRight size={18} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {saldosList.length === 0 && (
-                    <div className="p-24 text-center text-zinc-400">
-                      <CheckCircle2 size={64} className="mx-auto mb-4 opacity-10 text-emerald-500" />
-                      <p className="text-lg font-medium">¡Excelente! No hay saldos pendientes por cobrar</p>
+              <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                {saldosList.map((entry: any) => (
+                  <article
+                    key={entry.id}
+                    className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5"
+                  >
+                    <div className="flex flex-col gap-4 min-[480px]:flex-row min-[480px]:items-start min-[480px]:justify-between">
+                      <div className="min-w-0">
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          <span className="rounded-full border border-red-100 bg-red-50 px-2.5 py-1 text-[9px] font-black uppercase text-red-600">
+                            Con deuda
+                          </span>
+                          <span className="text-[10px] font-bold uppercase text-slate-400">
+                            ID {entry.id}
+                          </span>
+                        </div>
+                        <h3 className="break-words text-base font-black text-slate-900">{entry.nombre}</h3>
+                        <p className="mt-1 text-xs font-medium text-slate-500">
+                          Última compra: {new Date(entry.ultimaCompra).toLocaleDateString()}
+                        </p>
+                        <p className="mt-1 text-xs font-bold text-slate-400">
+                          {entry.ventas.length} {entry.ventas.length === 1 ? 'venta pendiente' : 'ventas pendientes'}
+                        </p>
+                      </div>
+
+                      <div className="rounded-2xl bg-red-50 px-4 py-3 min-[480px]:text-right">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-red-400">Total adeudado</p>
+                        <p className="text-2xl font-black font-mono text-red-600">${entry.totalAdeudado.toFixed(2)}</p>
+                      </div>
                     </div>
-                  )}
-                </div>
+
+                    <div className="mt-4 grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+                      <button
+                        onClick={() => setSelectedCustomerForSaldos(entry)}
+                        className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 text-xs font-black uppercase tracking-wide text-white hover:bg-slate-800"
+                      >
+                        <Eye size={16} />
+                        Ver ventas pendientes
+                      </button>
+                      <button
+                        onClick={() => setShowCustomerFichaId(entry.id)}
+                        className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 text-xs font-black uppercase tracking-wide text-emerald-700 hover:bg-emerald-100"
+                      >
+                        <ArrowRight size={16} />
+                        Ver ficha
+                      </button>
+                    </div>
+                  </article>
+                ))}
+
+                {saldosList.length === 0 && (
+                  <div className="rounded-3xl border border-dashed border-emerald-200 bg-white p-10 text-center text-slate-400 sm:p-16 xl:col-span-2">
+                    <CheckCircle2 size={52} className="mx-auto mb-4 text-emerald-500 opacity-30" />
+                    <p className="font-bold">¡Excelente! No hay saldos pendientes por cobrar</p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1306,9 +1300,9 @@ export default function SalesModule() {
 
       {/* Success Modal */}
       {showSuccessModal && lastSaleData && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl sm:rounded-[40px] w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
-            <div className="p-6 sm:p-10 text-center">
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+          <div className="flex max-h-[100dvh] w-full max-w-md flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl animate-in zoom-in-95 duration-300 sm:max-h-[95dvh] sm:rounded-[32px]">
+            <div className="overflow-y-auto p-5 text-center sm:p-8">
               <div className="w-16 h-16 sm:w-24 sm:h-24 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6 sm:mb-8 shadow-inner">
                 <CheckCircle2 size={32} className="sm:hidden" />
                 <CheckCircle2 size={48} className="hidden sm:block" />
@@ -1370,8 +1364,8 @@ export default function SalesModule() {
 
       {/* Sale Detail Modal (History) */}
       {selectedSale && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-2 sm:p-4">
-          <div className="bg-white rounded-3xl sm:rounded-[40px] w-full max-w-2xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col max-h-[95vh]">
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+          <div className="flex max-h-[100dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl animate-in zoom-in-95 duration-300 sm:max-h-[95dvh] sm:rounded-[36px]">
             <div className="p-4 sm:p-8 border-b border-zinc-100 flex items-center justify-between bg-zinc-900 text-white shrink-0">
               <div>
                 <h3 className="text-lg sm:text-xl font-black uppercase tracking-tight">Detalle #{selectedSale.numero_venta || selectedSale.id}</h3>
@@ -1411,18 +1405,18 @@ export default function SalesModule() {
                 <h4 className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Productos Vendidos</h4>
                 <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
                   {selectedSale.items.map((item: any) => (
-                    <div key={item.id} className="flex items-center justify-between p-3 sm:p-4 bg-zinc-50 rounded-xl sm:rounded-2xl border border-zinc-100 group hover:bg-white hover:shadow-md transition-all">
+                    <div key={item.id} className="flex flex-col gap-3 rounded-xl border border-zinc-100 bg-zinc-50 p-3 transition-all group hover:bg-white hover:shadow-md min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between sm:rounded-2xl sm:p-4">
                       <div className="flex items-center gap-3 sm:gap-4 min-w-0">
                         <div className="w-8 h-8 sm:w-10 sm:h-10 bg-white rounded-lg sm:rounded-xl flex items-center justify-center text-zinc-400 border border-zinc-100 group-hover:bg-zinc-900 group-hover:text-white transition-all shrink-0">
                           <Package size={16} className="sm:hidden" />
                           <Package size={20} className="hidden sm:block" />
                         </div>
                         <div className="min-w-0">
-                          <p className="text-xs sm:text-sm font-bold text-zinc-900 truncate">{item.product_name}</p>
+                          <p className="break-words text-xs font-bold text-zinc-900 sm:text-sm">{item.product_name}</p>
                           <p className="text-[9px] sm:text-[10px] text-zinc-400 uppercase font-bold tracking-wider">{item.company}</p>
                         </div>
                       </div>
-                      <div className="text-right shrink-0">
+                      <div className="w-full text-left min-[420px]:w-auto min-[420px]:shrink-0 min-[420px]:text-right">
                         <p className="text-[10px] sm:text-xs font-bold text-zinc-500">{item.cantidad} x ${item.precio_venta.toFixed(2)}</p>
                         <p className="text-sm sm:text-base font-black text-zinc-900 font-mono">${(item.cantidad * item.precio_venta).toFixed(2)}</p>
                       </div>
@@ -1476,8 +1470,8 @@ export default function SalesModule() {
       )}
       {/* Pending Sales Detail Modal (Saldos) */}
       {selectedCustomerForSaldos && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-2 sm:p-4">
-          <div className="bg-white rounded-3xl sm:rounded-[40px] w-full max-w-2xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col max-h-[95vh]">
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+          <div className="flex max-h-[100dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl animate-in zoom-in-95 duration-300 sm:max-h-[95dvh] sm:rounded-[36px]">
             <div className="p-4 sm:p-8 border-b border-zinc-100 flex items-center justify-between bg-zinc-900 text-white shrink-0">
               <div>
                 <h3 className="text-lg sm:text-xl font-black tracking-tight">Ventas Pendientes</h3>
@@ -1502,33 +1496,30 @@ export default function SalesModule() {
                 </div>
               </div>
 
-              <div className="bg-white rounded-2xl sm:rounded-3xl border border-zinc-100 overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse min-w-[600px]">
-                    <thead>
-                      <tr className="bg-zinc-50/50">
-                        <th className="px-4 sm:px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</th>
-                        <th className="px-4 sm:px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Venta</th>
-                        <th className="px-4 sm:px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Total</th>
-                        <th className="px-4 sm:px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Pagado</th>
-                        <th className="px-4 sm:px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Saldo</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-50">
-                      {selectedCustomerForSaldos.ventas.map((sale: any) => (
-                        <tr key={sale.id} className="hover:bg-zinc-50/50 transition-colors">
-                          <td className="px-4 sm:px-6 py-4 text-xs text-zinc-600">
-                            {new Date(sale.fecha).toLocaleDateString()}
-                          </td>
-                          <td className="px-4 sm:px-6 py-4 text-xs font-mono text-zinc-400">#{sale.numero_venta || sale.id}</td>
-                          <td className="px-4 sm:px-6 py-4 text-xs font-bold text-zinc-900 text-right">${sale.total.toFixed(2)}</td>
-                          <td className="px-4 sm:px-6 py-4 text-xs font-bold text-emerald-600 text-right">${sale.monto_pagado.toFixed(2)}</td>
-                          <td className="px-4 sm:px-6 py-4 text-xs font-black text-red-600 font-mono text-right">${sale.monto_pendiente.toFixed(2)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+              <div className="space-y-3">
+                {selectedCustomerForSaldos.ventas.map((sale: any) => (
+                  <div key={sale.id} className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-black text-slate-900">Venta #{sale.numero_venta || sale.id}</p>
+                        <p className="mt-1 text-[11px] font-medium text-slate-500">
+                          {new Date(sale.fecha).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <p className="text-lg font-black font-mono text-slate-900">${sale.total.toFixed(2)}</p>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <div className="rounded-xl bg-emerald-50 p-3">
+                        <p className="text-[9px] font-black uppercase text-emerald-500">Pagado</p>
+                        <p className="font-black font-mono text-emerald-700">${sale.monto_pagado.toFixed(2)}</p>
+                      </div>
+                      <div className="rounded-xl bg-red-50 p-3">
+                        <p className="text-[9px] font-black uppercase text-red-400">Saldo</p>
+                        <p className="font-black font-mono text-red-600">${sale.monto_pendiente.toFixed(2)}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
             <div className="p-4 sm:p-8 bg-zinc-50 border-t border-zinc-100 flex flex-col sm:flex-row gap-3 sm:justify-between sm:items-center shrink-0">
@@ -1565,9 +1556,9 @@ export default function SalesModule() {
 
       {/* Quick Payment Modal */}
       {showQuickPaymentModal && selectedCustomerForSaldos && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[40px] w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
-            <div className="p-8 border-b border-zinc-100 flex items-center justify-between bg-emerald-600 text-white">
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+          <div className="flex max-h-[100dvh] w-full max-w-md flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl animate-in zoom-in-95 duration-300 sm:max-h-[95dvh] sm:rounded-[32px]">
+            <div className="flex shrink-0 items-center justify-between border-b border-emerald-500 bg-emerald-600 p-4 text-white sm:p-6">
               <h3 className="text-xl font-black tracking-tight">Registrar Pago</h3>
               <button 
                 onClick={() => setShowQuickPaymentModal(false)}
@@ -1576,7 +1567,7 @@ export default function SalesModule() {
                 <X size={24} />
               </button>
             </div>
-            <form onSubmit={handleQuickPayment} className="p-8 space-y-6">
+            <form onSubmit={handleQuickPayment} className="space-y-5 overflow-y-auto p-4 sm:p-6">
               <div>
                 <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-2 tracking-widest">Monto a Cobrar</label>
                 <div className="relative">
@@ -1597,7 +1588,7 @@ export default function SalesModule() {
 
               <div>
                 <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-2 tracking-widest">Método de Pago</label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
                   {paymentMethods.map((pm) => (
                     <button
                       key={pm.id}
