@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Search, 
   ShoppingCart, 
@@ -41,6 +41,48 @@ const getDefaultSalePaymentMethod = (methods: any[]) => {
   return cashMethod?.name || methods[0]?.name || '';
 };
 
+const normalizeSearchValue = (value: any) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+
+const getClienteDisplayName = (cliente: any) =>
+  String(cliente?.nombre_apellido || cliente?.razon_social || 'Cliente').trim();
+
+const getClienteSearchValue = (cliente: any) =>
+  normalizeSearchValue([
+    cliente?.nombre_apellido,
+    cliente?.razon_social,
+    cliente?.cuit,
+    cliente?.telefono,
+    cliente?.localidad,
+  ].filter(Boolean).join(' '));
+
+const openWhatsAppPlaceholder = () => {
+  const popup = window.open('', '_blank');
+
+  if (!popup) return null;
+
+  try {
+    popup.opener = null;
+    popup.document.title = 'Abriendo WhatsApp...';
+    popup.document.body.innerHTML = `
+      <main style="font-family:system-ui,-apple-system,sans-serif;min-height:100vh;display:grid;place-items:center;background:#f8fafc;color:#0f172a;margin:0;padding:24px;text-align:center">
+        <div>
+          <div style="width:44px;height:44px;border:4px solid #dcfce7;border-top-color:#16a34a;border-radius:9999px;margin:0 auto 16px;animation:spin 0.8s linear infinite"></div>
+          <strong>Abriendo WhatsApp...</strong>
+          <p style="color:#64748b;margin:8px 0 0">Estamos preparando el chat del cliente.</p>
+        </div>
+      </main>
+      <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+    `;
+  } catch {}
+
+  return popup;
+};
+
 export default function SalesModule() {
   const { hasPermission } = useAuth();
   const [activeTab, setActiveTab] = useState<'nueva' | 'historial' | 'saldos' | 'pedidos-clientes'>('nueva');
@@ -58,6 +100,11 @@ export default function SalesModule() {
     importe: ''
   });
   const [clientes, setClientes] = useState<any[]>([]);
+  const [clienteSearchTerm, setClienteSearchTerm] = useState('');
+  const [showClienteSuggestions, setShowClienteSuggestions] = useState(false);
+  const [highlightedClienteIndex, setHighlightedClienteIndex] = useState(0);
+  const [clienteSelectionDirty, setClienteSelectionDirty] = useState(false);
+  const clienteSearchContainerRef = useRef<HTMLDivElement | null>(null);
   const [cart, setCart] = useState<{ product: Product; quantity: number; discountType: 'none' | 'percentage' | 'fixed'; discountValue: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
@@ -96,6 +143,16 @@ export default function SalesModule() {
     });
   }, [salesHistory, historySearchTerm, historyDateFrom, historyDateTo]);
 
+
+  const filteredClientes = useMemo(() => {
+    const query = normalizeSearchValue(clienteSearchTerm);
+    const matches = query
+      ? clientes.filter(cliente => getClienteSearchValue(cliente).includes(query))
+      : clientes;
+
+    return matches.slice(0, 10);
+  }, [clientes, clienteSearchTerm]);
+
   const saldosSummary = useMemo(() => {
     const pendingSales = salesHistory.filter(s => s.monto_pendiente > 0);
     const totalDebt = pendingSales.reduce((acc, s) => acc + s.monto_pendiente, 0);
@@ -133,6 +190,20 @@ export default function SalesModule() {
 
     return Array.from(customerMap.values()).sort((a, b) => b.totalAdeudado - a.totalAdeudado);
   }, [salesHistory]);
+
+  useEffect(() => {
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (
+        clienteSearchContainerRef.current &&
+        !clienteSearchContainerRef.current.contains(event.target as Node)
+      ) {
+        setShowClienteSuggestions(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
 
   useEffect(() => {
     fetchActiveProducts();
@@ -274,25 +345,21 @@ export default function SalesModule() {
     let digits = String(rawPhone || '').replace(/\D/g, '');
 
     if (!digits) return '';
+    if (digits.startsWith('00')) digits = digits.slice(2);
 
-    if (digits.startsWith('00')) {
-      digits = digits.slice(2);
-    }
-
-    while (digits.startsWith('0')) {
-      digits = digits.slice(1);
-    }
+    if (digits.startsWith('549')) return digits;
 
     if (digits.startsWith('54')) {
-      return digits;
+      let localNumber = digits.slice(2);
+      while (localNumber.startsWith('0')) localNumber = localNumber.slice(1);
+      if (localNumber.startsWith('9')) return `54${localNumber}`;
+      return localNumber ? `549${localNumber}` : '';
     }
 
-    // Argentina: si cargan el celular local con característica + número, intentamos armar formato WhatsApp internacional.
-    if (digits.length >= 10 && digits.length <= 11) {
-      return `549${digits}`;
-    }
+    while (digits.startsWith('0')) digits = digits.slice(1);
+    if (digits.startsWith('9') && digits.length === 11) return `54${digits}`;
 
-    return digits;
+    return digits.length >= 10 ? `549${digits}` : '';
   };
 
   const enrichSaleWithClientData = async (sale: any) => {
@@ -330,8 +397,12 @@ export default function SalesModule() {
   };
 
   const handleSendReceiptWhatsApp = async (saleId: number) => {
-    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    const whatsappWindow = !isMobile ? window.open('about:blank', '_blank', 'noopener,noreferrer') : null;
+    const whatsappWindow = openWhatsAppPlaceholder();
+
+    if (!whatsappWindow) {
+      alert('El navegador bloqueó la nueva pestaña. Habilitá las ventanas emergentes para abrir WhatsApp.');
+      return;
+    }
 
     try {
       setWhatsAppSendingSaleId(saleId);
@@ -345,8 +416,8 @@ export default function SalesModule() {
         sale.cliente_telefono || sale.telefono || sale.customer_phone || sale.phone
       );
 
-      if (!phone || phone.length < 10) {
-        if (whatsappWindow) whatsappWindow.close();
+      if (!phone) {
+        whatsappWindow.close();
         alert('El cliente no tiene un teléfono válido cargado para WhatsApp.');
         return;
       }
@@ -356,25 +427,13 @@ export default function SalesModule() {
 
       await copyTextToClipboard(message);
 
-      // Opción A práctica:
-      // 1) descarga el PDF con nombre cliente + fecha;
-      // 2) abre el chat directo del cliente con texto predeterminado;
-      // 3) el usuario adjunta manualmente el PDF descargado.
+      // Se descarga el PDF y se abre el chat directo. El archivo se adjunta manualmente.
       generateSaleReceipt(sale, businessSettings);
 
-      const whatsappUrl = isMobile
-        ? `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`
-        : `https://web.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`;
-
-      if (whatsappWindow) {
-        whatsappWindow.location.href = whatsappUrl;
-      } else {
-        window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
-      }
-
-      alert('Se descargó el PDF y se abrió el chat del cliente con el texto preparado. Adjuntá manualmente el PDF descargado.');
+      const whatsappUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+      whatsappWindow.location.replace(whatsappUrl);
     } catch (error) {
-      if (whatsappWindow) whatsappWindow.close();
+      whatsappWindow.close();
       console.error('Error sending receipt via WhatsApp:', error);
       alert('No se pudo preparar el envío por WhatsApp.');
     } finally {
@@ -507,6 +566,59 @@ export default function SalesModule() {
     clientes.find(c => c.id === selectedClienteId) || { id: 1, nombre_apellido: 'Consumidor Final', saldo_cta_cte: 0, limite_credito: 0, tiene_deuda_vencida: 0 }
   , [clientes, selectedClienteId]);
 
+
+  useEffect(() => {
+    if (!clienteSelectionDirty) {
+      setClienteSearchTerm(getClienteDisplayName(selectedCliente));
+    }
+  }, [selectedCliente, clienteSelectionDirty]);
+
+  const selectCliente = (cliente: any) => {
+    setSelectedClienteId(Number(cliente.id));
+    setClienteSearchTerm(getClienteDisplayName(cliente));
+    setClienteSelectionDirty(false);
+    setShowClienteSuggestions(false);
+    setHighlightedClienteIndex(0);
+  };
+
+  const handleClienteSearchChange = (value: string) => {
+    setClienteSearchTerm(value);
+    setClienteSelectionDirty(
+      normalizeSearchValue(value) !== normalizeSearchValue(getClienteDisplayName(selectedCliente))
+    );
+    setHighlightedClienteIndex(0);
+    setShowClienteSuggestions(true);
+  };
+
+  const handleClienteSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') {
+      setShowClienteSuggestions(false);
+      return;
+    }
+
+    if (!showClienteSuggestions && ['ArrowDown', 'ArrowUp'].includes(event.key)) {
+      setShowClienteSuggestions(true);
+      return;
+    }
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setHighlightedClienteIndex(current =>
+        Math.min(current + 1, Math.max(filteredClientes.length - 1, 0))
+      );
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setHighlightedClienteIndex(current => Math.max(current - 1, 0));
+    }
+
+    if (event.key === 'Enter' && filteredClientes.length > 0) {
+      event.preventDefault();
+      selectCliente(filteredClientes[highlightedClienteIndex] || filteredClientes[0]);
+    }
+  };
+
   const newDebt = useMemo(() => {
     if (metodoPago === 'cta_cte') return total;
     if (metodoPago === 'mixto') return Math.max(0, total - (parseFloat(montoPagado) || 0));
@@ -520,6 +632,11 @@ export default function SalesModule() {
 
   const handleConfirmOrder = async () => {
     if (cart.length === 0) return;
+
+    if (clienteSelectionDirty) {
+      alert('Seleccioná un cliente de la lista de resultados antes de confirmar la venta.');
+      return;
+    }
 
     try {
       const saleData = {
@@ -568,6 +685,8 @@ export default function SalesModule() {
 
       setCart([]);
       setSelectedClienteId(1);
+      setClienteSelectionDirty(false);
+      setShowClienteSuggestions(false);
       const defaultPaymentMethod = getDefaultSalePaymentMethod(paymentMethods);
       setMetodoPago(defaultPaymentMethod);
       setMetodoPagoParcial(defaultPaymentMethod);
@@ -649,30 +768,118 @@ export default function SalesModule() {
                   <p className="text-zinc-500 mt-1 text-sm">Selecciona productos para el pedido</p>
                 </div>
                 
-                <div className="w-full sm:w-72">
-                  <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1 tracking-widest">Cliente Seleccionado</label>
-                  <select
-                    className="w-full px-4 py-2.5 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm font-bold shadow-sm"
-                    value={selectedClienteId}
-                    onChange={(e) => setSelectedClienteId(parseInt(e.target.value))}
+                <div className="w-full sm:w-80" ref={clienteSearchContainerRef}>
+                  <label
+                    htmlFor="sale-customer-search"
+                    className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-zinc-400"
                   >
-                    {clientes.map(c => (
-                      <option key={c.id} value={c.id}>{c.nombre_apellido}</option>
-                    ))}
-                  </select>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <span className={`px-2 py-0.5 rounded-full font-bold uppercase text-[9px] ${
-                      selectedCliente.tipo_cliente === 'mayorista' ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-600'
-                    }`}>
-                      {selectedCliente.tipo_cliente || 'minorista'}
-                    </span>
-                    {selectedCliente.tiene_deuda_vencida === 1 && (
-                      <div className="flex items-center gap-2 p-1 bg-red-50 text-red-600 rounded-lg text-[9px] font-bold border border-red-100 animate-pulse">
-                        <AlertCircle size={12} />
-                        Deuda Vencida
+                    Cliente seleccionado
+                  </label>
+
+                  <div className="relative">
+                    <Search
+                      className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400"
+                      size={17}
+                    />
+                    <input
+                      id="sale-customer-search"
+                      type="text"
+                      role="combobox"
+                      aria-autocomplete="list"
+                      aria-expanded={showClienteSuggestions}
+                      aria-controls="sale-customer-suggestions"
+                      autoComplete="off"
+                      value={clienteSearchTerm}
+                      onFocus={(event) => {
+                        event.currentTarget.select();
+                        setShowClienteSuggestions(true);
+                      }}
+                      onChange={(event) => handleClienteSearchChange(event.target.value)}
+                      onKeyDown={handleClienteSearchKeyDown}
+                      placeholder="Escribí nombre, razón social, CUIT o teléfono"
+                      className={`min-h-11 w-full rounded-xl border bg-white py-2.5 pl-10 pr-4 text-sm font-bold shadow-sm outline-none transition focus:ring-2 ${
+                        clienteSelectionDirty
+                          ? 'border-amber-300 focus:border-amber-400 focus:ring-amber-100'
+                          : 'border-zinc-200 focus:border-indigo-400 focus:ring-indigo-100'
+                      }`}
+                    />
+
+                    {showClienteSuggestions && (
+                      <div
+                        id="sale-customer-suggestions"
+                        role="listbox"
+                        className="absolute left-0 right-0 z-50 mt-2 max-h-72 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl"
+                      >
+                        {filteredClientes.length > 0 ? (
+                          filteredClientes.map((cliente, index) => (
+                            <button
+                              key={cliente.id}
+                              type="button"
+                              role="option"
+                              aria-selected={cliente.id === selectedClienteId}
+                              onMouseDown={(event) => {
+                                event.preventDefault();
+                                selectCliente(cliente);
+                              }}
+                              onMouseEnter={() => setHighlightedClienteIndex(index)}
+                              className={`w-full rounded-xl px-3 py-3 text-left transition ${
+                                index === highlightedClienteIndex
+                                  ? 'bg-indigo-50 text-indigo-900'
+                                  : 'text-slate-700 hover:bg-slate-50'
+                              }`}
+                            >
+                              <div className="flex min-w-0 items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="break-words text-sm font-black">{getClienteDisplayName(cliente)}</p>
+                                  {cliente.razon_social && cliente.razon_social !== cliente.nombre_apellido && (
+                                    <p className="mt-0.5 break-words text-xs font-medium text-slate-500">
+                                      {cliente.razon_social}
+                                    </p>
+                                  )}
+                                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-400">
+                                    {cliente.cuit && <span>CUIT {cliente.cuit}</span>}
+                                    {cliente.telefono && <span>{cliente.telefono}</span>}
+                                  </div>
+                                </div>
+                                {cliente.id === selectedClienteId && !clienteSelectionDirty && (
+                                  <CheckCircle2 className="shrink-0 text-emerald-500" size={18} />
+                                )}
+                              </div>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="px-4 py-6 text-center">
+                            <Users className="mx-auto mb-2 text-slate-300" size={28} />
+                            <p className="text-sm font-bold text-slate-600">No encontramos clientes</p>
+                            <p className="mt-1 text-xs text-slate-400">Probá con otro nombre, CUIT o teléfono.</p>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
+
+                  {clienteSelectionDirty ? (
+                    <p className="mt-2 flex items-center gap-1.5 text-xs font-bold text-amber-700">
+                      <AlertCircle size={14} />
+                      Elegí un cliente de la lista para confirmar la venta.
+                    </p>
+                  ) : (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${
+                        selectedCliente.tipo_cliente === 'mayorista'
+                          ? 'bg-indigo-50 text-indigo-600'
+                          : 'bg-emerald-50 text-emerald-600'
+                      }`}>
+                        {selectedCliente.tipo_cliente || 'minorista'}
+                      </span>
+                      {selectedCliente.tiene_deuda_vencida === 1 && (
+                        <div className="flex items-center gap-2 rounded-lg border border-red-100 bg-red-50 p-1 text-[9px] font-bold text-red-600 animate-pulse">
+                          <AlertCircle size={12} />
+                          Deuda vencida
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 

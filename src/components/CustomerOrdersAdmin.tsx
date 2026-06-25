@@ -102,10 +102,43 @@ const normalizeWhatsAppPhone = (rawPhone: any) => {
 
   if (!digits) return '';
   if (digits.startsWith('00')) digits = digits.slice(2);
-  if (digits.startsWith('54')) return digits;
-  if (digits.length >= 10 && digits.length <= 11) return `549${digits}`;
 
-  return digits;
+  if (digits.startsWith('549')) return digits;
+
+  if (digits.startsWith('54')) {
+    let localNumber = digits.slice(2);
+    while (localNumber.startsWith('0')) localNumber = localNumber.slice(1);
+    if (localNumber.startsWith('9')) return `54${localNumber}`;
+    return localNumber ? `549${localNumber}` : '';
+  }
+
+  while (digits.startsWith('0')) digits = digits.slice(1);
+  if (digits.startsWith('9') && digits.length === 11) return `54${digits}`;
+
+  return digits.length >= 10 ? `549${digits}` : '';
+};
+
+const openWhatsAppPlaceholder = () => {
+  const popup = window.open('', '_blank');
+
+  if (!popup) return null;
+
+  try {
+    popup.opener = null;
+    popup.document.title = 'Abriendo WhatsApp...';
+    popup.document.body.innerHTML = `
+      <main style="font-family:system-ui,-apple-system,sans-serif;min-height:100vh;display:grid;place-items:center;background:#f8fafc;color:#0f172a;margin:0;padding:24px;text-align:center">
+        <div>
+          <div style="width:44px;height:44px;border:4px solid #dcfce7;border-top-color:#16a34a;border-radius:9999px;margin:0 auto 16px;animation:spin 0.8s linear infinite"></div>
+          <strong>Abriendo WhatsApp...</strong>
+          <p style="color:#64748b;margin:8px 0 0">Estamos preparando el chat del cliente.</p>
+        </div>
+      </main>
+      <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+    `;
+  } catch {}
+
+  return popup;
 };
 
 type PaymentLine = {
@@ -596,42 +629,42 @@ export default function CustomerOrdersAdmin({
   };
 
   const notifyOrderWhatsApp = async (order: any) => {
-    const phone = normalizeWhatsAppPhone(order.cliente_telefono);
+    const whatsappWindow = openWhatsAppPlaceholder();
 
-    if (!phone || phone.length < 10) {
-      alert('El cliente no tiene teléfono válido cargado para WhatsApp.');
+    if (!whatsappWindow) {
+      alert('El navegador bloqueó la nueva pestaña. Habilitá las ventanas emergentes para abrir WhatsApp.');
       return;
     }
 
-    generateCustomerOrderPdf(order);
-
-    const message = `Hola ${order.cliente || ''}, te avisamos que tu pedido #${
-      order.numero_pedido
-    } está en estado: ${getStatusLabel(order)}. Total: ${formatCurrency(
-      order.total_final
-    )}.`;
-
     try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(message);
+      const phone = normalizeWhatsAppPhone(order.cliente_telefono);
+
+      if (!phone) {
+        whatsappWindow.close();
+        alert('El cliente no tiene teléfono válido cargado para WhatsApp.');
+        return;
       }
-    } catch {}
 
-    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    const url = isMobile
-      ? `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(
-          message
-        )}`
-      : `https://web.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(
-          message
-        )}`;
+      generateCustomerOrderPdf(order);
 
-    const opened = window.open(url, '_blank', 'noopener,noreferrer');
+      const message = `Hola ${order.cliente || ''}, te avisamos que tu pedido #${
+        order.numero_pedido
+      } está en estado: ${getStatusLabel(order)}. Total: ${formatCurrency(
+        order.total_final
+      )}.`;
 
-    if (!opened) {
-      alert(
-        'El navegador bloqueó la nueva pestaña. Habilitá ventanas emergentes para abrir WhatsApp.'
-      );
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(message);
+        }
+      } catch {}
+
+      const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+      whatsappWindow.location.replace(url);
+    } catch (error) {
+      whatsappWindow.close();
+      console.error('Error opening WhatsApp for customer order:', error);
+      alert('No se pudo preparar el envío por WhatsApp.');
     }
   };
 
