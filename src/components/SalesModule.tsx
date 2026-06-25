@@ -21,7 +21,8 @@ import {
   ArrowRight,
   CreditCard,
   XCircle,
-  MessageCircle
+  MessageCircle,
+  Loader2
 } from 'lucide-react';
 import { Product } from '../types';
 import { getSocket } from '../utils/socket';
@@ -114,6 +115,7 @@ export default function SalesModule() {
   const clienteSearchContainerRef = useRef<HTMLDivElement | null>(null);
   const [cart, setCart] = useState<{ product: Product; quantity: number; discountType: 'none' | 'percentage' | 'fixed'; discountValue: number }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [lastSaleData, setLastSaleData] = useState<any>(null);
   
@@ -213,11 +215,7 @@ export default function SalesModule() {
   }, []);
 
   useEffect(() => {
-    fetchActiveProducts();
-    fetchClientes();
-    fetchSalesHistory();
-    fetchBusinessSettings();
-    fetchPaymentMethods();
+    void loadInitialData();
 
     socket.on('product_updated', (updatedProduct: Product) => {
       setProducts(prev => {
@@ -259,66 +257,100 @@ export default function SalesModule() {
     };
   }, []);
 
-  const fetchActiveProducts = async () => {
+  const fetchActiveProducts = async (): Promise<boolean> => {
     try {
       const res = await apiFetch('/api/products');
       const body = await res.json();
       const data = unwrapResponse(body);
-      setProducts(data);
+      setProducts(Array.isArray(data) ? data : []);
+      return true;
     } catch (error) {
       console.error("Error fetching products:", error);
-    } finally {
-      setLoading(false);
+      return false;
     }
   };
 
-  const fetchClientes = async () => {
+  const fetchClientes = async (): Promise<boolean> => {
     try {
       const res = await apiFetch('/api/clientes');
       const body = await res.json();
       const data = unwrapResponse(body);
-      setClientes(data);
+      setClientes(Array.isArray(data) ? data : []);
+      return true;
     } catch (error) {
       console.error("Error fetching customers:", error);
+      return false;
     }
   };
 
-  const fetchSalesHistory = async () => {
+  const fetchSalesHistory = async (): Promise<boolean> => {
     try {
       const res = await apiFetch('/api/sales');
       const body = await res.json();
       const data = unwrapResponse(body);
-      setSalesHistory(data);
+      setSalesHistory(Array.isArray(data) ? data : []);
+      return true;
     } catch (error) {
       console.error("Error fetching sales history:", error);
+      return false;
     }
   };
 
-  const fetchBusinessSettings = async () => {
+  const fetchBusinessSettings = async (): Promise<boolean> => {
     try {
       const res = await apiFetch('/api/config/settings');
       const body = await res.json();
       const data = unwrapResponse(body);
-      setBusinessSettings(data);
+      setBusinessSettings(data || {});
+      return true;
     } catch (error) {
       console.error("Error fetching business settings:", error);
+      return false;
     }
   };
 
-  const fetchPaymentMethods = async () => {
+  const fetchPaymentMethods = async (): Promise<boolean> => {
     try {
       const res = await apiFetch('/api/config/payment-methods?active=true');
       const body = await res.json();
       const data = unwrapResponse(body);
-      setPaymentMethods(data);
-      if (data.length > 0) {
-        const defaultPaymentMethod = getDefaultSalePaymentMethod(data);
+      const safeMethods = Array.isArray(data) ? data : [];
+      setPaymentMethods(safeMethods);
+      if (safeMethods.length > 0) {
+        const defaultPaymentMethod = getDefaultSalePaymentMethod(safeMethods);
         setMetodoPago(defaultPaymentMethod);
         setMetodoPagoParcial(defaultPaymentMethod);
         setQuickPaymentForm(prev => ({ ...prev, metodo_pago: defaultPaymentMethod }));
       }
+      return true;
     } catch (error) {
       console.error("Error fetching payment methods:", error);
+      return false;
+    }
+  };
+
+  const loadInitialData = async () => {
+    setLoading(true);
+    setLoadError(null);
+
+    try {
+      const [
+        productsLoaded,
+        clientesLoaded,
+        historyLoaded,
+      ] = await Promise.all([
+        fetchActiveProducts(),
+        fetchClientes(),
+        fetchSalesHistory(),
+        fetchBusinessSettings(),
+        fetchPaymentMethods(),
+      ]);
+
+      if (!productsLoaded || !clientesLoaded || !historyLoaded) {
+        setLoadError('No se pudieron cargar todos los datos necesarios de Ventas.');
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -714,8 +746,64 @@ export default function SalesModule() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
+      <div
+        className="min-h-full overflow-y-auto bg-slate-50 px-3 py-4 sm:px-5 sm:py-6 lg:px-6"
+        aria-busy="true"
+        aria-live="polite"
+      >
+        <div className="mx-auto w-full max-w-[1600px] animate-pulse space-y-5">
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+            {[0, 1, 2, 3].map(item => (
+              <div key={item} className="h-12 rounded-xl border border-slate-200 bg-white" />
+            ))}
+          </div>
+
+          <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+            <div className="bg-slate-900 p-5 sm:p-7">
+              <div className="h-4 w-36 rounded bg-white/15" />
+              <div className="mt-4 h-9 w-64 max-w-full rounded bg-white/15" />
+              <div className="mt-3 h-4 w-full max-w-xl rounded bg-white/10" />
+            </div>
+            <div className="grid gap-5 p-4 sm:p-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
+              <div className="space-y-4">
+                <div className="h-12 rounded-2xl bg-slate-100" />
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  {[0, 1, 2, 3, 4, 5].map(item => (
+                    <div key={item} className="h-32 rounded-2xl bg-slate-100" />
+                  ))}
+                </div>
+              </div>
+              <div className="h-[420px] rounded-3xl bg-slate-100" />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-center gap-3 py-3 text-sm font-bold text-slate-600">
+            <Loader2 size={20} className="animate-spin text-indigo-600" />
+            Cargando ventas, productos y clientes...
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex min-h-full items-center justify-center bg-slate-50 p-4 sm:p-6">
+        <div className="w-full max-w-md rounded-[28px] border border-rose-100 bg-white p-7 text-center shadow-sm">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-rose-50 text-rose-600">
+            <AlertCircle size={30} />
+          </div>
+          <h2 className="mt-5 text-xl font-black text-slate-950">No se pudo cargar Ventas</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-500">{loadError}</p>
+          <button
+            type="button"
+            onClick={() => void loadInitialData()}
+            className="mt-6 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-indigo-700 px-5 py-3 font-black text-white hover:bg-indigo-800"
+          >
+            <Loader2 size={18} />
+            Reintentar
+          </button>
+        </div>
       </div>
     );
   }
