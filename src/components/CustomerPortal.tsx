@@ -840,7 +840,7 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
   ];
 
   return (
-    <div className="min-h-[100dvh] bg-slate-100 text-slate-900">
+    <div className="custom-scrollbar h-[100dvh] overflow-y-auto overscroll-y-contain bg-slate-100 text-slate-900 [scrollbar-gutter:stable] [webkit-overflow-scrolling:touch]">
       <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/95 backdrop-blur">
         <div className="mx-auto max-w-7xl px-4 py-3 sm:px-6 lg:px-8">
           <div className="flex min-w-0 items-center justify-between gap-3">
