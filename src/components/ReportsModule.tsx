@@ -445,96 +445,233 @@ export default function ReportsModule() {
     activeTab === 'comisiones' ? commissionsData !== null :
     data !== null;
 
+  const reportData = data as ReportData;
+
+  const money = (value: unknown) =>
+    `$${(Number(value) || 0).toLocaleString('es-AR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    })}`;
+
+  const number = (value: unknown) =>
+    (Number(value) || 0).toLocaleString('es-AR', { maximumFractionDigits: 2 });
+
+  const formatDate = (value: unknown) => {
+    if (!value) return 'Sin fecha';
+    const parsed = new Date(String(value));
+    return Number.isNaN(parsed.getTime()) ? 'Sin fecha' : parsed.toLocaleDateString('es-AR');
+  };
+
+  const formatTime = (value: unknown) => {
+    if (!value) return '';
+    const parsed = new Date(String(value));
+    return Number.isNaN(parsed.getTime())
+      ? ''
+      : parsed.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const openClientHistory = (id: number, nombre: string) => {
+    setViewingClientSales({ id, nombre });
+    fetchClientSales(id);
+  };
+
+  const tabItems = [
+    { id: 'ventas', label: 'Ventas', description: 'Resumen general', icon: TrendingUp },
+    { id: 'ventas-periodo', label: 'Por período', description: 'Detalle y margen', icon: Calendar },
+    { id: 'ventas-cliente', label: 'Por cliente', description: 'Ranking y detalle', icon: Users },
+    { id: 'productos-vendidos', label: 'Más vendidos', description: 'Cantidad y facturación', icon: Package },
+    { id: 'rentabilidad-producto', label: 'Rentabilidad', description: 'Costo PEPS y margen', icon: PieChart },
+    { id: 'comisiones', label: 'Comisiones', description: 'Mayoristas', icon: DollarSign },
+    { id: 'cuentas-corrientes', label: 'Cuentas corrientes', description: 'Saldos pendientes', icon: Wallet },
+    { id: 'clientes', label: 'Clientes', description: 'Actividad comercial', icon: Users },
+    { id: 'productos', label: 'Productos', description: 'Familias y stock', icon: Package },
+    { id: 'deudas', label: 'Deudas', description: 'Mora y cobranza', icon: AlertTriangle },
+    { id: 'finanzas', label: 'Finanzas', description: 'Ingresos y egresos', icon: BarChart3 }
+  ] as const;
+
+  const toneClasses = {
+    slate: 'border-slate-200 bg-white text-slate-950',
+    indigo: 'border-indigo-200 bg-indigo-50 text-indigo-950',
+    emerald: 'border-emerald-200 bg-emerald-50 text-emerald-950',
+    amber: 'border-amber-200 bg-amber-50 text-amber-950',
+    red: 'border-red-200 bg-red-50 text-red-950',
+    dark: 'border-slate-900 bg-slate-950 text-white'
+  };
+
+  const MetricCard = ({
+    label,
+    value,
+    helper,
+    icon,
+    tone = 'slate'
+  }: {
+    label: string;
+    value: React.ReactNode;
+    helper?: string;
+    icon?: React.ReactNode;
+    tone?: keyof typeof toneClasses;
+  }) => (
+    <article className={`min-w-0 rounded-[26px] border p-5 shadow-sm sm:p-6 ${toneClasses[tone]}`}>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className={`text-[10px] font-black uppercase tracking-[0.18em] ${tone === 'dark' ? 'text-white/50' : 'text-slate-500'}`}>
+            {label}
+          </p>
+          <p className="mt-2 break-words text-2xl font-black tracking-tight sm:text-3xl">{value}</p>
+          {helper && (
+            <p className={`mt-2 text-xs font-semibold ${tone === 'dark' ? 'text-white/55' : 'text-slate-500'}`}>
+              {helper}
+            </p>
+          )}
+        </div>
+        {icon && (
+          <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${tone === 'dark' ? 'bg-white/10 text-white' : 'bg-white text-slate-700 shadow-sm'}`}>
+            {icon}
+          </div>
+        )}
+      </div>
+    </article>
+  );
+
+  const ReportHeading = ({
+    title,
+    description,
+    children
+  }: {
+    title: string;
+    description?: string;
+    children?: React.ReactNode;
+  }) => (
+    <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div className="min-w-0">
+        <h3 className="break-words text-xl font-black tracking-tight text-slate-950 sm:text-2xl">{title}</h3>
+        {description && <p className="mt-1 text-sm font-medium text-slate-500">{description}</p>}
+      </div>
+      {children && <div className="flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">{children}</div>}
+    </div>
+  );
+
+  const PrintButton = ({ label = 'Imprimir reporte' }: { label?: string }) => (
+    <button
+      type="button"
+      onClick={() => window.print()}
+      className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-black uppercase tracking-wider text-white transition hover:bg-indigo-700 sm:w-auto"
+    >
+      <Download size={16} aria-hidden="true" />
+      {label}
+    </button>
+  );
+
+  const SegmentedButtons = ({ children }: { children: React.ReactNode }) => (
+    <div className="grid min-w-0 grid-cols-1 gap-1 rounded-2xl border border-slate-200 bg-slate-100 p-1 min-[390px]:grid-cols-2 sm:flex">
+      {children}
+    </div>
+  );
+
+  const activeTabMeta = tabItems.find((item) => item.id === activeTab) ?? tabItems[0];
+  const ActiveTabIcon = activeTabMeta.icon;
+
   return (
-    <div className="h-full flex flex-col bg-zinc-50 overflow-hidden">
-      {/* Header */}
-      <header className="bg-white border-b border-zinc-200 p-8 shrink-0">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
-          <div>
-            <h2 className="text-3xl font-black text-zinc-900 tracking-tight">REPORTES E INTELIGENCIA</h2>
-            <p className="text-zinc-500 text-sm font-medium">Analiza el rendimiento de tu negocio con datos precisos</p>
-          </div>
-          
-          <div className="flex items-center gap-3 bg-zinc-100 p-1.5 rounded-2xl border border-zinc-200">
-            <div className="flex items-center gap-2 px-3">
-              <Calendar size={16} className="text-zinc-400" />
-              <input 
-                type="date" 
-                value={dateRange.from}
-                onChange={(e) => setDateRange({ ...dateRange, from: e.target.value })}
-                className="bg-transparent border-none text-xs font-bold outline-none focus:ring-0 w-32"
-              />
+    <div className="min-h-full p-3 sm:p-5 lg:p-8">
+      <div className="mx-auto max-w-[1600px] space-y-5 sm:space-y-6">
+        <section className="overflow-hidden rounded-[28px] border border-slate-800 bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 p-5 text-white shadow-xl shadow-slate-900/10 sm:p-7 lg:p-8">
+          <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+            <div className="min-w-0">
+              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-indigo-100">
+                <BarChart3 size={14} aria-hidden="true" />
+                Inteligencia de negocio
+              </div>
+              <h2 className="break-words text-2xl font-black tracking-tight sm:text-3xl lg:text-4xl">Reportes</h2>
+              <p className="mt-2 max-w-2xl text-sm font-medium text-slate-300 sm:text-base">
+                Analizá ventas, clientes, productos, rentabilidad y finanzas sin perder comodidad en ningún dispositivo.
+              </p>
             </div>
-            <div className="text-zinc-300 font-bold">→</div>
-            <div className="flex items-center gap-2 px-3">
-              <input 
-                type="date" 
-                value={dateRange.to}
-                onChange={(e) => setDateRange({ ...dateRange, to: e.target.value })}
-                className="bg-transparent border-none text-xs font-bold outline-none focus:ring-0 w-32"
-              />
+
+            <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:w-auto xl:grid-cols-[minmax(150px,190px)_minmax(150px,190px)_auto]">
+              <label className="min-w-0 rounded-2xl border border-white/10 bg-white/10 p-3">
+                <span className="mb-1.5 block text-[10px] font-black uppercase tracking-wider text-slate-300">Desde</span>
+                <input
+                  type="date"
+                  value={dateRange.from}
+                  onChange={(event) => setDateRange({ ...dateRange, from: event.target.value })}
+                  className="min-h-11 w-full min-w-0 rounded-xl border border-white/10 bg-slate-950/50 px-3 text-sm font-bold text-white outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-400/20"
+                />
+              </label>
+              <label className="min-w-0 rounded-2xl border border-white/10 bg-white/10 p-3">
+                <span className="mb-1.5 block text-[10px] font-black uppercase tracking-wider text-slate-300">Hasta</span>
+                <input
+                  type="date"
+                  value={dateRange.to}
+                  onChange={(event) => setDateRange({ ...dateRange, to: event.target.value })}
+                  className="min-h-11 w-full min-w-0 rounded-xl border border-white/10 bg-slate-950/50 px-3 text-sm font-bold text-white outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-400/20"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={fetchActiveReport}
+                disabled={isActiveLoading}
+                className="inline-flex min-h-11 items-center justify-center gap-2 self-end rounded-2xl bg-white px-5 py-3 text-xs font-black uppercase tracking-wider text-slate-950 transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60 sm:col-span-2 xl:col-span-1"
+              >
+                {isActiveLoading ? <Loader2 size={17} className="animate-spin" /> : <RefreshCw size={17} />}
+                Actualizar
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={fetchActiveReport}
-              disabled={isActiveLoading}
-              title="Actualizar reporte con los filtros seleccionados"
-              aria-label="Actualizar reporte con los filtros seleccionados"
-              className="bg-zinc-900 text-white p-2 rounded-xl hover:bg-zinc-800 transition-all disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isActiveLoading ? <Loader2 size={16} className="animate-spin" /> : <Filter size={16} />}
-            </button>
           </div>
-        </div>
+        </section>
 
-        {/* Tabs */}
-        <div className="flex gap-1 p-1 bg-zinc-100 rounded-2xl w-fit overflow-x-auto max-w-full">
-          {[
-            { id: 'ventas', label: 'Ventas', icon: TrendingUp },
-            { id: 'ventas-periodo', label: 'Ventas por Período', icon: Calendar },
-            { id: 'ventas-cliente', label: 'Ventas por Cliente', icon: Users },
-            { id: 'productos-vendidos', label: 'Productos más Vendidos', icon: Package },
-            { id: 'rentabilidad-producto', label: 'Rentabilidad por Producto', icon: PieChart },
-            { id: 'comisiones', label: 'Comisiones', icon: DollarSign },
-            { id: 'cuentas-corrientes', label: 'Cuentas Corrientes', icon: DollarSign },
-            { id: 'clientes', label: 'Clientes', icon: Users },
-            { id: 'productos', label: 'Productos', icon: Package },
-            { id: 'deudas', label: 'Deudas', icon: DollarSign },
-            { id: 'finanzas', label: 'Finanzas', icon: Wallet }
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
-                activeTab === tab.id
-                  ? 'bg-white text-zinc-900 shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-600'
-              }`}
-            >
-              <tab.icon size={16} />
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </header>
+        <section className="rounded-[26px] border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
+          <div className="mb-3 flex min-w-0 items-center gap-3 rounded-2xl bg-slate-50 p-3 sm:hidden">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700">
+              <ActiveTabIcon size={19} aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-black text-slate-950">{activeTabMeta.label}</p>
+              <p className="truncate text-xs font-medium text-slate-500">{activeTabMeta.description}</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6" role="tablist" aria-label="Tipos de reporte">
+            {tabItems.map((tab) => {
+              const TabIcon = tab.icon;
+              const selected = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`min-w-0 rounded-2xl border p-3 text-left transition sm:p-4 ${
+                    selected
+                      ? 'border-indigo-200 bg-indigo-50 text-indigo-950 shadow-sm'
+                      : 'border-transparent bg-slate-50 text-slate-600 hover:border-slate-200 hover:bg-white'
+                  }`}
+                >
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${selected ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 shadow-sm'}`}>
+                      <TabIcon size={17} aria-hidden="true" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="break-words text-xs font-black leading-tight sm:text-sm">{tab.label}</p>
+                      <p className="mt-0.5 hidden truncate text-[11px] font-medium opacity-65 sm:block">{tab.description}</p>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
 
-      {/* Content Area */}
-      <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
         {isActiveLoading && hasActiveData && (
-          <div className="mb-6 flex items-center gap-3 rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4 text-blue-900" role="status" aria-live="polite">
-            <Loader2 size={18} className="animate-spin" />
-            <div>
+          <div className="flex items-start gap-3 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-indigo-950" role="status" aria-live="polite">
+            <Loader2 size={18} className="mt-0.5 shrink-0 animate-spin" />
+            <div className="min-w-0">
               <p className="text-sm font-black">Actualizando reporte…</p>
-              <p className="text-xs font-medium text-blue-700">Se mantienen visibles los últimos datos mientras termina la consulta.</p>
+              <p className="text-xs font-medium text-indigo-700">Los últimos datos permanecen visibles mientras termina la consulta.</p>
             </div>
           </div>
         )}
 
-        {activeError && hasActiveData && (
-          <div className="mb-6">
-            <ReportErrorState message={activeError} onRetry={fetchActiveReport} compact />
-          </div>
-        )}
+        {activeError && hasActiveData && <ReportErrorState message={activeError} onRetry={fetchActiveReport} compact />}
 
         {isActiveLoading && !hasActiveData ? (
           <ReportLoadingState />
@@ -546,1138 +683,790 @@ export default function ReportsModule() {
             description="No se recibió información para este reporte. Probá actualizar o cambiar el período."
           />
         ) : (
-          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            {activeTab === 'comisiones' && (
-              <div className="space-y-8">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <h3 className="text-2xl font-black tracking-tight">Reporte de Comisiones</h3>
-                  <button 
-                    onClick={() => window.print()}
-                    className="flex items-center gap-2 px-4 py-2 bg-zinc-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-zinc-800 transition-all"
-                  >
-                    <Download size={16} />
-                    Imprimir Reporte
-                  </button>
-                </div>
+          <main className="space-y-6 pb-8 sm:space-y-8">
+            {activeTab === 'comisiones' && commissionsData && (
+              <section className="space-y-5">
+                <ReportHeading title="Comisiones" description="Ventas mayoristas y comisión generada en el período seleccionado.">
+                  <PrintButton />
+                </ReportHeading>
 
-                {loadingCommissions ? (
-                  <div className="flex flex-col items-center justify-center py-20 gap-4">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
-                    <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Generando reporte...</p>
-                  </div>
-                ) : commissionsData && commissionsData.sales.length > 0 ? (
+                {commissionsData.sales.length > 0 ? (
                   <>
-                    <div className="bg-white rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden print:border-none print:shadow-none">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse">
-                          <thead>
-                            <tr className="bg-zinc-50/50">
-                              <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</th>
-                              <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
-                              <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Total Venta</th>
-                              <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">% Comisión</th>
-                              <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Comisión Generada</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-zinc-50">
-                            {commissionsData.sales.map((s, i) => (
-                              <tr key={i} className="hover:bg-zinc-50 transition-colors">
-                                <td className="px-6 py-4">
-                                  <p className="text-xs text-zinc-900 font-bold">{new Date(s.fecha).toLocaleDateString()}</p>
-                                  <p className="text-[10px] text-zinc-400 font-mono">{new Date(s.fecha).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                                </td>
-                                <td className="px-6 py-4 text-xs font-bold text-zinc-900">{s.cliente}</td>
-                                <td className="px-6 py-4 text-right text-xs font-black font-mono">${s.total_venta.toFixed(2)}</td>
-                                <td className="px-6 py-4 text-center text-xs font-black font-mono">{s.porcentaje_comision}%</td>
-                                <td className="px-6 py-4 text-right text-xs font-black font-mono text-emerald-600">${s.comision_generada.toFixed(2)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-
-                    <div className="flex justify-end">
-                      <div className="bg-zinc-900 p-8 rounded-3xl text-white min-w-[300px]">
-                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1">Total Comisiones del Período</p>
-                        <p className="text-3xl font-black font-mono">${commissionsData.summary.totalComisiones.toFixed(2)}</p>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <ReportEmptyState
-                    title="No hay operaciones en el período"
-                    description="Probá ampliar las fechas o cambiar los filtros seleccionados."
-                  />
-                )}
-              </div>
-            )}
-            {activeTab === 'cuentas-corrientes' && (
-              <div className="space-y-8">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <h3 className="text-2xl font-black tracking-tight">Cuentas Corrientes (Deudores)</h3>
-                  <div className="flex items-center gap-2">
-                    <div className="flex bg-zinc-100 p-1 rounded-xl border border-zinc-200">
-                      <button
-                        onClick={() => setCurrentAccountsSort('monto_deuda')}
-                        className={`px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${
-                          currentAccountsSort === 'monto_deuda' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-400 hover:text-zinc-600'
-                        }`}
-                      >
-                        Monto Deuda
-                      </button>
-                      <button
-                        onClick={() => setCurrentAccountsSort('dias_vencidos')}
-                        className={`px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${
-                          currentAccountsSort === 'dias_vencidos' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-400 hover:text-zinc-600'
-                        }`}
-                      >
-                        Días Vencidos
-                      </button>
-                    </div>
-                    <button 
-                      onClick={() => window.print()}
-                      className="flex items-center gap-2 px-4 py-2 bg-zinc-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-zinc-800 transition-all"
-                    >
-                      <Download size={16} />
-                      Imprimir
-                    </button>
-                  </div>
-                </div>
-
-                {loadingCurrentAccounts ? (
-                  <div className="flex flex-col items-center justify-center py-20 gap-4">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
-                    <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Generando reporte...</p>
-                  </div>
-                ) : currentAccountsData && currentAccountsData.length > 0 ? (
-                  <div className="bg-white rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden print:border-none print:shadow-none">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse">
-                        <thead>
-                          <tr className="bg-zinc-50/50">
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Monto Deuda</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Ventas Pendientes</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Deuda más Antigua</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Días Vencidos</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-zinc-50">
-                          {[...currentAccountsData]
-                            .sort((a, b) => b[currentAccountsSort] - a[currentAccountsSort])
-                            .map((c, i) => (
-                            <tr key={i} className="hover:bg-zinc-50 transition-colors">
-                              <td className="px-6 py-4 text-xs font-bold text-zinc-900">{c.cliente}</td>
-                              <td className="px-6 py-4 text-right text-xs font-black font-mono text-red-600">${c.monto_deuda.toFixed(2)}</td>
-                              <td className="px-6 py-4 text-center text-xs font-black font-mono">{c.ventas_pendientes}</td>
-                              <td className="px-6 py-4 text-center text-xs font-bold text-zinc-500">{c.fecha_antigua ? new Date(c.fecha_antigua).toLocaleDateString() : '-'}</td>
-                              <td className="px-6 py-4 text-center">
-                                <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
-                                  c.dias_vencidos > 30 ? 'bg-red-100 text-red-600' : 
-                                  c.dias_vencidos > 7 ? 'bg-amber-100 text-amber-600' : 
-                                  'bg-zinc-100 text-zinc-600'
-                                }`}>
-                                  {c.dias_vencidos} días
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                ) : (
-                  <ReportEmptyState
-                    title="No hay clientes con deuda"
-                    description="Las cuentas corrientes no registran saldos pendientes actualmente."
-                  />
-                )}
-              </div>
-            )}
-
-            {activeTab === 'rentabilidad-producto' && (
-              <div className="space-y-8">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <div className="flex flex-col gap-1">
-                    <h3 className="text-2xl font-black tracking-tight">Rentabilidad por Producto</h3>
-                    <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Basado en costo real PEPS (FIFO)</p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-2 rounded-xl shadow-sm">
-                      <Package size={14} className="text-zinc-400" />
-                      <select
-                        value={selectedProductId}
-                        onChange={(e) => setSelectedProductId(e.target.value)}
-                        className="bg-transparent border-none text-[10px] font-bold uppercase tracking-widest outline-none focus:ring-0 min-w-[150px]"
-                      >
-                        <option value="all">Todos los Productos</option>
-                        {products.map(p => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="flex bg-zinc-100 p-1 rounded-xl border border-zinc-200">
-                      <button
-                        onClick={() => setProfitabilitySort('ganancia')}
-                        className={`px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${
-                          profitabilitySort === 'ganancia' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-400 hover:text-zinc-600'
-                        }`}
-                      >
-                        Ganancia
-                      </button>
-                      <button
-                        onClick={() => setProfitabilitySort('cantidad_vendida')}
-                        className={`px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${
-                          profitabilitySort === 'cantidad_vendida' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-400 hover:text-zinc-600'
-                        }`}
-                      >
-                        Cantidad
-                      </button>
-                    </div>
-                    <button 
-                      onClick={() => window.print()}
-                      className="flex items-center gap-2 px-4 py-2 bg-zinc-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-zinc-800 transition-all"
-                    >
-                      <Download size={16} />
-                      Imprimir
-                    </button>
-                  </div>
-                </div>
-
-                {loadingProfitability ? (
-                  <div className="flex flex-col items-center justify-center py-20 gap-4">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
-                    <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Generando reporte...</p>
-                  </div>
-                ) : profitabilityData && profitabilityData.length > 0 ? (
-                  <div className="bg-white rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden print:border-none print:shadow-none">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse">
-                        <thead>
-                          <tr className="bg-zinc-50/50">
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Producto</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Cant. Vendida</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Ventas Totales</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Costo Total</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Ganancia</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Margen %</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-zinc-50">
-                          {[...profitabilityData]
-                            .sort((a, b) => b[profitabilitySort] - a[profitabilitySort])
-                            .map((p, i) => (
-                            <tr key={i} className="hover:bg-zinc-50 transition-colors">
-                              <td className="px-6 py-4 text-xs font-bold text-zinc-900">{p.producto}</td>
-                              <td className="px-6 py-4 text-center text-xs font-black font-mono">{p.cantidad_vendida}</td>
-                              <td className="px-6 py-4 text-right text-xs font-black font-mono">${p.ventas_totales.toFixed(2)}</td>
-                              <td className="px-6 py-4 text-right text-xs font-black font-mono text-zinc-400">${p.costo_total.toFixed(2)}</td>
-                              <td className="px-6 py-4 text-right text-xs font-black font-mono text-emerald-600">${p.ganancia.toFixed(2)}</td>
-                              <td className="px-6 py-4 text-center">
-                                <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${
-                                  p.margen_porcentual >= 30 ? 'bg-emerald-50 text-emerald-600' : 
-                                  p.margen_porcentual >= 15 ? 'bg-amber-50 text-amber-600' : 
-                                  'bg-red-50 text-red-600'
-                                }`}>
-                                  {p.margen_porcentual.toFixed(1)}%
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                ) : (
-                  <ReportEmptyState
-                    title="No hay operaciones en el período"
-                    description="Probá ampliar las fechas o cambiar los filtros seleccionados."
-                  />
-                )}
-              </div>
-            )}
-
-            {activeTab === 'productos-vendidos' && (
-              <div className="space-y-8">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <h3 className="text-2xl font-black tracking-tight">Productos más Vendidos</h3>
-                  <div className="flex items-center gap-2">
-                    <div className="flex bg-zinc-100 p-1 rounded-xl border border-zinc-200">
-                      <button
-                        onClick={() => setBestSellingSort('cantidad_vendida')}
-                        className={`px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${
-                          bestSellingSort === 'cantidad_vendida' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-400 hover:text-zinc-600'
-                        }`}
-                      >
-                        Cantidad
-                      </button>
-                      <button
-                        onClick={() => setBestSellingSort('total_facturado')}
-                        className={`px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${
-                          bestSellingSort === 'total_facturado' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-400 hover:text-zinc-600'
-                        }`}
-                      >
-                        Facturación
-                      </button>
-                      <button
-                        onClick={() => setBestSellingSort('total_ganancia')}
-                        className={`px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${
-                          bestSellingSort === 'total_ganancia' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-400 hover:text-zinc-600'
-                        }`}
-                      >
-                        Ganancia
-                      </button>
-                    </div>
-                    <button 
-                      onClick={() => window.print()}
-                      className="flex items-center gap-2 px-4 py-2 bg-zinc-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-zinc-800 transition-all"
-                    >
-                      <Download size={16} />
-                      Imprimir
-                    </button>
-                  </div>
-                </div>
-
-                {loadingBestSellingProducts ? (
-                  <div className="flex flex-col items-center justify-center py-20 gap-4">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
-                    <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Generando reporte...</p>
-                  </div>
-                ) : bestSellingProductsData && bestSellingProductsData.length > 0 ? (
-                  <div className="bg-white rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden print:border-none print:shadow-none">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse">
-                        <thead>
-                          <tr className="bg-zinc-50/50">
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Producto</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Cant. Vendida</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Total Facturado</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Total Ganancia</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-zinc-50">
-                          {[...bestSellingProductsData]
-                            .sort((a, b) => b[bestSellingSort] - a[bestSellingSort])
-                            .map((p, i) => (
-                            <tr key={i} className="hover:bg-zinc-50 transition-colors">
-                              <td className="px-6 py-4 text-xs font-bold text-zinc-900">{p.producto}</td>
-                              <td className="px-6 py-4 text-center text-xs font-black font-mono">{p.cantidad_vendida}</td>
-                              <td className="px-6 py-4 text-right text-xs font-black font-mono">${p.total_facturado.toFixed(2)}</td>
-                              <td className="px-6 py-4 text-right text-xs font-black font-mono text-emerald-600">${p.total_ganancia.toFixed(2)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                ) : (
-                  <ReportEmptyState
-                    title="No hay operaciones en el período"
-                    description="Probá ampliar las fechas o cambiar los filtros seleccionados."
-                  />
-                )}
-              </div>
-            )}
-
-            {activeTab === 'ventas-cliente' && (
-              <div className="space-y-8">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <h3 className="text-2xl font-black tracking-tight">Ventas por Cliente</h3>
-                  <button 
-                    onClick={() => window.print()}
-                    className="flex items-center gap-2 px-4 py-2 bg-zinc-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-zinc-800 transition-all"
-                  >
-                    <Download size={16} />
-                    Imprimir Reporte
-                  </button>
-                </div>
-
-                {loadingSalesByClient ? (
-                  <div className="flex flex-col items-center justify-center py-20 gap-4">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
-                    <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Generando reporte...</p>
-                  </div>
-                ) : salesByClientData && salesByClientData.length > 0 ? (
-                  <div className="bg-white rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden print:border-none print:shadow-none">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse">
-                        <thead>
-                          <tr className="bg-zinc-50/50">
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Cant. Ventas</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Total Comprado</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Total Ganancia</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Acciones</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-zinc-50">
-                          {salesByClientData.map((s, i) => (
-                            <tr key={i} className="hover:bg-zinc-50 transition-colors">
-                              <td className="px-6 py-4 text-xs font-bold text-zinc-900">{s.cliente}</td>
-                              <td className="px-6 py-4 text-center text-xs font-black font-mono">{s.cantidad_ventas}</td>
-                              <td className="px-6 py-4 text-right text-xs font-black font-mono">${s.total_comprado.toFixed(2)}</td>
-                              <td className="px-6 py-4 text-right text-xs font-black font-mono text-emerald-600">${s.total_ganancia.toFixed(2)}</td>
-                              <td className="px-6 py-4 text-center">
-                                <button 
-                                  onClick={() => {
-                                    setViewingClientSales({ id: s.cliente_id, nombre: s.cliente });
-                                    fetchClientSales(s.cliente_id);
-                                  }}
-                                  className="px-3 py-1 bg-zinc-100 text-zinc-600 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-zinc-900 hover:text-white transition-all"
-                                >
-                                  Ver Detalle
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                ) : (
-                  <ReportEmptyState
-                    title="No hay operaciones en el período"
-                    description="Probá ampliar las fechas o cambiar los filtros seleccionados."
-                  />
-                )}
-              </div>
-            )}
-
-            {activeTab === 'ventas-periodo' && (
-              <div className="space-y-8">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <h3 className="text-2xl font-black tracking-tight">Ventas por Período</h3>
-                  <button 
-                    onClick={() => window.print()}
-                    className="flex items-center gap-2 px-4 py-2 bg-zinc-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-zinc-800 transition-all"
-                  >
-                    <Download size={16} />
-                    Imprimir Reporte
-                  </button>
-                </div>
-
-                {loadingSalesPeriod ? (
-                  <div className="flex flex-col items-center justify-center py-20 gap-4">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
-                    <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Generando reporte...</p>
-                  </div>
-                ) : salesPeriodData && salesPeriodData.sales.length > 0 ? (
-                  <>
-                    <div className="bg-white rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden print:border-none print:shadow-none">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse">
-                          <thead>
-                            <tr className="bg-zinc-50/50">
-                              <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</th>
-                              <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
-                              <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Productos</th>
-                              <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Cant.</th>
-                              <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Total Venta</th>
-                              <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Costo Total</th>
-                              <th className="px-6 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Ganancia</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-zinc-50">
-                            {salesPeriodData.sales.map((s, i) => (
-                              <tr key={i} className="hover:bg-zinc-50 transition-colors">
-                                <td className="px-6 py-4">
-                                  <p className="text-xs text-zinc-900 font-bold">{new Date(s.fecha).toLocaleDateString()}</p>
-                                  <p className="text-[10px] text-zinc-400 font-mono">{new Date(s.fecha).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                                </td>
-                                <td className="px-6 py-4 text-xs font-bold text-zinc-900">{s.cliente}</td>
-                                <td className="px-6 py-4 text-[10px] text-zinc-500 max-w-xs truncate" title={s.productos}>{s.productos}</td>
-                                <td className="px-6 py-4 text-center text-xs font-black font-mono">{s.cantidad}</td>
-                                <td className="px-6 py-4 text-right text-xs font-black font-mono">${s.total_venta.toFixed(2)}</td>
-                                <td className="px-6 py-4 text-right text-xs font-black font-mono text-zinc-400">${s.costo_total.toFixed(2)}</td>
-                                <td className="px-6 py-4 text-right text-xs font-black font-mono text-emerald-600">${s.ganancia.toFixed(2)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                      <div className="bg-zinc-900 p-6 rounded-3xl text-white">
-                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1">Total Ventas</p>
-                        <p className="text-xl font-black font-mono">${salesPeriodData.summary.totalVentas.toFixed(2)}</p>
-                      </div>
-                      <div className="bg-white p-6 rounded-3xl border border-zinc-200">
-                        <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Total Costo</p>
-                        <p className="text-xl font-black font-mono text-zinc-900">${salesPeriodData.summary.totalCosto.toFixed(2)}</p>
-                      </div>
-                      <div className="bg-emerald-50 p-6 rounded-3xl border border-emerald-100">
-                        <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-1">Total Ganancia</p>
-                        <p className="text-xl font-black font-mono text-emerald-700">${salesPeriodData.summary.totalGanancia.toFixed(2)}</p>
-                      </div>
-                      <div className="bg-white p-6 rounded-3xl border border-zinc-200">
-                        <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Cant. Ventas</p>
-                        <p className="text-xl font-black font-mono text-zinc-900">{salesPeriodData.summary.cantidadVentas}</p>
-                      </div>
-                      <div className="bg-white p-6 rounded-3xl border border-zinc-200">
-                        <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Ticket Promedio</p>
-                        <p className="text-xl font-black font-mono text-zinc-900">${salesPeriodData.summary.ticketPromedio.toFixed(2)}</p>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <ReportEmptyState
-                    title="No hay operaciones en el período"
-                    description="Probá ampliar las fechas o cambiar los filtros seleccionados."
-                  />
-                )}
-              </div>
-            )}
-
-            {activeTab === 'ventas' && (
-              <div className="space-y-8">
-                {/* Ventas Filters & Summary */}
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <h3 className="text-2xl font-black tracking-tight">Reporte de Ventas</h3>
-                  <div className="flex items-center gap-3">
-                    <div className="relative min-w-[200px]">
-                      <Users className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
-                      <select
-                        value={clienteId}
-                        onChange={(e) => setClienteId(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 bg-white border border-zinc-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm appearance-none"
-                      >
-                        <option value="">Todos los Clientes</option>
-                        {clientes.map(c => (
-                          <option key={c.id} value={c.id}>{c.nombre_apellido}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="bg-white p-8 rounded-[32px] border border-zinc-200 shadow-sm">
-                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Total Ventas Período</p>
-                    <p className="text-4xl font-black text-zinc-900 font-mono tracking-tighter">${data.ventas.total.toFixed(2)}</p>
-                    <div className="mt-4 flex items-center gap-2 text-emerald-600 text-[10px] font-bold uppercase">
-                      <ArrowUpRight size={14} />
-                      <span>En el periodo seleccionado</span>
-                    </div>
-                  </div>
-                  <div className="bg-white p-8 rounded-[32px] border border-zinc-200 shadow-sm">
-                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Cantidad de Ventas</p>
-                    <p className="text-4xl font-black text-zinc-900 font-mono tracking-tighter">{data.ventas.cantidad}</p>
-                    <p className="mt-4 text-zinc-400 text-[10px] font-bold uppercase">Operaciones realizadas</p>
-                  </div>
-                  <div className="bg-white p-8 rounded-[32px] border border-zinc-200 shadow-sm">
-                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Ticket Promedio</p>
-                    <p className="text-4xl font-black text-zinc-900 font-mono tracking-tighter">${data.ventas.promedio.toFixed(2)}</p>
-                    <p className="mt-4 text-zinc-400 text-[10px] font-bold uppercase">Por cada venta</p>
-                  </div>
-                </div>
-
-                {/* Sales Table */}
-                <div className="bg-white rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden">
-                  <div className="p-8 border-b border-zinc-100">
-                    <h3 className="text-xl font-black tracking-tight">Detalle de Ventas</h3>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-zinc-50/50">
-                          <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</th>
-                          <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Nº Venta</th>
-                          <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
-                          <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Total</th>
-                          <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Forma de Pago</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-zinc-50">
-                        {data.ventas.listaVentas.length > 0 ? data.ventas.listaVentas.map((v) => (
-                          <tr key={v.id} className="hover:bg-zinc-50 transition-colors">
-                            <td className="px-8 py-5">
-                              <p className="text-xs text-zinc-900 font-bold">{new Date(v.fecha).toLocaleDateString()}</p>
-                              <p className="text-[10px] text-zinc-400 font-mono">{new Date(v.fecha).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                            </td>
-                            <td className="px-8 py-5 text-xs font-bold text-zinc-500">#{v.id}</td>
-                            <td className="px-8 py-5 text-sm font-bold text-zinc-900">{v.nombre_cliente}</td>
-                            <td className="px-8 py-5 text-right text-sm font-black text-zinc-900 font-mono">${v.total.toFixed(2)}</td>
-                            <td className="px-8 py-5 text-center">
-                              <span className="text-[10px] font-bold uppercase bg-zinc-100 text-zinc-600 px-3 py-1 rounded-full border border-zinc-200">
-                                {v.metodo_pago}
-                              </span>
-                            </td>
-                          </tr>
-                        )) : (
-                          <tr>
-                            <td colSpan={5} className="px-8 py-20 text-center text-zinc-400 font-bold uppercase text-xs tracking-widest">
-                              No se encontraron ventas para los filtros seleccionados
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                {/* Charts Row */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                  <div className="min-w-0 bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl">
-                    <h3 className="text-xl font-black tracking-tight mb-8">Evolución de Ventas</h3>
-                    {data.ventas.porDia.length > 0 ? (
-                    <div className="h-[300px] min-h-[300px] min-w-0 w-full overflow-hidden">
-                      <ResponsiveContainer
-                        width="100%"
-                        height="100%"
-                        minWidth={0}
-                        minHeight={300}
-                        debounce={100}
-                        initialDimension={{ width: 800, height: 300 }}
-                      >
-                        <AreaChart data={data.ventas.porDia}>
-                          <defs>
-                            <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#18181b" stopOpacity={0.1}/>
-                              <stop offset="95%" stopColor="#18181b" stopOpacity={0}/>
-                            </linearGradient>
-                          </defs>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
-                          <XAxis 
-                            dataKey="fecha" 
-                            axisLine={false} 
-                            tickLine={false} 
-                            tick={{ fontSize: 10, fontWeight: 600, fill: '#a1a1aa' }}
-                            tickFormatter={(str) => new Date(str).toLocaleDateString('es-AR', { day: 'numeric', month: 'short' })}
-                          />
-                          <YAxis 
-                            axisLine={false} 
-                            tickLine={false} 
-                            tick={{ fontSize: 10, fontWeight: 600, fill: '#a1a1aa' }}
-                            tickFormatter={(val) => `$${val}`}
-                          />
-                          <Tooltip 
-                            contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)' }}
-                            labelStyle={{ fontWeight: 800, color: '#18181b', marginBottom: '4px' }}
-                          />
-                          <Area type="monotone" dataKey="total" stroke="#18181b" strokeWidth={3} fillOpacity={1} fill="url(#colorTotal)" />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    </div>
-                    ) : (
-                      <ReportEmptyState
-                        title="Sin evolución de ventas"
-                        description="No hay ventas para graficar en el período seleccionado."
-                        compact
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                      <MetricCard
+                        label="Total comisiones"
+                        value={money(commissionsData.summary.totalComisiones)}
+                        helper="Acumulado del período"
+                        tone="dark"
+                        icon={<DollarSign size={20} />}
                       />
-                    )}
-                  </div>
-
-                  <div className="min-w-0 bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl">
-                    <h3 className="text-xl font-black tracking-tight mb-8">Ventas por Método de Pago</h3>
-                    {data.ventas.porMetodoPago.length > 0 ? (
-                    <>
-                    <div className="h-[300px] min-h-[300px] min-w-0 w-full overflow-hidden">
-                      <ResponsiveContainer
-                        width="100%"
-                        height="100%"
-                        minWidth={0}
-                        minHeight={300}
-                        debounce={100}
-                        initialDimension={{ width: 800, height: 300 }}
-                      >
-                        <RePieChart>
-                          <Pie
-                            data={data.ventas.porMetodoPago}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={60}
-                            outerRadius={100}
-                            paddingAngle={5}
-                            dataKey="value"
-                          >
-                            {data.ventas.porMetodoPago.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                            ))}
-                          </Pie>
-                          <Tooltip 
-                            contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)' }}
-                          />
-                        </RePieChart>
-                      </ResponsiveContainer>
+                      <MetricCard
+                        label="Operaciones"
+                        value={number(commissionsData.sales.length)}
+                        helper="Ventas mayoristas computadas"
+                        icon={<BarChart3 size={20} />}
+                      />
+                      <MetricCard
+                        label="Comisión promedio"
+                        value={money(commissionsData.sales.length ? commissionsData.summary.totalComisiones / commissionsData.sales.length : 0)}
+                        helper="Promedio por operación"
+                        tone="indigo"
+                        icon={<TrendingUp size={20} />}
+                      />
                     </div>
-                    <div className="flex flex-wrap justify-center gap-4 mt-4">
-                      {data.ventas.porMetodoPago.map((entry, index) => (
-                        <div key={entry.name} className="flex items-center gap-2">
-                          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
-                          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{entry.name}</span>
-                        </div>
+                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                      {commissionsData.sales.map((sale: any) => (
+                        <article key={sale.id} className="min-w-0 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                          <div className="flex min-w-0 items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="break-words text-base font-black text-slate-950">{sale.cliente}</p>
+                              <p className="mt-1 text-xs font-semibold text-slate-500">{formatDate(sale.fecha)} · {formatTime(sale.fecha)}</p>
+                            </div>
+                            <span className="shrink-0 rounded-full bg-indigo-50 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-indigo-700">
+                              {number(sale.porcentaje_comision)}%
+                            </span>
+                          </div>
+                          <div className="mt-5 grid grid-cols-2 gap-3">
+                            <div className="rounded-2xl bg-slate-50 p-3">
+                              <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Venta</p>
+                              <p className="mt-1 break-words text-sm font-black text-slate-950">{money(sale.total_venta)}</p>
+                            </div>
+                            <div className="rounded-2xl bg-emerald-50 p-3">
+                              <p className="text-[10px] font-black uppercase tracking-wider text-emerald-600">Comisión</p>
+                              <p className="mt-1 break-words text-sm font-black text-emerald-800">{money(sale.comision_generada)}</p>
+                            </div>
+                          </div>
+                        </article>
                       ))}
                     </div>
-                    </>
-                    ) : (
-                      <ReportEmptyState
-                        title="Sin medios de pago para mostrar"
-                        description="No hay ventas registradas en el período seleccionado."
-                        compact
-                      />
-                    )}
-                  </div>
-                </div>
-              </div>
+                  </>
+                ) : (
+                  <ReportEmptyState title="No hay operaciones en el período" description="Probá ampliar las fechas seleccionadas." />
+                )}
+              </section>
             )}
 
-            {activeTab === 'clientes' && (
-              <div className="space-y-8">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="bg-white p-8 rounded-[32px] border border-zinc-200 shadow-sm">
-                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Nuevos Clientes</p>
-                    <p className="text-4xl font-black text-zinc-900 font-mono tracking-tighter">{data.clientes.nuevos}</p>
-                    <p className="mt-4 text-zinc-400 text-[10px] font-bold uppercase">Registrados en el periodo</p>
-                  </div>
-                  <div className="bg-white p-8 rounded-[32px] border border-zinc-200 shadow-sm">
-                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Clientes Activos</p>
-                    <p className="text-4xl font-black text-zinc-900 font-mono tracking-tighter">{data.clientes.activos}</p>
-                    <p className="mt-4 text-zinc-400 text-[10px] font-bold uppercase">Con compras en el periodo</p>
-                  </div>
-                  <div className="bg-white p-8 rounded-[32px] border border-zinc-200 shadow-sm">
-                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Con Deuda</p>
-                    <p className="text-4xl font-black text-red-600 font-mono tracking-tighter">{data.clientes.conDeuda}</p>
-                    <p className="mt-4 text-red-600/60 text-[10px] font-bold uppercase">Cuentas con saldo pendiente</p>
-                  </div>
-                </div>
+            {activeTab === 'cuentas-corrientes' && currentAccountsData && (
+              <section className="space-y-5">
+                <ReportHeading title="Cuentas corrientes" description="Clientes con saldos pendientes y antigüedad de deuda.">
+                  <SegmentedButtons>
+                    <button
+                      type="button"
+                      onClick={() => setCurrentAccountsSort('monto_deuda')}
+                      className={`min-h-10 rounded-xl px-3 text-[10px] font-black uppercase tracking-wider ${currentAccountsSort === 'monto_deuda' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500'}`}
+                    >
+                      Por monto
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCurrentAccountsSort('dias_vencidos')}
+                      className={`min-h-10 rounded-xl px-3 text-[10px] font-black uppercase tracking-wider ${currentAccountsSort === 'dias_vencidos' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500'}`}
+                    >
+                      Por antigüedad
+                    </button>
+                  </SegmentedButtons>
+                  <PrintButton />
+                </ReportHeading>
 
-                <div className="bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden">
-                  <h3 className="text-xl font-black tracking-tight mb-8">Listado de Clientes (por volumen de compra)</h3>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-zinc-50/50">
-                          <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
-                          <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Cant. Compras</th>
-                          <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Total Comprado</th>
-                          <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Última Compra</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-zinc-50">
-                        {data.clientes.listadoClientes.length > 0 ? data.clientes.listadoClientes.map((c, i) => (
-                          <tr 
-                            key={i} 
-                            className="hover:bg-zinc-50 transition-colors cursor-pointer group"
-                            onClick={() => {
-                              setViewingClientSales({ id: c.id, nombre: c.nombre });
-                              fetchClientSales(c.id);
-                            }}
-                          >
-                            <td className="px-8 py-5">
-                              <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-full bg-zinc-100 text-zinc-900 group-hover:bg-zinc-900 group-hover:text-white flex items-center justify-center text-xs font-bold transition-all">
-                                  {i + 1}
-                                </div>
-                                <span className="text-sm font-bold text-zinc-900">{c.nombre}</span>
+                {currentAccountsData.length > 0 ? (
+                  <>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                      <MetricCard
+                        label="Deuda total"
+                        value={money(currentAccountsData.reduce((sum: number, item: any) => sum + Number(item.monto_deuda || 0), 0))}
+                        tone="red"
+                        icon={<DollarSign size={20} />}
+                      />
+                      <MetricCard label="Clientes deudores" value={number(currentAccountsData.length)} icon={<Users size={20} />} />
+                      <MetricCard
+                        label="Mayor antigüedad"
+                        value={`${Math.max(...currentAccountsData.map((item: any) => Number(item.dias_vencidos || 0)))} días`}
+                        tone="amber"
+                        icon={<Calendar size={20} />}
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                      {[...currentAccountsData]
+                        .sort((a: any, b: any) => Number(b[currentAccountsSort] || 0) - Number(a[currentAccountsSort] || 0))
+                        .map((account: any) => (
+                          <article key={account.cliente_id} className="min-w-0 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                            <div className="flex min-w-0 items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="break-words text-base font-black text-slate-950">{account.cliente}</p>
+                                <p className="mt-1 text-xs font-semibold text-slate-500">
+                                  Deuda más antigua: {account.fecha_antigua ? formatDate(account.fecha_antigua) : 'Sin fecha'}
+                                </p>
                               </div>
-                            </td>
-                            <td className="px-8 py-5 text-center text-sm font-bold text-zinc-500">{c.cantidad}</td>
-                            <td className="px-8 py-5 text-right text-sm font-black text-zinc-900 font-mono">${c.total.toFixed(2)}</td>
-                            <td className="px-8 py-5 text-right">
-                              <p className="text-xs font-bold text-zinc-500">{new Date(c.ultima_compra).toLocaleDateString()}</p>
-                              <p className="text-[10px] text-zinc-400 font-mono">{new Date(c.ultima_compra).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                            </td>
-                          </tr>
-                        )) : (
-                          <tr>
-                            <td colSpan={4} className="px-8 py-16 text-center text-xs font-bold uppercase tracking-widest text-zinc-400">
-                              No hay clientes con compras en el período seleccionado
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
+                              <span className={`shrink-0 rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-wider ${
+                                account.dias_vencidos > 30
+                                  ? 'bg-red-100 text-red-700'
+                                  : account.dias_vencidos > 7
+                                    ? 'bg-amber-100 text-amber-700'
+                                    : 'bg-slate-100 text-slate-600'
+                              }`}>
+                                {number(account.dias_vencidos)} días
+                              </span>
+                            </div>
+                            <div className="mt-5 grid grid-cols-2 gap-3">
+                              <div className="rounded-2xl bg-red-50 p-3">
+                                <p className="text-[10px] font-black uppercase tracking-wider text-red-600">Saldo</p>
+                                <p className="mt-1 break-words text-sm font-black text-red-800">{money(account.monto_deuda)}</p>
+                              </div>
+                              <div className="rounded-2xl bg-slate-50 p-3">
+                                <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Ventas pendientes</p>
+                                <p className="mt-1 text-sm font-black text-slate-950">{number(account.ventas_pendientes)}</p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => openClientHistory(account.cliente_id, account.cliente)}
+                              className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-xs font-black uppercase tracking-wider text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700"
+                            >
+                              Ver ventas
+                              <ChevronRight size={16} />
+                            </button>
+                          </article>
+                        ))}
+                    </div>
+                  </>
+                ) : (
+                  <ReportEmptyState title="No hay clientes con deuda" description="Las cuentas corrientes no registran saldos pendientes." />
+                )}
+              </section>
             )}
 
-            {/* Client Detail Modal/Overlay */}
-            {viewingClientSales && (
-              <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-8">
-                <div 
-                  className="absolute inset-0 bg-zinc-900/60 backdrop-blur-sm"
-                  onClick={() => setViewingClientSales(null)}
-                ></div>
-                <div className="relative bg-white w-full max-w-4xl max-h-[90vh] rounded-[40px] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
-                  <div className="p-8 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
-                    <div>
-                      <h3 className="text-2xl font-black tracking-tight text-zinc-900">Historial de Compras</h3>
-                      <p className="text-zinc-500 text-sm font-bold uppercase tracking-widest">{viewingClientSales.nombre}</p>
-                    </div>
-                    <button 
-                      onClick={() => setViewingClientSales(null)}
-                      className="w-10 h-10 rounded-full bg-white border border-zinc-200 flex items-center justify-center text-zinc-400 hover:text-zinc-900 hover:border-zinc-900 transition-all shadow-sm"
+            {activeTab === 'rentabilidad-producto' && profitabilityData && (
+              <section className="space-y-5">
+                <ReportHeading title="Rentabilidad por producto" description="Resultados calculados con costo real PEPS/FIFO.">
+                  <label className="min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 sm:min-w-56">
+                    <span className="sr-only">Producto</span>
+                    <select
+                      value={selectedProductId}
+                      onChange={(event) => setSelectedProductId(event.target.value)}
+                      className="min-h-10 w-full min-w-0 bg-transparent text-xs font-black text-slate-700 outline-none"
                     >
-                      <ChevronRight className="rotate-180" size={20} />
+                      <option value="all">Todos los productos</option>
+                      {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+                    </select>
+                  </label>
+                  <SegmentedButtons>
+                    <button
+                      type="button"
+                      onClick={() => setProfitabilitySort('ganancia')}
+                      className={`min-h-10 rounded-xl px-3 text-[10px] font-black uppercase tracking-wider ${profitabilitySort === 'ganancia' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500'}`}
+                    >
+                      Ganancia
                     </button>
-                  </div>
+                    <button
+                      type="button"
+                      onClick={() => setProfitabilitySort('cantidad_vendida')}
+                      className={`min-h-10 rounded-xl px-3 text-[10px] font-black uppercase tracking-wider ${profitabilitySort === 'cantidad_vendida' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500'}`}
+                    >
+                      Cantidad
+                    </button>
+                  </SegmentedButtons>
+                  <PrintButton />
+                </ReportHeading>
 
-                  <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
-                    {loadingClientSales ? (
-                      <div className="flex items-center justify-center gap-3 py-20" role="status" aria-live="polite">
-                        <Loader2 size={26} className="animate-spin text-zinc-900" />
-                        <p className="text-xs font-black uppercase tracking-widest text-zinc-500">Cargando historial…</p>
-                      </div>
-                    ) : clientSalesError ? (
-                      <ReportErrorState
-                        message={clientSalesError}
-                        onRetry={() => viewingClientSales && fetchClientSales(viewingClientSales.id)}
-                        compact
-                      />
-                    ) : clientSales.length === 0 ? (
-                      <ReportEmptyState
-                        title="Este cliente no tiene ventas en el período"
-                        description="Probá ampliar el rango de fechas seleccionado."
-                        compact
-                      />
-                    ) : (
-                      <div className="space-y-6">
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          <div className="bg-zinc-50 p-6 rounded-3xl border border-zinc-100">
-                            <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Total Comprado</p>
-                            <p className="text-2xl font-black text-zinc-900 font-mono tracking-tighter">
-                              ${clientSales.reduce((acc, s) => acc + s.total_venta, 0).toFixed(2)}
-                            </p>
-                          </div>
-                          <div className="bg-zinc-50 p-6 rounded-3xl border border-zinc-100">
-                            <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Cant. Compras</p>
-                            <p className="text-2xl font-black text-zinc-900 font-mono tracking-tighter">{clientSales.length}</p>
-                          </div>
-                          <div className="bg-zinc-50 p-6 rounded-3xl border border-zinc-100">
-                            <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Ticket Promedio</p>
-                            <p className="text-2xl font-black text-zinc-900 font-mono tracking-tighter">
-                              ${clientSales.length > 0 ? (clientSales.reduce((acc, s) => acc + s.total_venta, 0) / clientSales.length).toFixed(2) : '0.00'}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="border border-zinc-100 rounded-3xl overflow-hidden">
-                          <table className="w-full text-left border-collapse">
-                            <thead>
-                              <tr className="bg-zinc-50">
-                                <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</th>
-                                <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Nº Venta</th>
-                                <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Total</th>
-                                <th className="px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Forma de Pago</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-zinc-50">
-                              {clientSales.map((v) => (
-                                <tr key={v.id} className="hover:bg-zinc-50/50 transition-colors">
-                                  <td className="px-6 py-4">
-                                    <p className="text-xs text-zinc-900 font-bold">{new Date(v.fecha).toLocaleDateString()}</p>
-                                    <p className="text-[10px] text-zinc-400 font-mono">{new Date(v.fecha).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                                  </td>
-                                  <td className="px-6 py-4 text-xs font-bold text-zinc-500">#{v.id}</td>
-                                  <td className="px-6 py-4 text-right text-sm font-black text-zinc-900 font-mono">${v.total_venta.toFixed(2)}</td>
-                                  <td className="px-6 py-4 text-center">
-                                    <span className="text-[10px] font-bold uppercase bg-white text-zinc-600 px-3 py-1 rounded-full border border-zinc-200">
-                                      {v.metodo_pago}
-                                    </span>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
+                {profitabilityData.length > 0 ? (
+                  <>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                      <MetricCard label="Ventas totales" value={money(profitabilityData.reduce((sum: number, item: any) => sum + Number(item.ventas_totales || 0), 0))} icon={<TrendingUp size={20} />} />
+                      <MetricCard label="Costo total" value={money(profitabilityData.reduce((sum: number, item: any) => sum + Number(item.costo_total || 0), 0))} icon={<ArrowDownLeft size={20} />} />
+                      <MetricCard label="Ganancia" value={money(profitabilityData.reduce((sum: number, item: any) => sum + Number(item.ganancia || 0), 0))} tone="emerald" icon={<DollarSign size={20} />} />
+                      <MetricCard label="Productos" value={number(profitabilityData.length)} tone="indigo" icon={<Package size={20} />} />
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                      {[...profitabilityData]
+                        .sort((a: any, b: any) => Number(b[profitabilitySort] || 0) - Number(a[profitabilitySort] || 0))
+                        .map((product: any) => (
+                          <article key={product.product_id ?? product.producto} className="min-w-0 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                            <div className="flex min-w-0 items-start justify-between gap-3">
+                              <p className="break-words text-base font-black text-slate-950">{product.producto}</p>
+                              <span className={`shrink-0 rounded-full px-3 py-1 text-[10px] font-black ${
+                                product.margen_porcentual >= 30
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : product.margen_porcentual >= 15
+                                    ? 'bg-amber-100 text-amber-700'
+                                    : 'bg-red-100 text-red-700'
+                              }`}>
+                                {number(product.margen_porcentual)}%
+                              </span>
+                            </div>
+                            <div className="mt-5 grid grid-cols-2 gap-3">
+                              <div className="rounded-2xl bg-slate-50 p-3">
+                                <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Cantidad</p>
+                                <p className="mt-1 text-sm font-black text-slate-950">{number(product.cantidad_vendida)}</p>
+                              </div>
+                              <div className="rounded-2xl bg-slate-50 p-3">
+                                <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Ventas</p>
+                                <p className="mt-1 break-words text-sm font-black text-slate-950">{money(product.ventas_totales)}</p>
+                              </div>
+                              <div className="rounded-2xl bg-red-50 p-3">
+                                <p className="text-[10px] font-black uppercase tracking-wider text-red-500">Costo</p>
+                                <p className="mt-1 break-words text-sm font-black text-red-800">{money(product.costo_total)}</p>
+                              </div>
+                              <div className="rounded-2xl bg-emerald-50 p-3">
+                                <p className="text-[10px] font-black uppercase tracking-wider text-emerald-600">Ganancia</p>
+                                <p className="mt-1 break-words text-sm font-black text-emerald-800">{money(product.ganancia)}</p>
+                              </div>
+                            </div>
+                          </article>
+                        ))}
+                    </div>
+                  </>
+                ) : (
+                  <ReportEmptyState title="No hay operaciones en el período" description="Probá ampliar las fechas o seleccionar otro producto." />
+                )}
+              </section>
             )}
 
-            {activeTab === 'productos' && (
-              <div className="space-y-8">
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                  <div className="min-w-0 bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl">
-                    <h3 className="text-xl font-black tracking-tight mb-8">Ventas por Familia</h3>
-                    {data.productos.porFamilia.length > 0 ? (
-                    <>
-                    <div className="h-[300px] min-h-[300px] min-w-0 w-full overflow-hidden">
-                      <ResponsiveContainer
-                        width="100%"
-                        height="100%"
-                        minWidth={0}
-                        minHeight={300}
-                        debounce={100}
-                        initialDimension={{ width: 800, height: 300 }}
+            {activeTab === 'productos-vendidos' && bestSellingProductsData && (
+              <section className="space-y-5">
+                <ReportHeading title="Productos más vendidos" description="Ranking por volumen, facturación o ganancia.">
+                  <div className="grid grid-cols-1 gap-1 rounded-2xl border border-slate-200 bg-slate-100 p-1 min-[390px]:grid-cols-3 sm:flex">
+                    {[
+                      ['cantidad_vendida', 'Cantidad'],
+                      ['total_facturado', 'Facturación'],
+                      ['total_ganancia', 'Ganancia']
+                    ].map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setBestSellingSort(key as typeof bestSellingSort)}
+                        className={`min-h-10 rounded-xl px-3 text-[10px] font-black uppercase tracking-wider ${bestSellingSort === key ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500'}`}
                       >
-                        <RePieChart>
-                          <Pie
-                            data={data.productos.porFamilia}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={60}
-                            outerRadius={100}
-                            paddingAngle={5}
-                            dataKey="value"
-                          >
-                            {data.productos.porFamilia.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                            ))}
-                          </Pie>
-                          <Tooltip 
-                            contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)' }}
-                          />
-                        </RePieChart>
-                      </ResponsiveContainer>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <PrintButton />
+                </ReportHeading>
+
+                {bestSellingProductsData.length > 0 ? (
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                    {[...bestSellingProductsData]
+                      .sort((a: any, b: any) => Number(b[bestSellingSort] || 0) - Number(a[bestSellingSort] || 0))
+                      .map((product: any, index: number) => (
+                        <article key={product.producto} className="min-w-0 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-indigo-50 text-sm font-black text-indigo-700">#{index + 1}</div>
+                            <p className="min-w-0 break-words text-base font-black text-slate-950">{product.producto}</p>
+                          </div>
+                          <div className="mt-5 grid grid-cols-1 gap-3 min-[390px]:grid-cols-3">
+                            <div className="rounded-2xl bg-slate-50 p-3">
+                              <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Cantidad</p>
+                              <p className="mt-1 text-sm font-black text-slate-950">{number(product.cantidad_vendida)}</p>
+                            </div>
+                            <div className="rounded-2xl bg-indigo-50 p-3">
+                              <p className="text-[10px] font-black uppercase tracking-wider text-indigo-500">Facturado</p>
+                              <p className="mt-1 break-words text-sm font-black text-indigo-900">{money(product.total_facturado)}</p>
+                            </div>
+                            <div className="rounded-2xl bg-emerald-50 p-3">
+                              <p className="text-[10px] font-black uppercase tracking-wider text-emerald-600">Ganancia</p>
+                              <p className="mt-1 break-words text-sm font-black text-emerald-800">{money(product.total_ganancia)}</p>
+                            </div>
+                          </div>
+                        </article>
+                      ))}
+                  </div>
+                ) : (
+                  <ReportEmptyState title="No hay productos vendidos" description="Probá ampliar el período seleccionado." />
+                )}
+              </section>
+            )}
+
+            {activeTab === 'ventas-cliente' && salesByClientData && (
+              <section className="space-y-5">
+                <ReportHeading title="Ventas por cliente" description="Ranking comercial y acceso al historial individual.">
+                  <PrintButton />
+                </ReportHeading>
+
+                {salesByClientData.length > 0 ? (
+                  <>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                      <MetricCard label="Clientes con ventas" value={number(salesByClientData.length)} icon={<Users size={20} />} />
+                      <MetricCard label="Total comprado" value={money(salesByClientData.reduce((sum: number, item: any) => sum + Number(item.total_comprado || 0), 0))} tone="indigo" icon={<TrendingUp size={20} />} />
+                      <MetricCard label="Ganancia total" value={money(salesByClientData.reduce((sum: number, item: any) => sum + Number(item.total_ganancia || 0), 0))} tone="emerald" icon={<DollarSign size={20} />} />
                     </div>
-                    <div className="flex flex-wrap justify-center gap-4 mt-4">
-                      {data.productos.porFamilia.map((entry, index) => (
-                        <div key={entry.name} className="flex items-center gap-2">
-                          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
-                          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{entry.name}</span>
-                        </div>
+                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                      {salesByClientData.map((client: any, index: number) => (
+                        <article key={client.cliente_id ?? client.cliente} className="min-w-0 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-sm font-black text-white">#{index + 1}</div>
+                            <p className="min-w-0 break-words text-base font-black text-slate-950">{client.cliente}</p>
+                          </div>
+                          <div className="mt-5 grid grid-cols-1 gap-3 min-[390px]:grid-cols-3">
+                            <div className="rounded-2xl bg-slate-50 p-3">
+                              <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Ventas</p>
+                              <p className="mt-1 text-sm font-black text-slate-950">{number(client.cantidad_ventas)}</p>
+                            </div>
+                            <div className="rounded-2xl bg-indigo-50 p-3">
+                              <p className="text-[10px] font-black uppercase tracking-wider text-indigo-500">Comprado</p>
+                              <p className="mt-1 break-words text-sm font-black text-indigo-900">{money(client.total_comprado)}</p>
+                            </div>
+                            <div className="rounded-2xl bg-emerald-50 p-3">
+                              <p className="text-[10px] font-black uppercase tracking-wider text-emerald-600">Ganancia</p>
+                              <p className="mt-1 break-words text-sm font-black text-emerald-800">{money(client.total_ganancia)}</p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => openClientHistory(client.cliente_id, client.cliente)}
+                            className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-xs font-black uppercase tracking-wider text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700"
+                          >
+                            Ver historial
+                            <ChevronRight size={16} />
+                          </button>
+                        </article>
                       ))}
                     </div>
-                    </>
-                    ) : (
-                      <ReportEmptyState
-                        title="Sin ventas por familia"
-                        description="No hay productos vendidos para agrupar en el período seleccionado."
-                        compact
-                      />
-                    )}
-                  </div>
+                  </>
+                ) : (
+                  <ReportEmptyState title="No hay ventas por cliente" description="Probá ampliar el período seleccionado." />
+                )}
+              </section>
+            )}
 
-                  <div className="bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl">
-                    <h3 className="text-xl font-black tracking-tight mb-8">Alerta de Stock Bajo</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {data.productos.bajoStock.map((p, i) => (
-                        <div key={i} className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-center justify-between">
+            {activeTab === 'ventas-periodo' && salesPeriodData && (
+              <section className="space-y-5">
+                <ReportHeading title="Ventas por período" description="Detalle de operaciones, costo y ganancia.">
+                  <PrintButton />
+                </ReportHeading>
+
+                {salesPeriodData.sales.length > 0 ? (
+                  <>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+                      <MetricCard label="Total ventas" value={money(salesPeriodData.summary.totalVentas)} tone="dark" icon={<TrendingUp size={20} />} />
+                      <MetricCard label="Total costo" value={money(salesPeriodData.summary.totalCosto)} icon={<ArrowDownLeft size={20} />} />
+                      <MetricCard label="Ganancia" value={money(salesPeriodData.summary.totalGanancia)} tone="emerald" icon={<DollarSign size={20} />} />
+                      <MetricCard label="Cantidad" value={number(salesPeriodData.summary.cantidadVentas)} icon={<BarChart3 size={20} />} />
+                      <MetricCard label="Ticket promedio" value={money(salesPeriodData.summary.ticketPromedio)} tone="indigo" icon={<Wallet size={20} />} />
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                      {salesPeriodData.sales.map((sale: any) => (
+                        <article key={sale.id} className="min-w-0 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                          <div className="flex min-w-0 flex-col gap-3 min-[420px]:flex-row min-[420px]:items-start min-[420px]:justify-between">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="rounded-lg bg-slate-950 px-2 py-1 text-[10px] font-black text-white">Venta #{sale.id}</span>
+                                <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600">{sale.metodo_pago}</span>
+                              </div>
+                              <p className="mt-3 break-words text-base font-black text-slate-950">{sale.cliente}</p>
+                              <p className="mt-1 text-xs font-semibold text-slate-500">{formatDate(sale.fecha)} · {formatTime(sale.fecha)}</p>
+                            </div>
+                            <p className="break-words text-xl font-black text-slate-950">{money(sale.total_venta)}</p>
+                          </div>
+                          <div className="mt-4 rounded-2xl bg-slate-50 p-4">
+                            <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Productos · {number(sale.cantidad)} unidades</p>
+                            <p className="mt-2 break-words text-sm font-semibold leading-relaxed text-slate-700">{sale.productos || 'Sin detalle de productos'}</p>
+                          </div>
+                          <div className="mt-4 grid grid-cols-2 gap-3">
+                            <div className="rounded-2xl bg-red-50 p-3">
+                              <p className="text-[10px] font-black uppercase tracking-wider text-red-500">Costo</p>
+                              <p className="mt-1 break-words text-sm font-black text-red-800">{money(sale.costo_total)}</p>
+                            </div>
+                            <div className="rounded-2xl bg-emerald-50 p-3">
+                              <p className="text-[10px] font-black uppercase tracking-wider text-emerald-600">Ganancia</p>
+                              <p className="mt-1 break-words text-sm font-black text-emerald-800">{money(sale.ganancia)}</p>
+                            </div>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <ReportEmptyState title="No hay operaciones en el período" description="Probá ampliar las fechas seleccionadas." />
+                )}
+              </section>
+            )}
+
+            {activeTab === 'ventas' && reportData && (
+              <section className="space-y-5">
+                <ReportHeading title="Reporte de ventas" description="Resumen, operaciones y evolución del período.">
+                  <label className="relative min-w-0 sm:min-w-64">
+                    <Users className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                    <select
+                      value={clienteId}
+                      onChange={(event) => setClienteId(event.target.value)}
+                      className="min-h-11 w-full min-w-0 rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm font-bold text-slate-700 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                    >
+                      <option value="">Todos los clientes</option>
+                      {clientes.map((client) => <option key={client.id} value={client.id}>{client.nombre_apellido}</option>)}
+                    </select>
+                  </label>
+                  <PrintButton />
+                </ReportHeading>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <MetricCard label="Total ventas" value={money(reportData.ventas.total)} helper="Período seleccionado" tone="dark" icon={<TrendingUp size={20} />} />
+                  <MetricCard label="Cantidad" value={number(reportData.ventas.cantidad)} helper="Operaciones realizadas" icon={<BarChart3 size={20} />} />
+                  <MetricCard label="Ticket promedio" value={money(reportData.ventas.promedio)} helper="Promedio por venta" tone="indigo" icon={<Wallet size={20} />} />
+                </div>
+
+                {reportData.ventas.listaVentas.length > 0 ? (
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                    {reportData.ventas.listaVentas.map((sale) => (
+                      <article key={sale.id} className="min-w-0 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                        <div className="flex min-w-0 items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <p className="text-xs font-bold text-zinc-900 truncate">{p.name}</p>
-                            <p className="text-[10px] text-red-600 font-bold uppercase">Stock: {p.stock}</p>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="rounded-lg bg-slate-950 px-2 py-1 text-[10px] font-black text-white">#{sale.id}</span>
+                              <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600">{sale.metodo_pago}</span>
+                            </div>
+                            <p className="mt-3 break-words text-base font-black text-slate-950">{sale.nombre_cliente}</p>
+                            <p className="mt-1 text-xs font-semibold text-slate-500">{formatDate(sale.fecha)} · {formatTime(sale.fecha)}</p>
                           </div>
-                          <TrendingDown size={16} className="text-red-400 shrink-0" />
+                          <p className="max-w-[48%] break-words text-right text-lg font-black text-slate-950">{money(sale.total)}</p>
                         </div>
-                      ))}
-                      {data.productos.bajoStock.length === 0 && (
-                        <p className="col-span-full text-center py-8 text-zinc-400 font-bold uppercase text-xs tracking-widest">Todo el stock está al día</p>
-                      )}
-                    </div>
+                      </article>
+                    ))}
                   </div>
-                </div>
+                ) : (
+                  <ReportEmptyState title="No se encontraron ventas" description="Probá otro cliente o período." compact />
+                )}
 
-                <div className="bg-white rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden">
-                  <div className="p-8 border-b border-zinc-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <h3 className="text-xl font-black tracking-tight">Rendimiento de Productos</h3>
-                    <div className="flex items-center gap-2 bg-zinc-100 p-1 rounded-xl">
-                      <button
-                        onClick={() => setProductSort('cantidad')}
-                        className={`px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${
-                          productSort === 'cantidad' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-400 hover:text-zinc-600'
-                        }`}
-                      >
-                        Más Vendidos
-                      </button>
-                      <button
-                        onClick={() => setProductSort('total')}
-                        className={`px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${
-                          productSort === 'total' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-400 hover:text-zinc-600'
-                        }`}
-                      >
-                        Mayor Facturación
-                      </button>
-                    </div>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-zinc-50/50">
-                          <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Producto</th>
-                          <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Cant. Vendida</th>
-                          <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Total Facturado</th>
-                          <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Última Venta</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-zinc-50">
-                        {data.productos.listadoProductos.length > 0 ? [...data.productos.listadoProductos]
-                          .sort((a, b) => b[productSort] - a[productSort])
-                          .map((p, i) => (
-                          <tr key={i} className="hover:bg-zinc-50 transition-colors">
-                            <td className="px-8 py-5">
-                              <span className="text-sm font-bold text-zinc-900">{p.name}</span>
-                            </td>
-                            <td className="px-8 py-5 text-center text-sm font-black text-zinc-900 font-mono">{p.cantidad}</td>
-                            <td className="px-8 py-5 text-right text-sm font-black text-zinc-900 font-mono">${p.total.toFixed(2)}</td>
-                            <td className="px-8 py-5 text-right">
-                              <p className="text-xs font-bold text-zinc-500">{new Date(p.ultima_venta).toLocaleDateString()}</p>
-                              <p className="text-[10px] text-zinc-400 font-mono">{new Date(p.ultima_venta).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                            </td>
-                          </tr>
-                        )) : (
-                          <tr>
-                            <td colSpan={4} className="px-8 py-16 text-center text-xs font-bold uppercase tracking-widest text-zinc-400">
-                              No hay productos vendidos en el período seleccionado
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
+                <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+                  <article className="min-w-0 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+                    <h4 className="text-lg font-black text-slate-950">Evolución de ventas</h4>
+                    <p className="mt-1 text-xs font-medium text-slate-500">Total diario del período seleccionado.</p>
+                    {reportData.ventas.porDia.length > 0 ? (
+                      <div className="mt-5 h-[280px] min-h-[280px] min-w-0 w-full overflow-hidden sm:h-[340px] sm:min-h-[340px]">
+                        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={280} debounce={100} initialDimension={{ width: 640, height: 300 }}>
+                          <AreaChart data={reportData.ventas.porDia} margin={{ top: 10, right: 5, left: -15, bottom: 0 }}>
+                            <defs>
+                              <linearGradient id="reportSalesGradient" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.25} />
+                                <stop offset="95%" stopColor="#4f46e5" stopOpacity={0} />
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                            <XAxis dataKey="fecha" axisLine={false} tickLine={false} minTickGap={28} tick={{ fontSize: 10, fontWeight: 600, fill: '#64748b' }} tickFormatter={(value) => formatDate(value).slice(0, 5)} />
+                            <YAxis axisLine={false} tickLine={false} width={54} tick={{ fontSize: 10, fontWeight: 600, fill: '#64748b' }} tickFormatter={(value) => `$${Number(value).toLocaleString('es-AR', { notation: 'compact' })}`} />
+                            <Tooltip contentStyle={{ borderRadius: '14px', border: '1px solid #e2e8f0', boxShadow: '0 12px 24px rgb(15 23 42 / 0.1)' }} formatter={(value: number) => [money(value), 'Ventas']} labelFormatter={(value) => formatDate(value)} />
+                            <Area type="monotone" dataKey="total" stroke="#4f46e5" strokeWidth={3} fill="url(#reportSalesGradient)" />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    ) : (
+                      <div className="mt-5"><ReportEmptyState title="Sin evolución para mostrar" description="No hay ventas para graficar." compact /></div>
+                    )}
+                  </article>
+
+                  <article className="min-w-0 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+                    <h4 className="text-lg font-black text-slate-950">Métodos de pago</h4>
+                    <p className="mt-1 text-xs font-medium text-slate-500">Distribución del total vendido.</p>
+                    {reportData.ventas.porMetodoPago.length > 0 ? (
+                      <>
+                        <div className="mt-5 h-[260px] min-h-[260px] min-w-0 w-full overflow-hidden sm:h-[320px] sm:min-h-[320px]">
+                          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={260} debounce={100} initialDimension={{ width: 520, height: 280 }}>
+                            <RePieChart>
+                              <Pie data={reportData.ventas.porMetodoPago} cx="50%" cy="50%" innerRadius={48} outerRadius={88} paddingAngle={4} dataKey="value">
+                                {reportData.ventas.porMetodoPago.map((entry, index) => <Cell key={`${entry.name}-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                              </Pie>
+                              <Tooltip contentStyle={{ borderRadius: '14px', border: '1px solid #e2e8f0', boxShadow: '0 12px 24px rgb(15 23 42 / 0.1)' }} formatter={(value: number) => money(value)} />
+                            </RePieChart>
+                          </ResponsiveContainer>
+                        </div>
+                        <div className="mt-3 grid grid-cols-1 gap-2 min-[390px]:grid-cols-2">
+                          {reportData.ventas.porMetodoPago.map((entry, index) => (
+                            <div key={entry.name} className="flex min-w-0 items-center gap-2 rounded-xl bg-slate-50 px-3 py-2">
+                              <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
+                              <span className="min-w-0 flex-1 break-words text-xs font-bold text-slate-600">{entry.name}</span>
+                              <span className="shrink-0 text-xs font-black text-slate-950">{money(entry.value)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="mt-5"><ReportEmptyState title="Sin métodos de pago" description="No hay ventas registradas." compact /></div>
+                    )}
+                  </article>
                 </div>
-              </div>
+              </section>
             )}
 
-            {activeTab === 'deudas' && (
-              <div className="space-y-8">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="bg-white p-8 rounded-[32px] border border-zinc-200 shadow-sm">
-                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Total Adeudado</p>
-                    <p className="text-4xl font-black text-red-600 font-mono tracking-tighter">${data.deudas.totalAdeudado.toFixed(2)}</p>
-                    <p className="mt-4 text-zinc-400 text-[10px] font-bold uppercase">Saldo total a cobrar</p>
-                  </div>
-                  <div className="bg-white p-8 rounded-[32px] border border-zinc-200 shadow-sm">
-                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Clientes Deudores</p>
-                    <p className="text-4xl font-black text-zinc-900 font-mono tracking-tighter">{data.deudas.clientesDeudores}</p>
-                    <p className="mt-4 text-zinc-400 text-[10px] font-bold uppercase">Cuentas con saldo</p>
-                  </div>
-                  <div className="bg-white p-8 rounded-[32px] border border-zinc-200 shadow-sm">
-                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Deuda Vencida</p>
-                    <p className="text-4xl font-black text-red-900 font-mono tracking-tighter">${data.deudas.deudaVencida.toFixed(2)}</p>
-                    <p className="mt-4 text-red-900/60 text-[10px] font-bold uppercase">Mayor a 7 días</p>
-                  </div>
+            {activeTab === 'clientes' && reportData && (
+              <section className="space-y-5">
+                <ReportHeading title="Clientes" description="Altas, actividad y volumen de compra.">
+                  <PrintButton />
+                </ReportHeading>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <MetricCard label="Nuevos clientes" value={number(reportData.clientes.nuevos)} helper="Registrados en el período" icon={<Users size={20} />} />
+                  <MetricCard label="Clientes activos" value={number(reportData.clientes.activos)} helper="Con compras en el período" tone="indigo" icon={<TrendingUp size={20} />} />
+                  <MetricCard label="Con deuda" value={number(reportData.clientes.conDeuda)} helper="Cuentas con saldo pendiente" tone="red" icon={<AlertTriangle size={20} />} />
                 </div>
-
-                <div className="bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden">
-                  <h3 className="text-xl font-black tracking-tight mb-8">Listado de Deudores</h3>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-zinc-50/50">
-                          <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
-                          <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Ventas Pendientes</th>
-                          <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Deuda Antigua</th>
-                          <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Total Adeudado</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-zinc-50">
-                        {data.deudas.rankingDeudores.length > 0 ? data.deudas.rankingDeudores.map((d, i) => (
-                          <tr 
-                            key={i} 
-                            className="hover:bg-zinc-50 transition-colors cursor-pointer group"
-                            onClick={() => {
-                              setViewingClientSales({ id: d.id, nombre: d.nombre });
-                              fetchClientSales(d.id);
-                            }}
-                          >
-                            <td className="px-8 py-5">
-                              <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-full bg-zinc-100 text-zinc-900 group-hover:bg-zinc-900 group-hover:text-white flex items-center justify-center text-xs font-bold transition-all">
-                                  {i + 1}
-                                </div>
-                                <span className="text-sm font-bold text-zinc-900">{d.nombre}</span>
-                              </div>
-                            </td>
-                            <td className="px-8 py-5 text-center">
-                              <span className="text-xs font-black text-zinc-400 bg-zinc-100 px-3 py-1 rounded-full">
-                                {d.ventas_pendientes} comprobantes
-                              </span>
-                            </td>
-                            <td className="px-8 py-5 text-right">
-                              {d.fecha_antigua ? (
-                                <>
-                                  <p className="text-xs font-bold text-zinc-500">{new Date(d.fecha_antigua).toLocaleDateString()}</p>
-                                  <p className="text-[10px] text-zinc-400 font-mono">
-                                    {Math.floor((new Date().getTime() - new Date(d.fecha_antigua).getTime()) / (1000 * 60 * 60 * 24))} días de atraso
-                                  </p>
-                                </>
-                              ) : (
-                                <span className="text-[10px] font-bold text-zinc-300 uppercase">Sin registro</span>
-                              )}
-                            </td>
-                            <td className="px-8 py-5 text-right">
-                              <span className="text-sm font-black text-red-600 font-mono">${d.saldo.toFixed(2)}</span>
-                            </td>
-                          </tr>
-                        )) : (
-                          <tr>
-                            <td colSpan={4} className="px-8 py-16 text-center text-xs font-bold uppercase tracking-widest text-zinc-400">
-                              No hay clientes con deuda pendiente
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
+                {reportData.clientes.listadoClientes.length > 0 ? (
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                    {reportData.clientes.listadoClientes.map((client, index) => (
+                      <article key={client.id} className="min-w-0 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-indigo-50 text-sm font-black text-indigo-700">#{index + 1}</div>
+                          <div className="min-w-0 flex-1">
+                            <p className="break-words text-base font-black text-slate-950">{client.nombre}</p>
+                            <p className="mt-1 text-xs font-semibold text-slate-500">Última compra: {formatDate(client.ultima_compra)}</p>
+                          </div>
+                        </div>
+                        <div className="mt-5 grid grid-cols-2 gap-3">
+                          <div className="rounded-2xl bg-slate-50 p-3">
+                            <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Compras</p>
+                            <p className="mt-1 text-sm font-black text-slate-950">{number(client.cantidad)}</p>
+                          </div>
+                          <div className="rounded-2xl bg-indigo-50 p-3">
+                            <p className="text-[10px] font-black uppercase tracking-wider text-indigo-500">Total</p>
+                            <p className="mt-1 break-words text-sm font-black text-indigo-900">{money(client.total)}</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => openClientHistory(client.id, client.nombre)}
+                          className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 text-xs font-black uppercase tracking-wider text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700"
+                        >
+                          Ver historial
+                          <ChevronRight size={16} />
+                        </button>
+                      </article>
+                    ))}
                   </div>
-                </div>
-              </div>
+                ) : (
+                  <ReportEmptyState title="No hay clientes con compras" description="No se registraron compras en el período seleccionado." />
+                )}
+              </section>
             )}
 
-            {activeTab === 'finanzas' && (
-              <div className="space-y-8">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="bg-white p-8 rounded-[32px] border border-zinc-200 shadow-sm">
-                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Total Ingresos</p>
-                    <p className="text-4xl font-black text-emerald-600 font-mono tracking-tighter">${data.finanzas.ingresos.toFixed(2)}</p>
-                    <p className="mt-4 text-zinc-400 text-[10px] font-bold uppercase">Entradas de capital</p>
-                  </div>
-                  <div className="bg-white p-8 rounded-[32px] border border-zinc-200 shadow-sm">
-                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Total Egresos</p>
-                    <p className="text-4xl font-black text-red-600 font-mono tracking-tighter">${data.finanzas.egresos.toFixed(2)}</p>
-                    <p className="mt-4 text-zinc-400 text-[10px] font-bold uppercase">Salidas de capital</p>
-                  </div>
-                  <div className={`p-8 rounded-[32px] shadow-2xl ${data.finanzas.balance >= 0 ? 'bg-zinc-900 shadow-zinc-200' : 'bg-red-900 shadow-red-200'}`}>
-                    <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1">Resultado Neto</p>
-                    <p className="text-4xl font-black text-white font-mono tracking-tighter">${data.finanzas.balance.toFixed(2)}</p>
-                    <p className="mt-4 text-white/40 text-[10px] font-bold uppercase">Resultado del periodo</p>
-                  </div>
+            {activeTab === 'productos' && reportData && (
+              <section className="space-y-5">
+                <ReportHeading title="Productos" description="Rendimiento por familia, stock y facturación.">
+                  <PrintButton />
+                </ReportHeading>
+                <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+                  <article className="min-w-0 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+                    <h4 className="text-lg font-black text-slate-950">Ventas por familia</h4>
+                    {reportData.productos.porFamilia.length > 0 ? (
+                      <>
+                        <div className="mt-4 h-[260px] min-h-[260px] min-w-0 w-full overflow-hidden sm:h-[320px] sm:min-h-[320px]">
+                          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={260} debounce={100} initialDimension={{ width: 520, height: 280 }}>
+                            <RePieChart>
+                              <Pie data={reportData.productos.porFamilia} cx="50%" cy="50%" innerRadius={48} outerRadius={88} paddingAngle={4} dataKey="value">
+                                {reportData.productos.porFamilia.map((entry, index) => <Cell key={`${entry.name}-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                              </Pie>
+                              <Tooltip contentStyle={{ borderRadius: '14px', border: '1px solid #e2e8f0' }} formatter={(value: number) => money(value)} />
+                            </RePieChart>
+                          </ResponsiveContainer>
+                        </div>
+                        <div className="grid grid-cols-1 gap-2 min-[390px]:grid-cols-2">
+                          {reportData.productos.porFamilia.map((entry, index) => (
+                            <div key={entry.name} className="flex min-w-0 items-center gap-2 rounded-xl bg-slate-50 px-3 py-2">
+                              <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
+                              <span className="min-w-0 flex-1 break-words text-xs font-bold text-slate-600">{entry.name}</span>
+                              <span className="shrink-0 text-xs font-black text-slate-950">{money(entry.value)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="mt-4"><ReportEmptyState title="Sin ventas por familia" description="No hay productos para agrupar." compact /></div>
+                    )}
+                  </article>
+
+                  <article className="min-w-0 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+                    <h4 className="text-lg font-black text-slate-950">Stock bajo</h4>
+                    <p className="mt-1 text-xs font-medium text-slate-500">Productos que requieren revisión.</p>
+                    {reportData.productos.bajoStock.length > 0 ? (
+                      <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        {reportData.productos.bajoStock.map((product) => (
+                          <div key={product.name} className="flex min-w-0 items-center gap-3 rounded-2xl border border-red-100 bg-red-50 p-4">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-red-600"><TrendingDown size={18} /></div>
+                            <div className="min-w-0">
+                              <p className="break-words text-sm font-black text-slate-950">{product.name}</p>
+                              <p className="mt-1 text-xs font-bold text-red-600">Stock actual: {number(product.stock)}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-4"><ReportEmptyState title="Stock al día" description="No hay productos con stock bajo." compact /></div>
+                    )}
+                  </article>
                 </div>
 
-                <div className="min-w-0 bg-white p-8 rounded-[40px] border border-zinc-200 shadow-xl">
-                  <h3 className="text-xl font-black tracking-tight mb-8 text-center">Ingresos vs Egresos por Día</h3>
-                  {data.finanzas.flujoCaja.length > 0 ? (
-                  <div className="h-[400px] min-h-[400px] min-w-0 w-full overflow-hidden">
-                    <ResponsiveContainer
-                      width="100%"
-                      height="100%"
-                      minWidth={0}
-                      minHeight={400}
-                      debounce={100}
-                      initialDimension={{ width: 1000, height: 400 }}
-                    >
-                      <BarChart data={data.finanzas.flujoCaja}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
-                        <XAxis 
-                          dataKey="fecha" 
-                          axisLine={false} 
-                          tickLine={false} 
-                          tick={{ fontSize: 10, fontWeight: 600, fill: '#a1a1aa' }}
-                          tickFormatter={(str) => new Date(str).toLocaleDateString('es-AR', { day: 'numeric', month: 'short' })}
-                        />
-                        <YAxis 
-                          axisLine={false} 
-                          tickLine={false} 
-                          tick={{ fontSize: 10, fontWeight: 600, fill: '#a1a1aa' }}
-                        />
-                        <Tooltip 
-                          contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)' }}
-                          formatter={(value: number) => [`$${value.toFixed(2)}`, '']}
-                        />
-                        <Bar name="Ingresos" dataKey="ingresos" fill="#10b981" radius={[4, 4, 0, 0]} />
-                        <Bar name="Egresos" dataKey="egresos" fill="#ef4444" radius={[4, 4, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
+                <div className="space-y-4">
+                  <ReportHeading title="Rendimiento de productos">
+                    <SegmentedButtons>
+                      <button type="button" onClick={() => setProductSort('cantidad')} className={`min-h-10 rounded-xl px-3 text-[10px] font-black uppercase tracking-wider ${productSort === 'cantidad' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500'}`}>Más vendidos</button>
+                      <button type="button" onClick={() => setProductSort('total')} className={`min-h-10 rounded-xl px-3 text-[10px] font-black uppercase tracking-wider ${productSort === 'total' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500'}`}>Facturación</button>
+                    </SegmentedButtons>
+                  </ReportHeading>
+                  {reportData.productos.listadoProductos.length > 0 ? (
+                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                      {[...reportData.productos.listadoProductos]
+                        .sort((a, b) => Number(b[productSort]) - Number(a[productSort]))
+                        .map((product, index) => (
+                          <article key={product.name} className="min-w-0 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-sm font-black text-white">#{index + 1}</div>
+                              <p className="min-w-0 break-words text-base font-black text-slate-950">{product.name}</p>
+                            </div>
+                            <div className="mt-5 grid grid-cols-1 gap-3 min-[390px]:grid-cols-3">
+                              <div className="rounded-2xl bg-slate-50 p-3"><p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Cantidad</p><p className="mt-1 text-sm font-black text-slate-950">{number(product.cantidad)}</p></div>
+                              <div className="rounded-2xl bg-indigo-50 p-3"><p className="text-[10px] font-black uppercase tracking-wider text-indigo-500">Facturado</p><p className="mt-1 break-words text-sm font-black text-indigo-900">{money(product.total)}</p></div>
+                              <div className="rounded-2xl bg-slate-50 p-3"><p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Última venta</p><p className="mt-1 text-sm font-black text-slate-950">{formatDate(product.ultima_venta)}</p></div>
+                            </div>
+                          </article>
+                        ))}
+                    </div>
                   ) : (
-                    <ReportEmptyState
-                      title="Sin movimientos financieros"
-                      description="No hay ingresos ni egresos para graficar en el período seleccionado."
-                      compact
-                    />
+                    <ReportEmptyState title="No hay productos vendidos" description="No se registraron ventas de productos en el período." />
                   )}
                 </div>
-              </div>
+              </section>
             )}
-          </div>
+
+            {activeTab === 'deudas' && reportData && (
+              <section className="space-y-5">
+                <ReportHeading title="Deudas" description="Saldos pendientes, mora y clientes deudores.">
+                  <PrintButton />
+                </ReportHeading>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <MetricCard label="Total adeudado" value={money(reportData.deudas.totalAdeudado)} helper="Saldo total a cobrar" tone="red" icon={<DollarSign size={20} />} />
+                  <MetricCard label="Clientes deudores" value={number(reportData.deudas.clientesDeudores)} helper="Cuentas con saldo" icon={<Users size={20} />} />
+                  <MetricCard label="Deuda vencida" value={money(reportData.deudas.deudaVencida)} helper="Mayor a siete días" tone="amber" icon={<AlertTriangle size={20} />} />
+                </div>
+                {reportData.deudas.rankingDeudores.length > 0 ? (
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                    {reportData.deudas.rankingDeudores.map((debtor, index) => {
+                      const delayDays = debtor.fecha_antigua
+                        ? Math.max(0, Math.floor((Date.now() - new Date(debtor.fecha_antigua).getTime()) / 86400000))
+                        : 0;
+                      return (
+                        <article key={debtor.id} className="min-w-0 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-red-50 text-sm font-black text-red-700">#{index + 1}</div>
+                            <div className="min-w-0 flex-1">
+                              <p className="break-words text-base font-black text-slate-950">{debtor.nombre}</p>
+                              <p className="mt-1 text-xs font-semibold text-slate-500">{debtor.ventas_pendientes} comprobantes pendientes</p>
+                            </div>
+                          </div>
+                          <div className="mt-5 grid grid-cols-2 gap-3">
+                            <div className="rounded-2xl bg-red-50 p-3"><p className="text-[10px] font-black uppercase tracking-wider text-red-500">Adeudado</p><p className="mt-1 break-words text-sm font-black text-red-800">{money(debtor.saldo)}</p></div>
+                            <div className="rounded-2xl bg-amber-50 p-3"><p className="text-[10px] font-black uppercase tracking-wider text-amber-600">Antigüedad</p><p className="mt-1 text-sm font-black text-amber-900">{debtor.fecha_antigua ? `${delayDays} días` : 'Sin fecha'}</p></div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => openClientHistory(debtor.id, debtor.nombre)}
+                            className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 text-xs font-black uppercase tracking-wider text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700"
+                          >
+                            Ver historial
+                            <ChevronRight size={16} />
+                          </button>
+                        </article>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <ReportEmptyState title="No hay clientes con deuda" description="No existen saldos pendientes en el período." />
+                )}
+              </section>
+            )}
+
+            {activeTab === 'finanzas' && reportData && (
+              <section className="space-y-5">
+                <ReportHeading title="Finanzas" description="Ingresos, egresos y resultado neto del período.">
+                  <PrintButton />
+                </ReportHeading>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <MetricCard label="Ingresos" value={money(reportData.finanzas.ingresos)} helper="Entradas de capital" tone="emerald" icon={<ArrowUpRight size={20} />} />
+                  <MetricCard label="Egresos" value={money(reportData.finanzas.egresos)} helper="Salidas de capital" tone="red" icon={<ArrowDownLeft size={20} />} />
+                  <MetricCard label="Resultado neto" value={money(reportData.finanzas.balance)} helper="Resultado del período" tone={reportData.finanzas.balance >= 0 ? 'dark' : 'red'} icon={<Wallet size={20} />} />
+                </div>
+                <article className="min-w-0 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+                  <h4 className="text-lg font-black text-slate-950">Ingresos vs egresos</h4>
+                  <p className="mt-1 text-xs font-medium text-slate-500">Flujo diario del período seleccionado.</p>
+                  {reportData.finanzas.flujoCaja.length > 0 ? (
+                    <div className="mt-5 h-[300px] min-h-[300px] min-w-0 w-full overflow-hidden sm:h-[400px] sm:min-h-[400px]">
+                      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300} debounce={100} initialDimension={{ width: 800, height: 360 }}>
+                        <BarChart data={reportData.finanzas.flujoCaja} margin={{ top: 10, right: 5, left: -15, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                          <XAxis dataKey="fecha" axisLine={false} tickLine={false} minTickGap={28} tick={{ fontSize: 10, fontWeight: 600, fill: '#64748b' }} tickFormatter={(value) => formatDate(value).slice(0, 5)} />
+                          <YAxis axisLine={false} tickLine={false} width={54} tick={{ fontSize: 10, fontWeight: 600, fill: '#64748b' }} tickFormatter={(value) => `$${Number(value).toLocaleString('es-AR', { notation: 'compact' })}`} />
+                          <Tooltip contentStyle={{ borderRadius: '14px', border: '1px solid #e2e8f0' }} formatter={(value: number, name: string) => [money(value), name === 'ingresos' ? 'Ingresos' : 'Egresos']} labelFormatter={(value) => formatDate(value)} />
+                          <Bar name="Ingresos" dataKey="ingresos" fill="#10b981" radius={[5, 5, 0, 0]} />
+                          <Bar name="Egresos" dataKey="egresos" fill="#ef4444" radius={[5, 5, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="mt-5"><ReportEmptyState title="Sin movimientos financieros" description="No hay ingresos ni egresos para graficar." compact /></div>
+                  )}
+                </article>
+              </section>
+            )}
+          </main>
         )}
       </div>
+
+      {viewingClientSales && (
+        <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-5" role="dialog" aria-modal="true" aria-labelledby="client-history-title">
+          <button
+            type="button"
+            aria-label="Cerrar historial"
+            className="absolute inset-0 cursor-default bg-slate-950/65 backdrop-blur-sm"
+            onClick={() => setViewingClientSales(null)}
+          />
+          <div className="relative flex max-h-[92dvh] w-full max-w-4xl flex-col overflow-hidden rounded-t-[30px] bg-white shadow-2xl sm:rounded-[30px]">
+            <header className="flex min-w-0 items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 py-4 sm:px-6">
+              <div className="min-w-0">
+                <h3 id="client-history-title" className="break-words text-xl font-black text-slate-950 sm:text-2xl">Historial de compras</h3>
+                <p className="mt-1 break-words text-sm font-semibold text-slate-500">{viewingClientSales.nombre}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingClientSales(null)}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:border-slate-400 hover:text-slate-950"
+                aria-label="Cerrar"
+              >
+                <ChevronRight className="rotate-180" size={20} />
+              </button>
+            </header>
+            <div className="custom-scrollbar flex-1 overflow-y-auto p-4 sm:p-6">
+              {loadingClientSales ? (
+                <div className="flex min-h-52 flex-col items-center justify-center gap-3" role="status" aria-live="polite">
+                  <Loader2 size={28} className="animate-spin text-indigo-600" />
+                  <p className="text-xs font-black uppercase tracking-wider text-slate-500">Cargando historial…</p>
+                </div>
+              ) : clientSalesError ? (
+                <ReportErrorState message={clientSalesError} onRetry={() => fetchClientSales(viewingClientSales.id)} compact />
+              ) : clientSales.length === 0 ? (
+                <ReportEmptyState title="Sin ventas en el período" description="Probá ampliar el rango de fechas." compact />
+              ) : (
+                <div className="space-y-5">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <MetricCard label="Total comprado" value={money(clientSales.reduce((sum, sale) => sum + Number(sale.total_venta || 0), 0))} tone="indigo" />
+                    <MetricCard label="Cantidad" value={number(clientSales.length)} />
+                    <MetricCard label="Ticket promedio" value={money(clientSales.length ? clientSales.reduce((sum, sale) => sum + Number(sale.total_venta || 0), 0) / clientSales.length : 0)} tone="emerald" />
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {clientSales.map((sale) => (
+                      <article key={sale.id} className="min-w-0 rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+                        <div className="flex min-w-0 items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="rounded-lg bg-slate-950 px-2 py-1 text-[10px] font-black text-white">Venta #{sale.id}</span>
+                              <span className="rounded-full bg-white px-3 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600 shadow-sm">{sale.metodo_pago}</span>
+                            </div>
+                            <p className="mt-3 text-xs font-semibold text-slate-500">{formatDate(sale.fecha)} · {formatTime(sale.fecha)}</p>
+                          </div>
+                          <p className="max-w-[46%] break-words text-right text-base font-black text-slate-950">{money(sale.total_venta)}</p>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
