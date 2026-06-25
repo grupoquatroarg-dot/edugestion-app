@@ -15,6 +15,7 @@ interface Cliente {
   cuit?: string;
   localidad?: string;
   provincia?: string;
+  codigo_postal?: string;
   telefono?: string;
   email?: string;
   direccion?: string;
@@ -52,6 +53,7 @@ export default function CustomerModule() {
     cuit: '',
     localidad: '',
     provincia: '',
+    codigo_postal: '',
     telefono: '',
     email: '',
     direccion: '',
@@ -113,6 +115,9 @@ export default function CustomerModule() {
       (c.nombre_apellido || '').toLowerCase().includes(query) ||
       (c.razon_social || '').toLowerCase().includes(query) ||
       (c.localidad || '').toLowerCase().includes(query) ||
+      (c.provincia || '').toLowerCase().includes(query) ||
+      (c.codigo_postal || '').toLowerCase().includes(query) ||
+      (c.direccion || '').toLowerCase().includes(query) ||
       (c.cuit || '').toLowerCase().includes(query) ||
       (c.telefono || '').toLowerCase().includes(query) ||
       (c.email || '').toLowerCase().includes(query)
@@ -143,10 +148,18 @@ export default function CustomerModule() {
     const method = editingCliente ? 'PUT' : 'POST';
 
     try {
+      const direccion = formData.direccion.trim();
+      const hasCoordinates = Number.isFinite(Number(formData.latitud)) && Number.isFinite(Number(formData.longitud)) && Number(formData.latitud) !== 0 && Number(formData.longitud) !== 0;
       const res = await apiFetch(url, {
         method,
         body: JSON.stringify({
           ...formData,
+          direccion,
+          localidad: formData.localidad.trim() || (direccion ? 'Carcarañá' : ''),
+          provincia: formData.provincia.trim() || (direccion ? 'Santa Fe' : ''),
+          codigo_postal: formData.codigo_postal.trim() || (direccion ? '2138' : ''),
+          latitud: hasCoordinates ? Number(formData.latitud) : null,
+          longitud: hasCoordinates ? Number(formData.longitud) : null,
           telefono: normalizeArgentinaPhone(formData.telefono)
         })
       });
@@ -189,6 +202,7 @@ export default function CustomerModule() {
         cuit: cliente.cuit || '',
         localidad: cliente.localidad || '',
         provincia: cliente.provincia || '',
+        codigo_postal: cliente.codigo_postal || '',
         telefono: getLocalArgentinaPhone(cliente.telefono || ''),
         email: cliente.email || '',
         direccion: cliente.direccion || '',
@@ -220,6 +234,7 @@ export default function CustomerModule() {
         cuit: '',
         localidad: '',
         provincia: '',
+        codigo_postal: '',
         telefono: '',
         email: '',
         direccion: '',
@@ -256,6 +271,24 @@ export default function CustomerModule() {
       currency: 'ARS',
       maximumFractionDigits: 2
     }).format(Number(value || 0));
+
+  const hasValidCoordinates = (latitud?: number | null, longitud?: number | null) =>
+    Number.isFinite(Number(latitud)) &&
+    Number.isFinite(Number(longitud)) &&
+    Number(latitud) !== 0 &&
+    Number(longitud) !== 0;
+
+  const getLocationLabel = (cliente: Cliente) => {
+    const locationParts = [
+      cliente.localidad,
+      cliente.provincia,
+      cliente.codigo_postal ? `CP ${cliente.codigo_postal}` : ''
+    ].filter(Boolean);
+
+    if (locationParts.length > 0) return locationParts.join(', ');
+    if (cliente.direccion) return 'Dirección cargada';
+    return 'Sin dirección cargada';
+  };
 
   const customerSummary = useMemo(() => {
     const active = clientes.filter(cliente => cliente.activo !== false).length;
@@ -592,9 +625,15 @@ export default function CustomerModule() {
                         <div className="min-w-0 bg-slate-50 p-3">
                           <dt className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-slate-400"><MapPin size={13} /> Ubicación</dt>
                           <dd className="mt-1 break-words text-sm font-bold text-slate-700">
-                            {[cliente.localidad, cliente.provincia].filter(Boolean).join(', ') || 'Sin ubicación'}
+                            {getLocationLabel(cliente)}
                           </dd>
                           {cliente.direccion && <p className="mt-1 break-words text-xs text-slate-500">{cliente.direccion}</p>}
+                          {cliente.direccion && !hasValidCoordinates(cliente.latitud, cliente.longitud) && (
+                            <p className="mt-2 inline-flex items-start gap-1.5 rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] font-bold leading-4 text-amber-700">
+                              <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                              Dirección cargada sin coordenadas
+                            </p>
+                          )}
                         </div>
                         <div className="min-w-0 bg-slate-50 p-3">
                           <dt className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-slate-400"><Phone size={13} /> Contacto</dt>
@@ -748,33 +787,92 @@ export default function CustomerModule() {
                 <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
                   <div className="mb-4">
                     <h3 className="text-sm font-black text-slate-950">Domicilio</h3>
-                    <p className="mt-1 text-xs text-slate-500">La localidad y provincia se completan al seleccionar la dirección.</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      Priorizamos Carcarañá, Santa Fe, CP 2138. Podés elegir una sugerencia o completar todo manualmente.
+                    </p>
                   </div>
+
                   <div>
-                    <label className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Dirección *</label>
+                    <label htmlFor="customer-address" className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Dirección</label>
                     <AddressAutocomplete
                       value={formData.direccion}
-                      onChange={(address) => setFormData({
-                        ...formData,
+                      onInputChange={(direccion) => setFormData((current) => ({
+                        ...current,
+                        direccion,
+                        localidad: direccion ? (current.localidad || 'Carcarañá') : '',
+                        provincia: direccion ? (current.provincia || 'Santa Fe') : '',
+                        codigo_postal: direccion ? (current.codigo_postal || '2138') : '',
+                        latitud: 0,
+                        longitud: 0
+                      }))}
+                      onChange={(address) => setFormData((current) => ({
+                        ...current,
                         direccion: address.direccion,
                         localidad: address.localidad,
-                        provincia: address.provincia || '',
+                        provincia: address.provincia,
+                        codigo_postal: address.codigo_postal,
                         latitud: address.latitud,
                         longitud: address.longitud
-                      })}
-                      placeholder="Escribí una dirección para buscar..."
+                      }))}
+                      placeholder="Ej.: Av. Belgrano 123, Carcarañá"
                     />
                   </div>
-                  <div className="mt-4 grid grid-cols-1 gap-4 min-[480px]:grid-cols-2">
+
+                  <div className="mt-4 grid grid-cols-1 gap-4 min-[480px]:grid-cols-2 lg:grid-cols-3">
                     <div>
-                      <label className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Localidad</label>
-                      <input readOnly type="text" placeholder="Se completa con la dirección" className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-slate-600" value={formData.localidad} />
+                      <label htmlFor="customer-locality" className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Localidad</label>
+                      <input
+                        id="customer-locality"
+                        type="text"
+                        autoComplete="address-level2"
+                        placeholder="Carcarañá"
+                        className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+                        value={formData.localidad}
+                        onChange={(event) => setFormData({ ...formData, localidad: event.target.value, latitud: 0, longitud: 0 })}
+                      />
                     </div>
                     <div>
-                      <label className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Provincia</label>
-                      <input readOnly type="text" placeholder="Se completa con la dirección" className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-slate-600" value={formData.provincia} />
+                      <label htmlFor="customer-province" className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Provincia</label>
+                      <input
+                        id="customer-province"
+                        type="text"
+                        autoComplete="address-level1"
+                        placeholder="Santa Fe"
+                        className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+                        value={formData.provincia}
+                        onChange={(event) => setFormData({ ...formData, provincia: event.target.value, latitud: 0, longitud: 0 })}
+                      />
+                    </div>
+                    <div className="min-[480px]:col-span-2 lg:col-span-1">
+                      <label htmlFor="customer-postal-code" className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Código postal</label>
+                      <input
+                        id="customer-postal-code"
+                        type="text"
+                        inputMode="text"
+                        autoComplete="postal-code"
+                        maxLength={10}
+                        placeholder="2138"
+                        className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+                        value={formData.codigo_postal}
+                        onChange={(event) => setFormData({ ...formData, codigo_postal: event.target.value, latitud: 0, longitud: 0 })}
+                      />
                     </div>
                   </div>
+
+                  {formData.direccion && (
+                    <div className={`mt-4 flex items-start gap-2 rounded-xl border p-3 text-xs font-bold leading-5 ${
+                      hasValidCoordinates(formData.latitud, formData.longitud)
+                        ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
+                        : 'border-amber-100 bg-amber-50 text-amber-800'
+                    }`}>
+                      <MapPin size={16} className="mt-0.5 shrink-0" />
+                      <span>
+                        {hasValidCoordinates(formData.latitud, formData.longitud)
+                          ? 'Dirección geolocalizada. Estará disponible para mapas y Ruta del día.'
+                          : 'Dirección cargada sin coordenadas. Se guardará igualmente, pero no aparecerá en el mapa hasta elegir una sugerencia geolocalizada.'}
+                      </span>
+                    </div>
+                  )}
                 </section>
 
                 <section className="rounded-2xl border border-cyan-100 bg-cyan-50/60 p-4 sm:p-5">

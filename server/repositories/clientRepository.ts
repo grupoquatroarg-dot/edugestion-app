@@ -13,8 +13,9 @@ export interface Client {
   direccion?: string;
   localidad?: string;
   provincia?: string;
-  latitud?: number;
-  longitud?: number;
+  codigo_postal?: string;
+  latitud?: number | null;
+  longitud?: number | null;
   observaciones?: string;
   tipo_cliente: 'minorista' | 'mayorista';
   lista_precio?: string;
@@ -52,6 +53,7 @@ const mapClient = (row: any): Client | undefined => {
     direccion: row.direccion ?? undefined,
     localidad: row.localidad ?? undefined,
     provincia: row.provincia ?? undefined,
+    codigo_postal: row.codigo_postal ?? undefined,
     latitud: row.latitud === null || row.latitud === undefined ? undefined : Number(row.latitud),
     longitud: row.longitud === null || row.longitud === undefined ? undefined : Number(row.longitud),
     observaciones: row.observaciones ?? undefined,
@@ -75,6 +77,7 @@ const normalizeClient = (client: Client) => ({
   direccion: toNullableText(client.direccion),
   localidad: toNullableText(client.localidad),
   provincia: toNullableText(client.provincia),
+  codigo_postal: toNullableText(client.codigo_postal),
   latitud: client.latitud === undefined || client.latitud === null ? null : Number(client.latitud),
   longitud: client.longitud === undefined || client.longitud === null ? null : Number(client.longitud),
   observaciones: toNullableText(client.observaciones),
@@ -114,10 +117,10 @@ export const clientRepository = {
       const info = db.prepare(`
         INSERT INTO clientes (
           nombre_apellido, razon_social, cuit, telefono, email,
-          direccion, localidad, provincia, latitud, longitud,
+          direccion, localidad, provincia, codigo_postal, latitud, longitud,
           observaciones, tipo_cliente, lista_precio, limite_credito, portal_enabled, portal_username, portal_password_hash
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         normalized.nombre_apellido,
         normalized.razon_social,
@@ -127,6 +130,7 @@ export const clientRepository = {
         normalized.direccion,
         normalized.localidad,
         normalized.provincia,
+        normalized.codigo_postal,
         normalized.latitud,
         normalized.longitud,
         normalized.observaciones,
@@ -145,10 +149,10 @@ export const clientRepository = {
     const result = await pool.query(
       `INSERT INTO clientes (
         nombre_apellido, razon_social, cuit, telefono, email,
-        direccion, localidad, provincia, latitud, longitud,
+        direccion, localidad, provincia, codigo_postal, latitud, longitud,
         observaciones, tipo_cliente, lista_precio, limite_credito, portal_enabled, portal_username, portal_password_hash
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
       RETURNING id`,
       [
         normalized.nombre_apellido,
@@ -159,6 +163,7 @@ export const clientRepository = {
         normalized.direccion,
         normalized.localidad,
         normalized.provincia,
+        normalized.codigo_postal,
         normalized.latitud,
         normalized.longitud,
         normalized.observaciones,
@@ -182,7 +187,7 @@ export const clientRepository = {
         db.prepare(`
           UPDATE clientes
           SET nombre_apellido = ?, razon_social = ?, cuit = ?, telefono = ?, email = ?,
-              direccion = ?, localidad = ?, provincia = ?, latitud = ?, longitud = ?,
+              direccion = ?, localidad = ?, provincia = ?, codigo_postal = ?, latitud = ?, longitud = ?,
               observaciones = ?, tipo_cliente = ?, lista_precio = ?, limite_credito = ?,
               portal_enabled = ?, portal_username = ?, portal_password_hash = ?
           WHERE id = ?
@@ -195,6 +200,7 @@ export const clientRepository = {
           normalized.direccion,
           normalized.localidad,
           normalized.provincia,
+          normalized.codigo_postal,
           normalized.latitud,
           normalized.longitud,
           normalized.observaciones,
@@ -210,7 +216,7 @@ export const clientRepository = {
         db.prepare(`
           UPDATE clientes
           SET nombre_apellido = ?, razon_social = ?, cuit = ?, telefono = ?, email = ?,
-              direccion = ?, localidad = ?, provincia = ?, latitud = ?, longitud = ?,
+              direccion = ?, localidad = ?, provincia = ?, codigo_postal = ?, latitud = ?, longitud = ?,
               observaciones = ?, tipo_cliente = ?, lista_precio = ?, limite_credito = ?,
               portal_enabled = ?, portal_username = ?
           WHERE id = ?
@@ -223,6 +229,7 @@ export const clientRepository = {
           normalized.direccion,
           normalized.localidad,
           normalized.provincia,
+          normalized.codigo_postal,
           normalized.latitud,
           normalized.longitud,
           normalized.observaciones,
@@ -250,16 +257,17 @@ export const clientRepository = {
              direccion = $6,
              localidad = $7,
              provincia = $8,
-             latitud = $9,
-             longitud = $10,
-             observaciones = $11,
-             tipo_cliente = $12,
-             lista_precio = $13,
-             limite_credito = $14,
-             portal_enabled = $15,
-             portal_username = $16,
-             portal_password_hash = $17
-         WHERE id = $18`,
+             codigo_postal = $9,
+             latitud = $10,
+             longitud = $11,
+             observaciones = $12,
+             tipo_cliente = $13,
+             lista_precio = $14,
+             limite_credito = $15,
+             portal_enabled = $16,
+             portal_username = $17,
+             portal_password_hash = $18
+         WHERE id = $19`,
         [
           normalized.nombre_apellido,
           normalized.razon_social,
@@ -269,6 +277,7 @@ export const clientRepository = {
           normalized.direccion,
           normalized.localidad,
           normalized.provincia,
+          normalized.codigo_postal,
           normalized.latitud,
           normalized.longitud,
           normalized.observaciones,
@@ -294,15 +303,16 @@ export const clientRepository = {
            direccion = $6,
            localidad = $7,
            provincia = $8,
-           latitud = $9,
-           longitud = $10,
-           observaciones = $11,
-           tipo_cliente = $12,
-           lista_precio = $13,
-           limite_credito = $14,
-           portal_enabled = $15,
-           portal_username = $16
-       WHERE id = $17`,
+           codigo_postal = $9,
+           latitud = $10,
+           longitud = $11,
+           observaciones = $12,
+           tipo_cliente = $13,
+           lista_precio = $14,
+           limite_credito = $15,
+           portal_enabled = $16,
+           portal_username = $17
+       WHERE id = $18`,
       [
         normalized.nombre_apellido,
         normalized.razon_social,
@@ -312,6 +322,7 @@ export const clientRepository = {
         normalized.direccion,
         normalized.localidad,
         normalized.provincia,
+        normalized.codigo_postal,
         normalized.latitud,
         normalized.longitud,
         normalized.observaciones,

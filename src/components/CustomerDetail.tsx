@@ -410,10 +410,15 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                     <span className="break-words">{cliente.razon_social}</span>
                   </span>
                 )}
-                {(cliente.direccion || cliente.localidad) && (
+                {(cliente.direccion || cliente.localidad || cliente.provincia) && (
                   <span className="flex min-w-0 items-start gap-1.5">
                     <MapPin size={13} className="mt-0.5 shrink-0" />
-                    <span className="break-words">{[cliente.direccion, cliente.localidad].filter(Boolean).join(', ')}</span>
+                    <span className="break-words">
+                      {[cliente.direccion, cliente.localidad, cliente.provincia, cliente.codigo_postal ? `CP ${cliente.codigo_postal}` : ''].filter(Boolean).join(', ')}
+                      {cliente.direccion && !(Number(cliente.latitud) && Number(cliente.longitud)) && (
+                        <span className="mt-1 block text-[10px] font-bold text-amber-700">Dirección cargada sin coordenadas</span>
+                      )}
+                    </span>
                   </span>
                 )}
                 {cliente.telefono && (

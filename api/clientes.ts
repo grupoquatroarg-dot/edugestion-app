@@ -16,6 +16,7 @@ const clientSchema = z.object({
   direccion: z.string().optional().nullable(),
   localidad: z.string().optional().nullable(),
   provincia: z.string().optional().nullable(),
+  codigo_postal: z.string().optional().nullable(),
   latitud: z.number().optional().nullable(),
   longitud: z.number().optional().nullable(),
   observaciones: z.string().optional().nullable(),

@@ -114,6 +114,7 @@ export function initDb() {
       direccion TEXT,
       localidad TEXT,
       provincia TEXT,
+      codigo_postal TEXT,
       latitud REAL,
       longitud REAL,
       observaciones TEXT,
@@ -350,6 +351,7 @@ export function initDb() {
   try { db.exec("ALTER TABLE clientes ADD COLUMN razon_social TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN cuit TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN provincia TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE clientes ADD COLUMN codigo_postal TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN lista_precio TEXT DEFAULT 'lista1'"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN limite_credito REAL DEFAULT 0"); } catch (e) {}
 
