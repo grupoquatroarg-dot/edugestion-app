@@ -21,6 +21,14 @@ import {
   CircleDollarSign,
   Filter,
   RotateCcw,
+  Search,
+  RefreshCw,
+  X,
+  UserRound,
+  Store,
+  ShieldCheck,
+  ShoppingBag,
+  ArrowLeft,
 } from 'lucide-react';
 import { unwrapResponse } from '../utils/api';
 import { generateCustomerOrderPdf } from '../utils/customerOrderPdf';
@@ -233,6 +241,17 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [downloadingSaleId, setDownloadingSaleId] = useState<number | null>(null);
   const [accountFilters, setAccountFilters] = useState({ dateFrom: '', dateTo: '', status: 'all' as 'all' | 'pending' | 'partial' | 'paid' });
+  const [portalError, setPortalError] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const [feedback, setFeedback] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{
+    type: 'submit-order' | 'cancel-order';
+    order?: PortalOrder;
+  } | null>(null);
+  const [mobileCartOpen, setMobileCartOpen] = useState(false);
 
   const filteredProducts = useMemo(() => {
     const q = searchTerm.toLowerCase().trim();
@@ -304,8 +323,13 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
     setAccountFilters({ dateFrom: '', dateTo: '', status: 'all' });
   };
 
-  const loadPortalData = async () => {
-    setLoading(true);
+  const loadPortalData = async (mode: 'initial' | 'refresh' = 'initial') => {
+    if (mode === 'initial') {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
+    setPortalError('');
 
     try {
       const [meRes, productsRes, ordersRes, movementsRes] = await Promise.all([
@@ -315,7 +339,17 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
         portalFetch('/api/clientes?endpoint=portal-movements'),
       ]);
 
-      if (!meRes.ok) throw new Error('Sesión cliente vencida');
+      if (!meRes.ok) {
+        localStorage.removeItem('customer_portal_token');
+        setToken('');
+        setCustomer(null);
+        throw new Error('La sesión del portal venció. Ingresá nuevamente.');
+      }
+
+      const responses = [productsRes, ordersRes, movementsRes];
+      if (responses.some((response) => !response.ok)) {
+        throw new Error('No se pudieron cargar todos los datos del portal.');
+      }
 
       const meBody = await meRes.json();
       const productsBody = await productsRes.json();
@@ -326,18 +360,19 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
       setProducts(unwrapResponse(productsBody));
       setOrders(unwrapResponse(ordersBody));
       setMovements(unwrapResponse(movementsBody));
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error portal cliente:', error);
-      localStorage.removeItem('customer_portal_token');
-      setToken('');
-      setCustomer(null);
+      if (localStorage.getItem('customer_portal_token')) {
+        setPortalError(error?.message || 'No se pudieron cargar los datos del portal.');
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
   useEffect(() => {
-    if (token) loadPortalData();
+    if (token) loadPortalData('initial');
   }, [token]);
 
   const handleLogin = async (event: React.FormEvent) => {
@@ -402,11 +437,17 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
     setCart((current) => current.filter((item) => item.product.id !== productId));
   };
 
-  const submitOrder = async () => {
+  const submitOrder = () => {
+    if (cart.length === 0 || submittingOrder) return;
+    setConfirmAction({ type: 'submit-order' });
+  };
+
+  const confirmSubmitOrder = async () => {
     if (cart.length === 0) return;
-    if (!window.confirm('¿Confirmar pedido para aprobación del administrador?')) return;
 
     setSubmittingOrder(true);
+    setConfirmAction(null);
+    setFeedback(null);
 
     try {
       const response = await portalFetch('/api/clientes?endpoint=portal-orders', {
@@ -422,26 +463,35 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
       unwrapResponse(body);
 
       setCart([]);
+      setMobileCartOpen(false);
       setActiveTab('pedidos');
-      await loadPortalData();
-      alert('Pedido enviado correctamente. Queda pendiente de aprobación.');
+      await loadPortalData('refresh');
+      setFeedback({
+        type: 'success',
+        message: 'Pedido enviado correctamente. Quedó pendiente de aprobación.',
+      });
     } catch (error: any) {
-      alert(error?.message || 'No se pudo enviar el pedido');
+      setFeedback({
+        type: 'error',
+        message: error?.message || 'No se pudo enviar el pedido.',
+      });
     } finally {
       setSubmittingOrder(false);
     }
   };
 
-  const cancelOrder = async (order: PortalOrder) => {
-    if (
-      !window.confirm(
-        '¿Cancelar este pedido? Solo se puede cancelar mientras está pendiente de aprobación.'
-      )
-    ) {
-      return;
-    }
+  const cancelOrder = (order: PortalOrder) => {
+    if (actionLoading !== null) return;
+    setConfirmAction({ type: 'cancel-order', order });
+  };
+
+  const confirmCancelOrder = async () => {
+    const order = confirmAction?.order;
+    if (!order) return;
 
     setActionLoading(order.id);
+    setConfirmAction(null);
+    setFeedback(null);
 
     try {
       const response = await portalFetch(
@@ -454,10 +504,16 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
       const body = await response.json();
       unwrapResponse(body);
 
-      await loadPortalData();
-      alert('Pedido cancelado correctamente');
+      await loadPortalData('refresh');
+      setFeedback({
+        type: 'success',
+        message: `El pedido #${order.numero_pedido} fue cancelado correctamente.`,
+      });
     } catch (error: any) {
-      alert(error?.message || 'No se pudo cancelar el pedido');
+      setFeedback({
+        type: 'error',
+        message: error?.message || 'No se pudo cancelar el pedido.',
+      });
     } finally {
       setActionLoading(null);
     }
@@ -472,6 +528,7 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
 
   const downloadSalePdf = async (saleId: number) => {
     setDownloadingSaleId(saleId);
+    setFeedback(null);
 
     try {
       const response = await portalFetch(
@@ -481,89 +538,268 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
       const sale = unwrapResponse(body);
       generateSaleReceipt(sale);
     } catch (error: any) {
-      alert(error?.message || 'No se pudo descargar el comprobante de venta');
+      setFeedback({
+        type: 'error',
+        message: error?.message || 'No se pudo descargar el comprobante de venta.',
+      });
     } finally {
       setDownloadingSaleId(null);
     }
   };
 
-  if (!token) {
-    return (
-      <div className="min-h-screen bg-zinc-50 flex items-center justify-center p-4">
-        <div className="w-full max-w-md bg-white rounded-3xl shadow-xl border border-zinc-200 overflow-hidden">
-          <div className="p-8">
-            <div className="w-16 h-16 bg-emerald-600 rounded-2xl flex items-center justify-center text-white mx-auto mb-6">
-              <ShoppingCart size={32} />
+  const cartUnits = cart.reduce((sum, item) => sum + item.quantity, 0);
+
+  const cartContent = (
+    <div className="space-y-4">
+      {cart.length === 0 ? (
+        <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-5 py-10 text-center">
+          <ShoppingCart className="mx-auto mb-3 text-slate-300" size={36} />
+          <p className="font-bold text-slate-600">Tu carrito está vacío</p>
+          <p className="mt-1 text-sm text-slate-400">
+            Agregá productos para preparar un pedido.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="space-y-3">
+            {cart.map((item) => (
+              <article
+                key={item.product.id}
+                className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
+              >
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="break-words text-sm font-black text-slate-900">
+                      {item.product.name}
+                    </p>
+                    <p className="mt-1 text-xs font-bold text-slate-400">
+                      {formatCurrency(item.product.sale_price)} por unidad
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeFromCart(item.product.id)}
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600 transition hover:bg-red-100"
+                    aria-label={`Quitar ${item.product.name} del carrito`}
+                    title="Quitar producto"
+                  >
+                    <Trash2 size={17} />
+                  </button>
+                </div>
+
+                <div className="mt-4 flex flex-col gap-3 min-[380px]:flex-row min-[380px]:items-center min-[380px]:justify-between">
+                  <div className="grid grid-cols-[44px_64px_44px] items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => updateCartQty(item.product.id, item.quantity - 1)}
+                      className="flex h-11 items-center justify-center rounded-xl bg-slate-100 text-slate-700 transition hover:bg-slate-200"
+                      aria-label={`Restar una unidad de ${item.product.name}`}
+                    >
+                      <Minus size={16} />
+                    </button>
+                    <input
+                      type="number"
+                      min="1"
+                      value={item.quantity}
+                      onChange={(event) =>
+                        updateCartQty(item.product.id, Number(event.target.value))
+                      }
+                      className="h-11 w-full rounded-xl border border-slate-200 bg-white text-center font-black text-slate-900 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                      aria-label={`Cantidad de ${item.product.name}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => updateCartQty(item.product.id, item.quantity + 1)}
+                      className="flex h-11 items-center justify-center rounded-xl bg-slate-100 text-slate-700 transition hover:bg-slate-200"
+                      aria-label={`Sumar una unidad de ${item.product.name}`}
+                    >
+                      <Plus size={16} />
+                    </button>
+                  </div>
+
+                  <p className="break-words text-left text-base font-black text-slate-900 min-[380px]:text-right">
+                    {formatCurrency(item.quantity * item.product.sale_price)}
+                  </p>
+                </div>
+              </article>
+            ))}
+          </div>
+
+          <div className="rounded-3xl bg-slate-950 p-5 text-white shadow-lg shadow-slate-900/10">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                  Total del pedido
+                </p>
+                <p className="mt-1 text-sm font-bold text-slate-300">
+                  {cartUnits} {cartUnits === 1 ? 'unidad' : 'unidades'}
+                </p>
+              </div>
+              <p className="break-words text-right text-xl font-black">
+                {formatCurrency(cartTotal)}
+              </p>
             </div>
 
-            <h1 className="text-2xl font-black text-zinc-900 text-center mb-2">
-              Portal de Clientes
-            </h1>
-            <p className="text-sm text-zinc-500 text-center mb-8">
-              Ingresá para ver productos, pedidos y cuenta corriente
-            </p>
-
-            {loginError && (
-              <div className="mb-5 p-4 bg-red-50 border border-red-100 rounded-xl text-red-600 text-sm flex gap-2">
-                <AlertCircle size={18} />
-                <span>{loginError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">
-                  Usuario
-                </label>
-                <input
-                  required
-                  value={loginForm.username}
-                  onChange={(event) =>
-                    setLoginForm({ ...loginForm, username: event.target.value })
-                  }
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-600/20 text-sm"
-                  placeholder="cliente123"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">
-                  Contraseña
-                </label>
-                <input
-                  required
-                  type="password"
-                  value={loginForm.password}
-                  onChange={(event) =>
-                    setLoginForm({ ...loginForm, password: event.target.value })
-                  }
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-600/20 text-sm"
-                  placeholder="••••••••"
-                />
-              </div>
-
-              <button
-                disabled={loginLoading}
-                className="w-full py-4 bg-emerald-600 text-white rounded-xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {loginLoading ? (
-                  <Loader2 size={18} className="animate-spin" />
-                ) : (
-                  <LogIn size={18} />
-                )}
-                Entrar al Portal
-              </button>
-            </form>
-
-            {onBackToAdmin && (
-              <button
-                onClick={onBackToAdmin}
-                className="w-full mt-4 py-3 text-zinc-500 hover:text-zinc-900 text-xs font-bold uppercase tracking-widest"
-              >
-                Volver a ingreso administrador
-              </button>
-            )}
+            <button
+              type="button"
+              disabled={submittingOrder}
+              onClick={submitOrder}
+              className="mt-5 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-4 py-3 text-sm font-black text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {submittingOrder ? (
+                <Loader2 size={19} className="animate-spin" />
+              ) : (
+                <CheckCircle2 size={19} />
+              )}
+              Confirmar pedido
+            </button>
           </div>
+        </>
+      )}
+    </div>
+  );
+
+  if (!token) {
+    return (
+      <div className="min-h-[100dvh] overflow-hidden bg-slate-950">
+        <div className="mx-auto grid min-h-[100dvh] max-w-7xl lg:grid-cols-[1.05fr_0.95fr]">
+          <section className="relative hidden overflow-hidden p-10 text-white lg:flex lg:flex-col lg:justify-between xl:p-14">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(99,102,241,0.32),_transparent_42%),radial-gradient(circle_at_bottom_right,_rgba(16,185,129,0.22),_transparent_40%)]" />
+            <div className="relative">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/15 backdrop-blur">
+                <Store size={28} />
+              </div>
+              <p className="mt-8 text-xs font-black uppercase tracking-[0.28em] text-indigo-200">
+                Edugestión
+              </p>
+              <h1 className="mt-4 max-w-xl text-4xl font-black leading-tight xl:text-5xl">
+                Tus pedidos y movimientos, en un solo lugar.
+              </h1>
+              <p className="mt-5 max-w-lg text-base leading-7 text-slate-300">
+                Consultá el catálogo, armá pedidos, seguí cada estado y descargá
+                comprobantes desde cualquier dispositivo.
+              </p>
+            </div>
+
+            <div className="relative grid gap-3 sm:grid-cols-3">
+              {[
+                { icon: ShoppingBag, label: 'Catálogo actualizado' },
+                { icon: Truck, label: 'Seguimiento de pedidos' },
+                { icon: ShieldCheck, label: 'Acceso seguro' },
+              ].map((item) => (
+                <div
+                  key={item.label}
+                  className="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur"
+                >
+                  <item.icon size={20} className="text-emerald-300" />
+                  <p className="mt-3 text-sm font-bold text-slate-100">{item.label}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="flex min-h-[100dvh] items-center justify-center bg-slate-50 px-4 py-8 sm:px-8">
+            <div className="w-full max-w-md">
+              <div className="mb-6 flex items-center gap-3 lg:hidden">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/20">
+                  <Store size={24} />
+                </div>
+                <div>
+                  <p className="font-black text-slate-950">Edugestión</p>
+                  <p className="text-xs font-bold text-slate-500">Portal de clientes</p>
+                </div>
+              </div>
+
+              <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-2xl shadow-slate-900/10 sm:p-8">
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-700">
+                  <UserRound size={27} />
+                </div>
+
+                <h2 className="mt-6 text-2xl font-black text-slate-950">
+                  Ingresá a tu cuenta
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  Usá el usuario y la contraseña proporcionados por la empresa.
+                </p>
+
+                {loginError && (
+                  <div
+                    className="mt-5 flex gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700"
+                    role="alert"
+                  >
+                    <AlertCircle className="mt-0.5 shrink-0" size={18} />
+                    <span className="break-words">{loginError}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleLogin} className="mt-6 space-y-5">
+                  <div>
+                    <label
+                      htmlFor="portal-username"
+                      className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-slate-500"
+                    >
+                      Usuario
+                    </label>
+                    <input
+                      id="portal-username"
+                      required
+                      autoComplete="username"
+                      value={loginForm.username}
+                      onChange={(event) =>
+                        setLoginForm({ ...loginForm, username: event.target.value })
+                      }
+                      className="min-h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
+                      placeholder="Ingresá tu usuario"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="portal-password"
+                      className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-slate-500"
+                    >
+                      Contraseña
+                    </label>
+                    <input
+                      id="portal-password"
+                      required
+                      type="password"
+                      autoComplete="current-password"
+                      value={loginForm.password}
+                      onChange={(event) =>
+                        setLoginForm({ ...loginForm, password: event.target.value })
+                      }
+                      className="min-h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
+                      placeholder="Ingresá tu contraseña"
+                    />
+                  </div>
+
+                  <button
+                    disabled={loginLoading}
+                    className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-black text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {loginLoading ? (
+                      <Loader2 size={19} className="animate-spin" />
+                    ) : (
+                      <LogIn size={19} />
+                    )}
+                    {loginLoading ? 'Ingresando…' : 'Entrar al portal'}
+                  </button>
+                </form>
+
+                {onBackToAdmin && (
+                  <button
+                    type="button"
+                    onClick={onBackToAdmin}
+                    className="mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl text-sm font-bold text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
+                  >
+                    <ArrowLeft size={17} />
+                    Volver al acceso administrativo
+                  </button>
+                )}
+              </div>
+            </div>
+          </section>
         </div>
       </div>
     );
@@ -571,502 +807,623 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
 
   if (loading || !customer) {
     return (
-      <div className="min-h-screen bg-zinc-50 flex items-center justify-center">
-        <Loader2 className="animate-spin text-emerald-600" size={42} />
+      <div className="min-h-[100dvh] bg-slate-100">
+        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+          <div className="animate-pulse space-y-5">
+            <div className="h-24 rounded-3xl bg-white" />
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+              {[0, 1, 2, 3, 4].map((item) => (
+                <div key={item} className="h-24 rounded-2xl bg-white" />
+              ))}
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {[0, 1, 2, 3, 4, 5].map((item) => (
+                <div key={item} className="h-48 rounded-3xl bg-white" />
+              ))}
+            </div>
+          </div>
+          <div className="fixed inset-x-0 bottom-8 flex justify-center px-4">
+            <div className="flex items-center gap-3 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white shadow-xl">
+              <Loader2 size={18} className="animate-spin" />
+              Cargando portal…
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
 
+  const tabs = [
+    { id: 'catalogo' as const, label: 'Productos', icon: Package },
+    { id: 'pedidos' as const, label: 'Pedidos', icon: History },
+    { id: 'cuenta' as const, label: 'Cuenta', icon: Wallet },
+  ];
+
   return (
-    <div className="min-h-screen bg-zinc-50 flex flex-col">
-      <header className="bg-white border-b border-zinc-200 sticky top-0 z-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-black text-zinc-900">
-              Portal de Clientes
-            </h1>
-            <p className="text-xs sm:text-sm text-zinc-500 font-bold">
-              {customer.nombre_apellido}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <div className="px-3 py-2 rounded-xl bg-zinc-50 border border-zinc-100 text-xs font-black text-zinc-700">
-              Saldo: {formatCurrency(customer.saldo_cta_cte || 0)}
+    <div className="min-h-[100dvh] bg-slate-100 text-slate-900">
+      <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/95 backdrop-blur">
+        <div className="mx-auto max-w-7xl px-4 py-3 sm:px-6 lg:px-8">
+          <div className="flex min-w-0 items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/20">
+                <Store size={22} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-600">
+                  Portal de clientes
+                </p>
+                <h1 className="truncate text-base font-black text-slate-950 sm:text-lg">
+                  {customer.razon_social || customer.nombre_apellido}
+                </h1>
+                {customer.razon_social && (
+                  <p className="truncate text-xs font-bold text-slate-500">
+                    {customer.nombre_apellido}
+                  </p>
+                )}
+              </div>
             </div>
-            <button
-              onClick={logout}
-              className="p-3 text-red-500 hover:bg-red-50 rounded-xl"
-              title="Cerrar sesión"
-            >
-              <LogOut size={18} />
-            </button>
-          </div>
-        </div>
 
-        <div className="max-w-7xl mx-auto px-2 sm:px-6 flex overflow-x-auto no-scrollbar">
-          {[
-            { id: 'catalogo', label: 'Productos', icon: Package },
-            { id: 'pedidos', label: 'Pedidos', icon: History },
-            { id: 'cuenta', label: 'Cuenta corriente', icon: Wallet },
-          ].map((tab: any) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-4 text-sm font-black border-b-2 flex items-center gap-2 whitespace-nowrap ${
-                activeTab === tab.id
-                  ? 'border-emerald-600 text-emerald-700'
-                  : 'border-transparent text-zinc-400'
-              }`}
-            >
-              <tab.icon size={18} />
-              {tab.label}
-            </button>
-          ))}
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => loadPortalData('refresh')}
+                disabled={refreshing}
+                className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 disabled:opacity-50 sm:w-auto sm:px-3"
+                title="Actualizar datos"
+                aria-label="Actualizar datos del portal"
+              >
+                <RefreshCw size={17} className={refreshing ? 'animate-spin' : ''} />
+                <span className="ml-2 hidden text-xs font-black sm:inline">Actualizar</span>
+              </button>
+              <button
+                type="button"
+                onClick={logout}
+                className="flex h-11 w-11 items-center justify-center rounded-xl bg-red-50 text-red-600 transition hover:bg-red-100 sm:w-auto sm:px-3"
+                title="Cerrar sesión"
+                aria-label="Cerrar sesión"
+              >
+                <LogOut size={17} />
+                <span className="ml-2 hidden text-xs font-black sm:inline">Salir</span>
+              </button>
+            </div>
+          </div>
+
+          <nav className="mt-3 grid grid-cols-3 gap-2" aria-label="Secciones del portal">
+            {tabs.map((tab) => (
+              <button
+                type="button"
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex min-h-12 min-w-0 items-center justify-center gap-2 rounded-2xl px-2 text-xs font-black transition sm:text-sm ${
+                  activeTab === tab.id
+                    ? 'bg-slate-950 text-white shadow-lg shadow-slate-900/10'
+                    : 'bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-900'
+                }`}
+                aria-current={activeTab === tab.id ? 'page' : undefined}
+              >
+                <tab.icon size={17} className="shrink-0" />
+                <span className="truncate">{tab.label}</span>
+              </button>
+            ))}
+          </nav>
         </div>
       </header>
 
-      <main className="max-w-7xl w-full mx-auto p-4 sm:p-6 flex-1 space-y-6">
-        <section className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-          <div className="bg-white border border-zinc-200 rounded-2xl p-4">
-            <p className="text-[10px] font-black uppercase text-zinc-400">
-              Pendientes
-            </p>
-            <p className="text-2xl font-black text-amber-600">
-              {portalSummary.pendingApproval}
-            </p>
+      <main className={`mx-auto w-full max-w-7xl px-4 py-5 sm:px-6 sm:py-7 lg:px-8 ${
+        activeTab === 'catalogo' && cart.length > 0 ? 'pb-28 xl:pb-8' : 'pb-8'
+      }`}>
+        {portalError && (
+          <div
+            className="mb-5 flex flex-col gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700 sm:flex-row sm:items-center sm:justify-between"
+            role="alert"
+          >
+            <div className="flex min-w-0 gap-3">
+              <AlertCircle size={19} className="mt-0.5 shrink-0" />
+              <p className="break-words text-sm font-bold">{portalError}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => loadPortalData('refresh')}
+              className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-red-600 px-4 text-sm font-black text-white"
+            >
+              <RotateCcw size={17} />
+              Reintentar
+            </button>
           </div>
-          <div className="bg-white border border-zinc-200 rounded-2xl p-4">
-            <p className="text-[10px] font-black uppercase text-zinc-400">
-              Esperando stock
-            </p>
-            <p className="text-2xl font-black text-orange-600">
-              {portalSummary.waitingStock}
-            </p>
+        )}
+
+        {feedback && (
+          <div
+            className={`mb-5 flex min-w-0 items-start justify-between gap-3 rounded-2xl border p-4 ${
+              feedback.type === 'success'
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                : 'border-red-200 bg-red-50 text-red-700'
+            }`}
+            role="status"
+          >
+            <div className="flex min-w-0 gap-3">
+              {feedback.type === 'success' ? (
+                <CheckCircle2 size={19} className="mt-0.5 shrink-0" />
+              ) : (
+                <AlertCircle size={19} className="mt-0.5 shrink-0" />
+              )}
+              <p className="break-words text-sm font-bold">{feedback.message}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setFeedback(null)}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/70"
+              aria-label="Cerrar mensaje"
+            >
+              <X size={16} />
+            </button>
           </div>
-          <div className="bg-white border border-zinc-200 rounded-2xl p-4">
-            <p className="text-[10px] font-black uppercase text-zinc-400">
-              Para entregar
-            </p>
-            <p className="text-2xl font-black text-blue-600">
-              {portalSummary.approved}
-            </p>
-          </div>
-          <div className="bg-white border border-zinc-200 rounded-2xl p-4">
-            <p className="text-[10px] font-black uppercase text-zinc-400">
-              Entregados
-            </p>
-            <p className="text-2xl font-black text-emerald-600">
-              {portalSummary.delivered}
-            </p>
-          </div>
-          <div className="col-span-2 lg:col-span-1 bg-zinc-900 text-white rounded-2xl p-4">
-            <p className="text-[10px] font-black uppercase text-zinc-400">
+        )}
+
+        <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+          {[
+            {
+              label: 'Por aprobar',
+              value: portalSummary.pendingApproval,
+              className: 'border-amber-200 bg-amber-50 text-amber-700',
+            },
+            {
+              label: 'Esperando stock',
+              value: portalSummary.waitingStock,
+              className: 'border-orange-200 bg-orange-50 text-orange-700',
+            },
+            {
+              label: 'Listos',
+              value: portalSummary.approved,
+              className: 'border-blue-200 bg-blue-50 text-blue-700',
+            },
+            {
+              label: 'Entregados',
+              value: portalSummary.delivered,
+              className: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+            },
+          ].map((item) => (
+            <article
+              key={item.label}
+              className={`min-w-0 rounded-2xl border p-4 ${item.className}`}
+            >
+              <p className="break-words text-[10px] font-black uppercase tracking-[0.12em] opacity-75">
+                {item.label}
+              </p>
+              <p className="mt-2 text-2xl font-black">{item.value}</p>
+            </article>
+          ))}
+          <article className="col-span-2 min-w-0 rounded-2xl bg-slate-950 p-4 text-white sm:col-span-1">
+            <p className="text-[10px] font-black uppercase tracking-[0.12em] text-slate-400">
               Saldo pendiente
             </p>
-            <p className="text-xl font-black">
+            <p className="mt-2 break-words text-xl font-black">
               {formatCurrency(customer.saldo_cta_cte || 0)}
             </p>
-          </div>
+          </article>
         </section>
 
         {activeTab === 'catalogo' && (
-          <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-6">
-            <div className="space-y-4">
-              <input
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-                placeholder="Buscar producto..."
-                className="w-full px-4 py-3 bg-white border border-zinc-200 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-600/20"
-              />
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredProducts.map((product) => (
-                  <div
-                    key={product.id}
-                    className="bg-white rounded-3xl border border-zinc-200 p-5 shadow-sm flex flex-col gap-4"
-                  >
-                    <div className="flex-1">
-                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">
-                        {product.code || 'Producto'}
-                      </p>
-                      <h3 className="font-black text-zinc-900 leading-tight mt-1">
-                        {product.name}
-                      </h3>
-                      {product.description && (
-                        <p className="text-xs text-zinc-500 mt-2 line-clamp-2">
-                          {product.description}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-lg font-black text-emerald-700 font-mono">
-                        {formatCurrency(product.sale_price)}
-                      </p>
-                      <button
-                        onClick={() => addToCart(product)}
-                        className="px-4 py-2 bg-zinc-900 text-white rounded-xl text-xs font-black uppercase flex items-center gap-2"
-                      >
-                        <Plus size={16} /> Agregar
-                      </button>
-                    </div>
-                  </div>
-                ))}
+          <section className="mt-6">
+            <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-600">
+                  Catálogo
+                </p>
+                <h2 className="mt-1 text-2xl font-black text-slate-950">
+                  Elegí tus productos
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {filteredProducts.length} {filteredProducts.length === 1 ? 'producto visible' : 'productos visibles'}
+                </p>
+              </div>
+              <div className="relative w-full sm:max-w-md">
+                <Search
+                  size={18}
+                  className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
+                />
+                <input
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  placeholder="Buscar por nombre, código o familia"
+                  className="min-h-12 w-full rounded-2xl border border-slate-200 bg-white pl-11 pr-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                />
               </div>
             </div>
 
-            <aside className="bg-white rounded-3xl border border-zinc-200 shadow-xl p-5 h-fit xl:sticky xl:top-32">
-              <h2 className="text-lg font-black text-zinc-900 flex items-center gap-2 mb-4">
-                <ShoppingCart size={20} /> Carrito
-              </h2>
+            <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_390px] xl:items-start xl:gap-6">
+              <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+                {filteredProducts.map((product) => {
+                  const cartItem = cart.find((item) => item.product.id === product.id);
 
-              {cart.length === 0 ? (
-                <p className="text-sm text-zinc-400 py-8 text-center">
-                  Agregá productos para armar tu pedido.
-                </p>
-              ) : (
-                <div className="space-y-4">
-                  {cart.map((item) => (
-                    <div
-                      key={item.product.id}
-                      className="border border-zinc-100 rounded-2xl p-3"
+                  return (
+                    <article
+                      key={product.id}
+                      className="flex min-w-0 flex-col rounded-3xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg"
                     >
-                      <div className="flex justify-between gap-3 mb-3">
-                        <p className="text-sm font-black text-zinc-900">
-                          {item.product.name}
+                      <div className="flex min-w-0 items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="break-all text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">
+                            {product.code || 'Sin código'}
+                          </p>
+                          <h3 className="mt-2 break-words text-base font-black leading-snug text-slate-950">
+                            {product.name}
+                          </h3>
+                        </div>
+                        {cartItem && (
+                          <span className="shrink-0 rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-black text-indigo-700">
+                            {cartItem.quantity} en carrito
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {product.family_name && (
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-black text-slate-600">
+                            {product.family_name}
+                          </span>
+                        )}
+                        {product.category_name && (
+                          <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-black text-indigo-600">
+                            {product.category_name}
+                          </span>
+                        )}
+                      </div>
+
+                      {product.description && (
+                        <p className="mt-3 line-clamp-3 break-words text-sm leading-6 text-slate-500">
+                          {product.description}
+                        </p>
+                      )}
+
+                      <div className="mt-auto pt-5">
+                        <p className="break-words text-xl font-black text-emerald-700">
+                          {formatCurrency(product.sale_price)}
                         </p>
                         <button
-                          onClick={() => removeFromCart(item.product.id)}
-                          className="text-red-500"
+                          type="button"
+                          onClick={() => addToCart(product)}
+                          className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 text-sm font-black text-white transition hover:bg-indigo-700"
                         >
-                          <Trash2 size={16} />
+                          <Plus size={18} />
+                          Agregar al carrito
                         </button>
                       </div>
+                    </article>
+                  );
+                })}
 
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() =>
-                              updateCartQty(item.product.id, item.quantity - 1)
-                            }
-                            className="p-2 bg-zinc-100 rounded-lg"
-                          >
-                            <Minus size={14} />
-                          </button>
-                          <input
-                            type="number"
-                            min="1"
-                            value={item.quantity}
-                            onChange={(event) =>
-                              updateCartQty(
-                                item.product.id,
-                                Number(event.target.value)
-                              )
-                            }
-                            className="w-16 text-center border border-zinc-200 rounded-lg py-2 font-bold"
-                          />
-                          <button
-                            onClick={() =>
-                              updateCartQty(item.product.id, item.quantity + 1)
-                            }
-                            className="p-2 bg-zinc-100 rounded-lg"
-                          >
-                            <Plus size={14} />
-                          </button>
-                        </div>
-                        <p className="text-sm font-black font-mono">
-                          {formatCurrency(
-                            item.quantity * item.product.sale_price
-                          )}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-
-                  <div className="border-t border-zinc-100 pt-4 flex justify-between items-center">
-                    <span className="text-xs font-black text-zinc-400 uppercase">
-                      Total pedido
-                    </span>
-                    <span className="text-xl font-black text-zinc-900 font-mono">
-                      {formatCurrency(cartTotal)}
-                    </span>
+                {filteredProducts.length === 0 && (
+                  <div className="sm:col-span-2 2xl:col-span-3 rounded-3xl border border-dashed border-slate-300 bg-white px-5 py-14 text-center">
+                    <Package className="mx-auto text-slate-300" size={42} />
+                    <p className="mt-4 font-black text-slate-700">No encontramos productos</p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Probá con otro nombre, código, familia o categoría.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setSearchTerm('')}
+                      className="mt-5 min-h-11 rounded-xl bg-slate-100 px-4 text-sm font-black text-slate-700"
+                    >
+                      Limpiar búsqueda
+                    </button>
                   </div>
+                )}
+              </div>
 
-                  <button
-                    disabled={submittingOrder}
-                    onClick={submitOrder}
-                    className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 disabled:opacity-50"
-                  >
-                    {submittingOrder ? (
-                      <Loader2 size={18} className="animate-spin" />
-                    ) : (
-                      <CheckCircle2 size={18} />
-                    )}
-                    Confirmar Pedido
-                  </button>
+              <aside className="sticky top-40 hidden rounded-3xl border border-slate-200 bg-white p-5 shadow-xl shadow-slate-900/5 xl:block">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="flex items-center gap-2 text-lg font-black text-slate-950">
+                      <ShoppingCart size={20} />
+                      Carrito
+                    </h3>
+                    <p className="mt-1 text-xs font-bold text-slate-400">
+                      {cartUnits} {cartUnits === 1 ? 'unidad' : 'unidades'}
+                    </p>
+                  </div>
                 </div>
-              )}
-            </aside>
-          </div>
+                {cartContent}
+              </aside>
+            </div>
+          </section>
         )}
 
         {activeTab === 'pedidos' && (
-          <div className="space-y-4">
-            {orders.map((order) => {
-              const timeline = buildOrderTimeline(order);
-              const pending = Number(order.sale_monto_pendiente || 0);
-              const paid = Number(order.sale_monto_pagado || 0);
+          <section className="mt-6">
+            <div className="mb-5">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-600">
+                Seguimiento
+              </p>
+              <h2 className="mt-1 text-2xl font-black text-slate-950">Mis pedidos</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Revisá productos, estados, descuentos y comprobantes.
+              </p>
+            </div>
 
-              return (
-                <div
-                  key={order.id}
-                  className="bg-white rounded-3xl border border-zinc-200 p-5 shadow-sm"
-                >
-                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-4">
-                    <div>
-                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">
-                        Pedido #{order.numero_pedido}
-                      </p>
-                      <h3 className="font-black text-zinc-900">
-                        {new Date(order.fecha).toLocaleDateString('es-AR')}
-                      </h3>
-                    </div>
-                    <span
-                      className={`px-3 py-1 rounded-full border text-[10px] font-black uppercase w-fit ${getStatusClass(
-                        order
-                      )}`}
-                    >
-                      {getStatusLabel(order)}
-                    </span>
-                  </div>
+            <div className="space-y-4">
+              {orders.map((order) => {
+                const timeline = buildOrderTimeline(order);
+                const pending = Number(order.sale_monto_pendiente || 0);
+                const paid = Number(order.sale_monto_pagado || 0);
 
-                  <div className="space-y-2 mb-4">
-                    {order.items.map((item) => (
-                      <div
-                        key={item.id}
-                        className="flex justify-between gap-3 text-sm border-b border-zinc-50 pb-2"
+                return (
+                  <article
+                    key={order.id}
+                    className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5"
+                  >
+                    <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">
+                          Pedido #{order.numero_pedido}
+                        </p>
+                        <h3 className="mt-1 text-lg font-black text-slate-950">
+                          {formatDate(order.fecha)}
+                        </h3>
+                      </div>
+                      <span
+                        className={`w-fit max-w-full rounded-full border px-3 py-1.5 text-[10px] font-black uppercase ${getStatusClass(
+                          order
+                        )}`}
                       >
-                        <span className="font-bold text-zinc-700">
-                          {item.product_name} x{item.cantidad}
-                        </span>
-                        <span className="font-mono font-bold">
-                          {formatCurrency(item.importe)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                        {getStatusLabel(order)}
+                      </span>
+                    </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-                    <div className="bg-zinc-50 rounded-2xl p-3">
-                      <p className="text-[10px] font-black text-zinc-400 uppercase">
-                        Subtotal
-                      </p>
-                      <p className="font-black font-mono">
-                        {formatCurrency(order.subtotal)}
-                      </p>
-                    </div>
-                    <div className="bg-zinc-50 rounded-2xl p-3">
-                      <p className="text-[10px] font-black text-zinc-400 uppercase">
-                        Descuento
-                      </p>
-                      <p className="font-black font-mono text-red-600">
-                        -{formatCurrency(order.descuento_monto)}
-                      </p>
-                      {order.descuento_tipo !== 'none' &&
-                        Number(order.descuento_valor || 0) > 0 && (
-                          <p className="text-[10px] text-zinc-400 font-bold">
-                            {order.descuento_tipo === 'percentage'
-                              ? `${order.descuento_valor}%`
-                              : formatCurrency(order.descuento_valor)}
-                          </p>
-                        )}
-                    </div>
-                    <div className="bg-zinc-900 text-white rounded-2xl p-3">
-                      <p className="text-[10px] font-black text-zinc-400 uppercase">
-                        Total
-                      </p>
-                      <p className="font-black font-mono">
-                        {formatCurrency(order.total_final)}
-                      </p>
-                    </div>
-                  </div>
-
-                  {order.estado === 'entregado' && (
-                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-3">
-                        <p className="text-[10px] uppercase font-black text-emerald-600">
-                          Pagado
-                        </p>
-                        <p className="font-black text-emerald-700">
-                          {formatCurrency(paid)}
-                        </p>
-                      </div>
-                      <div className="bg-red-50 border border-red-100 rounded-2xl p-3">
-                        <p className="text-[10px] uppercase font-black text-red-500">
-                          Pendiente
-                        </p>
-                        <p className="font-black text-red-600">
-                          {formatCurrency(pending)}
-                        </p>
-                      </div>
-                      <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-3">
-                        <p className="text-[10px] uppercase font-black text-zinc-400">
-                          Venta
-                        </p>
-                        <p className="font-black text-zinc-700">
-                          #{order.numero_venta || order.sale_id || '-'}
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="mt-5">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400 mb-3">
-                      Seguimiento
-                    </p>
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
-                      {timeline.map((step, index) => (
+                    <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                      {(order.items || []).map((item: any, index: number) => (
                         <div
-                          key={`${order.id}-${index}`}
-                          className={`rounded-2xl border p-3 ${
-                            step.danger
-                              ? 'bg-red-50 border-red-100 text-red-700'
-                              : step.done
-                              ? 'bg-emerald-50 border-emerald-100 text-emerald-700'
-                              : 'bg-zinc-50 border-zinc-100 text-zinc-400'
-                          }`}
+                          key={`${order.id}-${item.id || item.product_id || index}`}
+                          className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-3"
                         >
-                          <div className="flex items-center gap-2">
-                            {step.done ? (
-                              <CheckCircle2 size={15} />
-                            ) : (
-                              <Clock size={15} />
-                            )}
-                            <p className="text-[10px] font-black uppercase">
-                              {step.label}
-                            </p>
+                          <p className="break-words text-sm font-black text-slate-900">
+                            {item.product_name || item.nombre_producto || item.name || 'Producto'}
+                          </p>
+                          <div className="mt-2 flex items-center justify-between gap-3 text-xs font-bold text-slate-500">
+                            <span>{Number(item.cantidad || item.quantity || 0)} unidades</span>
+                            <span className="break-words text-right text-slate-900">
+                              {formatCurrency(item.importe || item.subtotal || 0)}
+                            </span>
                           </div>
-                          {step.date && (
-                            <p className="text-[10px] font-bold mt-1">
-                              {formatDate(step.date)}
-                            </p>
-                          )}
                         </div>
                       ))}
                     </div>
-                  </div>
 
-                  {order.admin_notes && (
-                    <div className="mt-3 bg-blue-50 border border-blue-100 text-blue-700 rounded-2xl p-3 text-xs font-bold">
-                      Observación: {order.admin_notes}
+                    <div className="mt-4 grid gap-3 min-[420px]:grid-cols-2 lg:grid-cols-4">
+                      <div className="rounded-2xl bg-slate-50 p-3">
+                        <p className="text-[10px] font-black uppercase text-slate-400">Subtotal</p>
+                        <p className="mt-1 break-words font-black text-slate-900">
+                          {formatCurrency(order.subtotal)}
+                        </p>
+                      </div>
+                      <div className="rounded-2xl bg-amber-50 p-3">
+                        <p className="text-[10px] font-black uppercase text-amber-600">Descuento</p>
+                        <p className="mt-1 break-words font-black text-amber-700">
+                          -{formatCurrency(order.descuento_monto)}
+                        </p>
+                      </div>
+                      <div className="rounded-2xl bg-slate-950 p-3 text-white">
+                        <p className="text-[10px] font-black uppercase text-slate-400">Total</p>
+                        <p className="mt-1 break-words font-black">{formatCurrency(order.total_final)}</p>
+                      </div>
+                      {order.estado === 'entregado' ? (
+                        <div className={`rounded-2xl p-3 ${pending > 0 ? 'bg-red-50' : 'bg-emerald-50'}`}>
+                          <p className={`text-[10px] font-black uppercase ${pending > 0 ? 'text-red-500' : 'text-emerald-600'}`}>
+                            {pending > 0 ? 'Saldo pendiente' : 'Estado de pago'}
+                          </p>
+                          <p className={`mt-1 break-words font-black ${pending > 0 ? 'text-red-700' : 'text-emerald-700'}`}>
+                            {pending > 0 ? formatCurrency(pending) : 'Pagado'}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="rounded-2xl bg-indigo-50 p-3">
+                          <p className="text-[10px] font-black uppercase text-indigo-500">Productos</p>
+                          <p className="mt-1 font-black text-indigo-700">{order.items?.length || 0}</p>
+                        </div>
+                      )}
                     </div>
-                  )}
 
-                  {order.rejection_reason && (
-                    <div className="mt-3 bg-red-50 border border-red-100 text-red-700 rounded-2xl p-3 text-xs font-bold">
-                      Motivo de rechazo: {order.rejection_reason}
-                    </div>
-                  )}
-
-                  {order.cancel_reason && (
-                    <div className="mt-3 bg-zinc-50 border border-zinc-100 text-zinc-600 rounded-2xl p-3 text-xs font-bold">
-                      Pedido cancelado: {order.cancel_reason}
-                    </div>
-                  )}
-
-                  <div className="mt-4 flex flex-col sm:flex-row gap-2">
-                    <button
-                      onClick={() => downloadOrderPdf(order)}
-                      className="px-4 py-3 bg-zinc-100 text-zinc-700 rounded-xl font-black uppercase text-xs flex items-center justify-center gap-2"
-                    >
-                      <Download size={16} /> PDF pedido
-                    </button>
-
-                    {order.sale_id && (
-                      <button
-                        disabled={downloadingSaleId === order.sale_id}
-                        onClick={() => downloadSalePdf(Number(order.sale_id))}
-                        className="px-4 py-3 bg-emerald-50 text-emerald-700 rounded-xl font-black uppercase text-xs flex items-center justify-center gap-2 disabled:opacity-50"
-                      >
-                        {downloadingSaleId === order.sale_id ? (
-                          <Loader2 size={16} className="animate-spin" />
-                        ) : (
-                          <ReceiptText size={16} />
-                        )}
-                        PDF venta
-                      </button>
+                    {order.estado === 'entregado' && paid > 0 && (
+                      <p className="mt-3 text-xs font-bold text-emerald-700">
+                        Total cobrado: {formatCurrency(paid)}
+                      </p>
                     )}
 
-                    {order.estado === 'pendiente_aprobacion' && (
-                      <button
-                        disabled={actionLoading === order.id}
-                        onClick={() => cancelOrder(order)}
-                        className="px-4 py-3 bg-red-50 text-red-600 border border-red-100 rounded-xl font-black uppercase text-xs flex items-center justify-center gap-2 disabled:opacity-50"
-                      >
-                        <XCircle size={16} /> Cancelar pedido
-                      </button>
+                    <div className="mt-5">
+                      <p className="mb-3 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">
+                        Seguimiento
+                      </p>
+                      <div className="grid gap-2 min-[420px]:grid-cols-2 lg:grid-cols-4">
+                        {timeline.map((step, index) => (
+                          <div
+                            key={`${order.id}-${index}`}
+                            className={`rounded-2xl border p-3 ${
+                              step.danger
+                                ? 'border-red-200 bg-red-50 text-red-700'
+                                : step.done
+                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                : 'border-slate-200 bg-slate-50 text-slate-400'
+                            }`}
+                          >
+                            <div className="flex min-w-0 items-start gap-2">
+                              {step.done ? (
+                                <CheckCircle2 size={16} className="mt-0.5 shrink-0" />
+                              ) : (
+                                <Clock size={16} className="mt-0.5 shrink-0" />
+                              )}
+                              <div className="min-w-0">
+                                <p className="break-words text-[10px] font-black uppercase">
+                                  {step.label}
+                                </p>
+                                {step.date && (
+                                  <p className="mt-1 text-[10px] font-bold">
+                                    {formatDate(step.date)}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {order.admin_notes && (
+                      <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-3 text-sm font-bold text-blue-700">
+                        Observación: {order.admin_notes}
+                      </div>
                     )}
-                  </div>
+                    {order.rejection_reason && (
+                      <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">
+                        Motivo de rechazo: {order.rejection_reason}
+                      </div>
+                    )}
+                    {order.cancel_reason && (
+                      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm font-bold text-slate-600">
+                        Pedido cancelado: {order.cancel_reason}
+                      </div>
+                    )}
+
+                    <div className="mt-5 grid gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => downloadOrderPdf(order)}
+                        className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-100 px-4 text-sm font-black text-slate-700 transition hover:bg-slate-200"
+                      >
+                        <Download size={17} />
+                        PDF del pedido
+                      </button>
+
+                      {order.sale_id && (
+                        <button
+                          type="button"
+                          disabled={downloadingSaleId === order.sale_id}
+                          onClick={() => downloadSalePdf(Number(order.sale_id))}
+                          className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-50 px-4 text-sm font-black text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50"
+                        >
+                          {downloadingSaleId === order.sale_id ? (
+                            <Loader2 size={17} className="animate-spin" />
+                          ) : (
+                            <ReceiptText size={17} />
+                          )}
+                          PDF de la venta
+                        </button>
+                      )}
+
+                      {order.estado === 'pendiente_aprobacion' && (
+                        <button
+                          type="button"
+                          disabled={actionLoading === order.id}
+                          onClick={() => cancelOrder(order)}
+                          className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 text-sm font-black text-red-700 transition hover:bg-red-100 disabled:opacity-50"
+                        >
+                          {actionLoading === order.id ? (
+                            <Loader2 size={17} className="animate-spin" />
+                          ) : (
+                            <XCircle size={17} />
+                          )}
+                          Cancelar pedido
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+
+              {orders.length === 0 && (
+                <div className="rounded-3xl border border-dashed border-slate-300 bg-white px-5 py-14 text-center">
+                  <History className="mx-auto text-slate-300" size={44} />
+                  <p className="mt-4 font-black text-slate-700">Todavía no realizaste pedidos</p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Elegí productos del catálogo y armá tu primer pedido.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('catalogo')}
+                    className="mt-5 min-h-11 rounded-xl bg-indigo-600 px-5 text-sm font-black text-white"
+                  >
+                    Ir al catálogo
+                  </button>
                 </div>
-              );
-            })}
-
-            {orders.length === 0 && (
-              <div className="bg-white rounded-3xl border border-zinc-200 p-12 text-center text-zinc-400">
-                <Clock size={44} className="mx-auto mb-3 opacity-20" />
-                <p className="font-bold">Todavía no realizaste pedidos.</p>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          </section>
         )}
 
         {activeTab === 'cuenta' && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-3xl border border-zinc-200 p-5 shadow-sm">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+          <section className="mt-6 space-y-5">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-600">
+                Cuenta corriente
+              </p>
+              <h2 className="mt-1 text-2xl font-black text-slate-950">
+                Ventas y pagos
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Filtrá operaciones y descargá tus comprobantes.
+              </p>
+            </div>
+
+            <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <h2 className="text-lg font-black flex items-center gap-2">
-                    <Filter size={20} /> Filtrar cuenta corriente
-                  </h2>
-                  <p className="text-xs text-zinc-400 mt-1">
-                    Buscá operaciones por período y por estado de pago.
+                  <h3 className="flex items-center gap-2 text-lg font-black text-slate-950">
+                    <Filter size={20} />
+                    Filtros
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Seleccioná período y estado de pago.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={resetAccountFilters}
-                  className="self-start sm:self-auto px-3 py-2 rounded-xl bg-zinc-100 text-zinc-600 text-xs font-black flex items-center gap-2"
+                  className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-100 px-4 text-sm font-black text-slate-700"
                 >
-                  <RotateCcw size={14} /> Limpiar
+                  <RotateCcw size={17} />
+                  Limpiar filtros
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div>
-                  <label className="block text-[10px] font-black uppercase text-zinc-400 mb-1">Desde</label>
+                  <label className="mb-2 block text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
+                    Desde
+                  </label>
                   <input
                     type="date"
                     value={accountFilters.dateFrom}
-                    onChange={(event) => setAccountFilters({ ...accountFilters, dateFrom: event.target.value })}
-                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-zinc-900"
+                    onChange={(event) =>
+                      setAccountFilters({ ...accountFilters, dateFrom: event.target.value })
+                    }
+                    className="min-h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-black uppercase text-zinc-400 mb-1">Hasta</label>
+                  <label className="mb-2 block text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
+                    Hasta
+                  </label>
                   <input
                     type="date"
                     value={accountFilters.dateTo}
-                    onChange={(event) => setAccountFilters({ ...accountFilters, dateTo: event.target.value })}
-                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-zinc-900"
+                    onChange={(event) =>
+                      setAccountFilters({ ...accountFilters, dateTo: event.target.value })
+                    }
+                    className="min-h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
                   />
                 </div>
-                <div>
-                  <label className="block text-[10px] font-black uppercase text-zinc-400 mb-1">Estado</label>
+                <div className="sm:col-span-2 lg:col-span-1">
+                  <label className="mb-2 block text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
+                    Estado
+                  </label>
                   <select
                     value={accountFilters.status}
-                    onChange={(event) => setAccountFilters({ ...accountFilters, status: event.target.value as 'all' | 'pending' | 'partial' | 'paid' })}
-                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm font-black outline-none focus:ring-2 focus:ring-zinc-900"
+                    onChange={(event) =>
+                      setAccountFilters({
+                        ...accountFilters,
+                        status: event.target.value as 'all' | 'pending' | 'partial' | 'paid',
+                      })
+                    }
+                    className="min-h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
                   >
                     <option value="all">Todos los movimientos</option>
                     <option value="pending">Pendientes de pago</option>
@@ -1075,158 +1432,354 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                   </select>
                 </div>
               </div>
-
-              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <div className="rounded-2xl bg-zinc-50 p-3">
-                  <p className="text-[9px] font-black uppercase text-zinc-400">Ventas visibles</p>
-                  <p className="text-lg font-black text-zinc-900">{filteredAccountSales.length}</p>
-                </div>
-                <div className="rounded-2xl bg-red-50 p-3">
-                  <p className="text-[9px] font-black uppercase text-red-400">Pendiente visible</p>
-                  <p className="text-lg font-black font-mono text-red-600">
-                    {formatCurrency(filteredAccountSales.reduce((sum: number, sale: any) => sum + Number(sale.monto_pendiente || 0), 0))}
-                  </p>
-                </div>
-                <div className="rounded-2xl bg-emerald-50 p-3">
-                  <p className="text-[9px] font-black uppercase text-emerald-500">Pagado visible</p>
-                  <p className="text-lg font-black font-mono text-emerald-700">
-                    {formatCurrency(filteredAccountSales.reduce((sum: number, sale: any) => sum + Number(sale.monto_pagado || 0), 0))}
-                  </p>
-                </div>
-                <div className="rounded-2xl bg-blue-50 p-3">
-                  <p className="text-[9px] font-black uppercase text-blue-500">Pagos visibles</p>
-                  <p className="text-lg font-black text-blue-700">{filteredAccountMovements.length}</p>
-                </div>
-              </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="bg-white rounded-3xl border border-zinc-200 p-5 shadow-sm">
-                <h2 className="text-lg font-black mb-4 flex items-center gap-2">
-                  <ReceiptText size={20} /> Ventas
-                </h2>
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {[
+                {
+                  label: 'Ventas visibles',
+                  value: String(filteredAccountSales.length),
+                  className: 'bg-white text-slate-900',
+                },
+                {
+                  label: 'Pendiente visible',
+                  value: formatCurrency(
+                    filteredAccountSales.reduce(
+                      (sum: number, sale: any) =>
+                        sum + Number(sale.monto_pendiente || 0),
+                      0
+                    )
+                  ),
+                  className: 'bg-red-50 text-red-700',
+                },
+                {
+                  label: 'Pagado visible',
+                  value: formatCurrency(
+                    filteredAccountSales.reduce(
+                      (sum: number, sale: any) =>
+                        sum + Number(sale.monto_pagado || 0),
+                      0
+                    )
+                  ),
+                  className: 'bg-emerald-50 text-emerald-700',
+                },
+                {
+                  label: 'Pagos visibles',
+                  value: String(filteredAccountMovements.length),
+                  className: 'bg-indigo-50 text-indigo-700',
+                },
+              ].map((item) => (
+                <article
+                  key={item.label}
+                  className={`min-w-0 rounded-2xl border border-slate-200 p-4 ${item.className}`}
+                >
+                  <p className="break-words text-[10px] font-black uppercase tracking-[0.12em] opacity-70">
+                    {item.label}
+                  </p>
+                  <p className="mt-2 break-words text-lg font-black">{item.value}</p>
+                </article>
+              ))}
+            </div>
 
-                <div className="space-y-3">
+            <div className="grid gap-5 2xl:grid-cols-2">
+              <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                <h3 className="flex items-center gap-2 text-lg font-black text-slate-950">
+                  <ReceiptText size={20} />
+                  Ventas
+                </h3>
+
+                <div className="mt-4 space-y-3">
                   {filteredAccountSales.map((sale: any) => (
-                    <div
+                    <article
                       key={sale.id}
-                      className="border border-zinc-100 rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                      className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-4"
                     >
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="font-black text-zinc-900">Venta #{sale.numero_venta}</p>
-                          <span className={`px-2 py-1 rounded-full text-[9px] font-black uppercase ${getSalePaymentStatusClass(sale)}`}>
-                            {getSalePaymentStatusLabel(sale)}
-                          </span>
-                        </div>
-                        <p className="text-xs text-zinc-400 mt-1">
-                          {new Date(sale.fecha).toLocaleDateString('es-AR')} · {sale.metodo_pago || sale.estado}
-                          {sale.numero_pedido ? ` · Pedido #${sale.numero_pedido}` : ''}
-                        </p>
-                        {Number(sale.descuento_total || 0) > 0 && (
-                          <p className="mt-1 text-[10px] font-bold text-amber-600">
-                            Descuento aplicado: {formatCurrency(sale.descuento_total)}
+                      <div className="flex min-w-0 flex-col gap-3 min-[460px]:flex-row min-[460px]:items-start min-[460px]:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="break-words font-black text-slate-950">
+                              Venta #{sale.numero_venta}
+                            </p>
+                            <span
+                              className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${getSalePaymentStatusClass(
+                                sale
+                              )}`}
+                            >
+                              {getSalePaymentStatusLabel(sale)}
+                            </span>
+                          </div>
+                          <p className="mt-2 break-words text-xs font-bold text-slate-500">
+                            {formatDate(sale.fecha)} · {sale.metodo_pago || sale.estado}
+                            {sale.numero_pedido ? ` · Pedido #${sale.numero_pedido}` : ''}
                           </p>
-                        )}
-                      </div>
-
-                      <div className="flex items-center justify-between sm:justify-end gap-3">
-                        <div className="text-right">
-                          <p className="font-black font-mono">{formatCurrency(sale.total)}</p>
-                          {getSalePaymentStatus(sale) === 'paid' ? (
-                            <p className="text-xs text-emerald-600 font-bold">
-                              Pagada · {formatCurrency(sale.monto_pagado)}
-                            </p>
-                          ) : getSalePaymentStatus(sale) === 'partial' ? (
-                            <p className="text-xs text-amber-600 font-bold">
-                              Cobrado {formatCurrency(sale.monto_pagado)} · Falta {formatCurrency(sale.monto_pendiente)}
-                            </p>
-                          ) : (
-                            <p className="text-xs text-red-600 font-bold">
-                              Pendiente {formatCurrency(sale.monto_pendiente)}
+                          {Number(sale.descuento_total || 0) > 0 && (
+                            <p className="mt-2 text-xs font-bold text-amber-700">
+                              Descuento: {formatCurrency(sale.descuento_total)}
                             </p>
                           )}
                         </div>
-                        <button
-                          disabled={downloadingSaleId === sale.id}
-                          onClick={() => downloadSalePdf(Number(sale.id))}
-                          className="p-3 rounded-xl bg-emerald-50 text-emerald-700 disabled:opacity-50"
-                          title="Descargar comprobante de venta"
-                        >
-                          {downloadingSaleId === sale.id ? (
-                            <Loader2 size={17} className="animate-spin" />
-                          ) : (
-                            <Download size={17} />
-                          )}
-                        </button>
+
+                        <div className="flex min-w-0 items-center justify-between gap-3 min-[460px]:justify-end">
+                          <div className="min-w-0 min-[460px]:text-right">
+                            <p className="break-words font-black text-slate-950">
+                              {formatCurrency(sale.total)}
+                            </p>
+                            {getSalePaymentStatus(sale) === 'paid' ? (
+                              <p className="mt-1 text-xs font-bold text-emerald-700">
+                                Pagada · {formatCurrency(sale.monto_pagado)}
+                              </p>
+                            ) : getSalePaymentStatus(sale) === 'partial' ? (
+                              <p className="mt-1 text-xs font-bold text-amber-700">
+                                Falta {formatCurrency(sale.monto_pendiente)}
+                              </p>
+                            ) : (
+                              <p className="mt-1 text-xs font-bold text-red-700">
+                                Pendiente {formatCurrency(sale.monto_pendiente)}
+                              </p>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            disabled={downloadingSaleId === sale.id}
+                            onClick={() => downloadSalePdf(Number(sale.id))}
+                            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700 disabled:opacity-50"
+                            title="Descargar comprobante de venta"
+                            aria-label={`Descargar comprobante de venta ${sale.numero_venta}`}
+                          >
+                            {downloadingSaleId === sale.id ? (
+                              <Loader2 size={17} className="animate-spin" />
+                            ) : (
+                              <Download size={17} />
+                            )}
+                          </button>
+                        </div>
                       </div>
-                    </div>
+                    </article>
                   ))}
 
                   {filteredAccountSales.length === 0 && (
-                    <div className="rounded-2xl border border-dashed border-zinc-200 py-10 text-center">
-                      <p className="text-sm text-zinc-400">No hay ventas para los filtros seleccionados.</p>
+                    <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-10 text-center">
+                      <ReceiptText className="mx-auto text-slate-300" size={34} />
+                      <p className="mt-3 text-sm font-bold text-slate-500">
+                        No hay ventas para los filtros seleccionados.
+                      </p>
                     </div>
                   )}
                 </div>
-              </div>
+              </section>
 
-              <div className="bg-white rounded-3xl border border-zinc-200 p-5 shadow-sm">
-                <h2 className="text-lg font-black mb-4 flex items-center gap-2">
-                  <CircleDollarSign size={20} /> Pagos y movimientos
-                </h2>
+              <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                <h3 className="flex items-center gap-2 text-lg font-black text-slate-950">
+                  <CircleDollarSign size={20} />
+                  Pagos y movimientos
+                </h3>
 
-                {(accountFilters.status === 'pending' || accountFilters.status === 'partial') && (
-                  <div className="mb-4 rounded-2xl bg-amber-50 border border-amber-100 p-3 text-xs font-bold text-amber-700">
-                    Este filtro muestra únicamente las ventas con ese estado. Los comprobantes de pago aparecen al elegir “Todos” o “Pagados”.
+                {(accountFilters.status === 'pending' ||
+                  accountFilters.status === 'partial') && (
+                  <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold leading-5 text-amber-800">
+                    Este filtro muestra ventas con ese estado. Los comprobantes de pago
+                    aparecen al elegir “Todos” o “Pagados”.
                   </div>
                 )}
 
-                <div className="space-y-3">
+                <div className="mt-4 space-y-3">
                   {filteredAccountMovements.map((movement: any) => (
-                    <div
+                    <article
                       key={movement.id}
-                      className="border border-zinc-100 rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                      className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-4"
                     >
-                      <div>
-                        <p className="font-black text-zinc-900">{movement.descripcion}</p>
-                        <p className="text-xs text-zinc-400">
-                          {new Date(movement.fecha).toLocaleDateString('es-AR')} · {movement.forma_pago || movement.origen}
-                          {movement.numero_pago ? ` · Recibo #${movement.numero_pago}` : ''}
-                          {movement.numero_venta ? ` · Venta #${movement.numero_venta}` : ''}
-                          {movement.numero_pedido ? ` · Pedido #${movement.numero_pedido}` : ''}
-                        </p>
-                      </div>
+                      <div className="flex min-w-0 flex-col gap-3 min-[460px]:flex-row min-[460px]:items-start min-[460px]:justify-between">
+                        <div className="min-w-0">
+                          <p className="break-words font-black text-slate-950">
+                            {movement.descripcion}
+                          </p>
+                          <p className="mt-2 break-words text-xs font-bold leading-5 text-slate-500">
+                            {formatDate(movement.fecha)} ·{' '}
+                            {movement.forma_pago || movement.origen}
+                            {movement.numero_pago
+                              ? ` · Recibo #${movement.numero_pago}`
+                              : ''}
+                            {movement.numero_venta
+                              ? ` · Venta #${movement.numero_venta}`
+                              : ''}
+                            {movement.numero_pedido
+                              ? ` · Pedido #${movement.numero_pedido}`
+                              : ''}
+                          </p>
+                        </div>
 
-                      <div className="flex items-center justify-between sm:justify-end gap-3">
-                        <p className={`font-black font-mono ${movement.tipo === 'ingreso' ? 'text-emerald-600' : 'text-red-600'}`}>
-                          {formatCurrency(movement.monto)}
-                        </p>
-
-                        {movement.tipo === 'ingreso' && (
-                          <button
-                            onClick={() => generatePaymentReceiptPdf(movement, customer.nombre_apellido)}
-                            className="p-3 rounded-xl bg-zinc-100 text-zinc-700"
-                            title="Descargar comprobante de pago"
+                        <div className="flex items-center justify-between gap-3 min-[460px]:justify-end">
+                          <p
+                            className={`break-words font-black ${
+                              movement.tipo === 'ingreso'
+                                ? 'text-emerald-700'
+                                : 'text-red-700'
+                            }`}
                           >
-                            <Download size={17} />
-                          </button>
-                        )}
+                            {formatCurrency(movement.monto)}
+                          </p>
+                          {movement.tipo === 'ingreso' && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                generatePaymentReceiptPdf(
+                                  movement,
+                                  customer.nombre_apellido
+                                )
+                              }
+                              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700"
+                              title="Descargar comprobante de pago"
+                              aria-label="Descargar comprobante de pago"
+                            >
+                              <Download size={17} />
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    </article>
                   ))}
 
-                  {filteredAccountMovements.length === 0 && accountFilters.status !== 'pending' && accountFilters.status !== 'partial' && (
-                    <div className="rounded-2xl border border-dashed border-zinc-200 py-10 text-center">
-                      <p className="text-sm text-zinc-400">No hay movimientos para los filtros seleccionados.</p>
-                    </div>
-                  )}
+                  {filteredAccountMovements.length === 0 &&
+                    accountFilters.status !== 'pending' &&
+                    accountFilters.status !== 'partial' && (
+                      <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-10 text-center">
+                        <CircleDollarSign className="mx-auto text-slate-300" size={34} />
+                        <p className="mt-3 text-sm font-bold text-slate-500">
+                          No hay movimientos para los filtros seleccionados.
+                        </p>
+                      </div>
+                    )}
                 </div>
-              </div>
+              </section>
             </div>
-          </div>
+          </section>
         )}
       </main>
+
+      {activeTab === 'catalogo' && cart.length > 0 && (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 p-3 shadow-2xl backdrop-blur xl:hidden">
+          <div className="mx-auto flex max-w-7xl items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setMobileCartOpen(true)}
+              className="flex min-h-12 min-w-0 flex-1 items-center justify-between gap-3 rounded-2xl bg-slate-950 px-4 text-white"
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <ShoppingCart size={19} className="shrink-0" />
+                <span className="truncate text-sm font-black">
+                  Ver carrito · {cartUnits} {cartUnits === 1 ? 'unidad' : 'unidades'}
+                </span>
+              </span>
+              <span className="shrink-0 text-sm font-black">{formatCurrency(cartTotal)}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {mobileCartOpen && (
+        <div className="fixed inset-0 z-50 flex items-end bg-slate-950/55 backdrop-blur-sm xl:hidden">
+          <button
+            type="button"
+            className="absolute inset-0"
+            onClick={() => setMobileCartOpen(false)}
+            aria-label="Cerrar carrito"
+          />
+          <section className="relative max-h-[92dvh] w-full overflow-hidden rounded-t-[30px] bg-slate-50 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-4">
+              <div>
+                <h2 className="text-lg font-black text-slate-950">Tu carrito</h2>
+                <p className="text-xs font-bold text-slate-500">
+                  {cartUnits} {cartUnits === 1 ? 'unidad' : 'unidades'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMobileCartOpen(false)}
+                className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-slate-700"
+                aria-label="Cerrar carrito"
+              >
+                <X size={19} />
+              </button>
+            </div>
+            <div className="max-h-[calc(92dvh-77px)] overflow-y-auto p-4">
+              {cartContent}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {confirmAction && (
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-5">
+          <button
+            type="button"
+            className="absolute inset-0"
+            onClick={() => {
+              if (!submittingOrder && actionLoading === null) setConfirmAction(null);
+            }}
+            aria-label="Cerrar confirmación"
+          />
+          <section className="relative w-full rounded-t-[30px] bg-white p-5 shadow-2xl sm:max-w-md sm:rounded-3xl sm:p-6">
+            <div
+              className={`flex h-12 w-12 items-center justify-center rounded-2xl ${
+                confirmAction.type === 'submit-order'
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : 'bg-red-100 text-red-700'
+              }`}
+            >
+              {confirmAction.type === 'submit-order' ? (
+                <ShoppingBag size={23} />
+              ) : (
+                <XCircle size={23} />
+              )}
+            </div>
+
+            <h2 className="mt-5 text-xl font-black text-slate-950">
+              {confirmAction.type === 'submit-order'
+                ? '¿Confirmar este pedido?'
+                : `¿Cancelar el pedido #${confirmAction.order?.numero_pedido}?`}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              {confirmAction.type === 'submit-order'
+                ? `Se enviarán ${cartUnits} ${
+                    cartUnits === 1 ? 'unidad' : 'unidades'
+                  } por un total de ${formatCurrency(cartTotal)} para aprobación.`
+                : 'Solo podés cancelar el pedido mientras está pendiente de aprobación.'}
+            </p>
+
+            <div className="mt-6 grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                disabled={submittingOrder || actionLoading !== null}
+                onClick={() => setConfirmAction(null)}
+                className="min-h-12 rounded-2xl bg-slate-100 px-4 text-sm font-black text-slate-700 disabled:opacity-50"
+              >
+                Volver
+              </button>
+              <button
+                type="button"
+                disabled={submittingOrder || actionLoading !== null}
+                onClick={
+                  confirmAction.type === 'submit-order'
+                    ? confirmSubmitOrder
+                    : confirmCancelOrder
+                }
+                className={`flex min-h-12 items-center justify-center gap-2 rounded-2xl px-4 text-sm font-black text-white disabled:opacity-50 ${
+                  confirmAction.type === 'submit-order'
+                    ? 'bg-emerald-600'
+                    : 'bg-red-600'
+                }`}
+              >
+                {(submittingOrder || actionLoading !== null) && (
+                  <Loader2 size={17} className="animate-spin" />
+                )}
+                {confirmAction.type === 'submit-order'
+                  ? 'Enviar pedido'
+                  : 'Cancelar pedido'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
