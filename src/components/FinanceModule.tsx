@@ -19,7 +19,17 @@ import {
   CheckCircle2,
   AlertCircle,
   X,
-  Eye
+  Eye,
+  RefreshCw,
+  Loader2,
+  Landmark,
+  Receipt,
+  Building2,
+  ChevronRight,
+  RotateCcw,
+  BadgeDollarSign,
+  Banknote,
+  Smartphone
 } from 'lucide-react';
 import { getSocket } from '../utils/socket';
 import { useAuth } from '../contexts/AuthContext';
@@ -74,6 +84,12 @@ export default function FinanceModule() {
   const [proveedoresError, setProveedoresError] = useState('');
   const [selectedCheque, setSelectedCheque] = useState<any>(null);
   const [showChequeDetailModal, setShowChequeDetailModal] = useState(false);
+  const [dataError, setDataError] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSubmittingEgreso, setIsSubmittingEgreso] = useState(false);
+  const [updatingChequeId, setUpdatingChequeId] = useState<number | null>(null);
+  const [egresoError, setEgresoError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [egresoForm, setEgresoForm] = useState({
     monto: '',
     descripcion: '',
@@ -91,6 +107,7 @@ export default function FinanceModule() {
       setMovimientos(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error("Error fetching movements:", error);
+      setDataError('No se pudieron cargar los movimientos financieros.');
     }
   };
 
@@ -101,6 +118,7 @@ export default function FinanceModule() {
       setCheques(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error("Error fetching cheques:", error);
+      setDataError((current) => current || 'No se pudieron cargar los cheques.');
     }
   };
 
@@ -129,6 +147,7 @@ export default function FinanceModule() {
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
+      setDataError('');
       await Promise.all([fetchMovimientos(), fetchCheques(), fetchProveedores()]);
       setLoading(false);
     };
@@ -148,6 +167,11 @@ export default function FinanceModule() {
 
   const handleEgresoSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingEgreso) return;
+
+    setIsSubmittingEgreso(true);
+    setEgresoError('');
+
     try {
       const res = await apiFetch('/api/finanzas?endpoint=egresos', {
         method: 'POST',
@@ -156,11 +180,12 @@ export default function FinanceModule() {
           monto: parseFloat(egresoForm.monto)
         })
       });
-      
+
       const body = await res.json();
       unwrapResponse(body);
-      
+
       setShowEgresoModal(false);
+      setSuccessMessage('Egreso registrado correctamente.');
       setEgresoForm({
         monto: '',
         descripcion: '',
@@ -170,11 +195,12 @@ export default function FinanceModule() {
         cheque_id: '',
         proveedor_id: ''
       });
-      fetchMovimientos();
-      fetchCheques();
-    } catch (error) {
+      await Promise.all([fetchMovimientos(), fetchCheques()]);
+    } catch (error: any) {
       console.error("Error saving expense:", error);
-      alert("No se pudo registrar el egreso");
+      setEgresoError(error?.message || 'No se pudo registrar el egreso.');
+    } finally {
+      setIsSubmittingEgreso(false);
     }
   };
 
@@ -247,18 +273,26 @@ export default function FinanceModule() {
   }, [movimientos]);
 
   const handleUpdateChequeStatus = async (id: number, nuevoEstado: string) => {
+    if (updatingChequeId === id) return;
+
+    setUpdatingChequeId(id);
+    setDataError('');
+
     try {
       const res = await apiFetch(`/api/finanzas?endpoint=cheques/${id}/estado`, {
         method: 'PATCH',
         body: JSON.stringify({ estado: nuevoEstado })
       });
-      
+
       const body = await res.json();
       unwrapResponse(body);
-      fetchCheques();
-    } catch (error) {
+      setSuccessMessage('Estado del cheque actualizado.');
+      await fetchCheques();
+    } catch (error: any) {
       console.error("Error updating cheque status:", error);
-      alert("No se pudo actualizar el estado del cheque");
+      setDataError(error?.message || 'No se pudo actualizar el estado del cheque.');
+    } finally {
+      setUpdatingChequeId(null);
     }
   };
 
@@ -303,863 +337,1080 @@ export default function FinanceModule() {
     });
   }, [cheques]);
 
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+
+    setIsRefreshing(true);
+    setDataError('');
+    await Promise.all([fetchMovimientos(), fetchCheques(), fetchProveedores()]);
+    setIsRefreshing(false);
+  };
+
+  const formatCurrency = (value: number | string | null | undefined) =>
+    new Intl.NumberFormat('es-AR', {
+      style: 'currency',
+      currency: 'ARS',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(Number(value) || 0);
+
+  const formatDate = (value: string, includeTime = false) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+
+    return date.toLocaleString('es-AR', includeTime
+      ? { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }
+      : { day: '2-digit', month: '2-digit', year: 'numeric' });
+  };
+
+  const paymentLabel = (value?: string) => {
+    const labels: Record<string, string> = {
+      efectivo: 'Efectivo',
+      transferencia: 'Transferencia',
+      mercado_pago: 'Mercado Pago',
+      cheque: 'Cheque',
+      cheque_en_cartera: 'Cheque en cartera',
+      cuenta_corriente: 'Cuenta corriente',
+      mixto: 'Pago mixto'
+    };
+
+    return labels[value || ''] || (value || 'Sin informar').replace(/_/g, ' ');
+  };
+
+  const originLabel = (value?: string) => {
+    const labels: Record<string, string> = {
+      venta: 'Venta',
+      pago_cc: 'Pago de cuenta corriente',
+      egreso_manual: 'Egreso manual',
+      ajuste: 'Ajuste'
+    };
+
+    return labels[value || ''] || (value || 'Sin origen').replace(/_/g, ' ');
+  };
+
+  const chequeStatusLabel = (value?: string) => {
+    const labels: Record<string, string> = {
+      en_cartera: 'En cartera',
+      depositado: 'Depositado',
+      entregado_proveedor: 'Entregado a proveedor',
+      cobrado: 'Cobrado',
+      rechazado: 'Rechazado'
+    };
+
+    return labels[value || ''] || (value || 'Sin estado').replace(/_/g, ' ');
+  };
+
+  const chequeStatusClasses = (value?: string) => {
+    if (value === 'en_cartera') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+    if (value === 'depositado') return 'border-blue-200 bg-blue-50 text-blue-700';
+    if (value === 'cobrado') return 'border-slate-200 bg-slate-100 text-slate-700';
+    if (value === 'rechazado') return 'border-red-200 bg-red-50 text-red-700';
+    return 'border-amber-200 bg-amber-50 text-amber-700';
+  };
+
+  const tabItems = [
+    { id: 'resumen', label: 'Resumen', icon: Wallet },
+    { id: 'caja', label: 'Caja diaria', icon: Clock },
+    { id: 'egresos', label: 'Egresos', icon: TrendingDown },
+    { id: 'movimientos', label: 'Movimientos', icon: History },
+    { id: 'cheques', label: 'Cheques', icon: CreditCard }
+  ] as const;
+
+  const summaryCard = (
+    label: string,
+    value: number,
+    Icon: React.ComponentType<{ size?: number; className?: string }>,
+    tone: 'emerald' | 'red' | 'indigo' | 'slate',
+    formatAsCurrency = true
+  ) => {
+    const tones = {
+      emerald: 'border-emerald-100 bg-emerald-50/70 text-emerald-700',
+      red: 'border-red-100 bg-red-50/70 text-red-700',
+      indigo: 'border-indigo-100 bg-indigo-50/70 text-indigo-700',
+      slate: 'border-slate-200 bg-slate-900 text-white'
+    };
+
+    return (
+      <article className={`min-w-0 rounded-3xl border p-5 shadow-sm sm:p-6 ${tones[tone]}`}>
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className={`text-[11px] font-black uppercase tracking-[0.16em] ${tone === 'slate' ? 'text-slate-300' : 'opacity-70'}`}>
+              {label}
+            </p>
+            <p className="mt-3 break-words text-2xl font-black tracking-tight sm:text-3xl">
+              {formatAsCurrency ? formatCurrency(value) : new Intl.NumberFormat('es-AR').format(value)}
+            </p>
+          </div>
+          <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${tone === 'slate' ? 'bg-white/10' : 'bg-white/80'}`}>
+            <Icon size={22} />
+          </div>
+        </div>
+      </article>
+    );
+  };
+
   return (
-    <div className="h-full flex flex-col bg-zinc-50">
-      {/* Header */}
-      <header className="bg-white border-b border-zinc-200 p-4 sm:p-8 shrink-0">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 mb-8">
-          <div>
-            <h2 className="text-2xl sm:text-3xl font-black text-zinc-900 tracking-tight">FINANZAS</h2>
-            <p className="text-zinc-500 text-xs sm:text-sm font-medium">Gestión de caja y movimientos financieros</p>
-          </div>
-          <div className="flex gap-3">
-            {hasPermission('current_accounts', 'create') && (
-              <button 
-                onClick={() => setShowEgresoModal(true)}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-red-600 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-red-700 transition-all shadow-xl shadow-red-100 text-xs sm:text-sm"
-              >
-                <Plus size={20} />
-                Registrar Egreso
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex gap-1 p-1 bg-zinc-100 rounded-2xl w-full sm:w-fit overflow-x-auto custom-scrollbar no-scrollbar">
-          {[
-            { id: 'resumen', label: 'Resumen', icon: Wallet },
-            { id: 'caja', label: 'Caja Diaria', icon: Clock },
-            { id: 'egresos', label: 'Egresos', icon: TrendingDown },
-            { id: 'movimientos', label: 'Movimientos', icon: History },
-            { id: 'cheques', label: 'Cheques', icon: CreditCard }
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`flex items-center gap-2 px-4 sm:px-6 py-2.5 rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${
-                activeTab === tab.id
-                  ? 'bg-white text-zinc-900 shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-600'
-              }`}
-            >
-              {/* @ts-ignore */}
-              <tab.icon size={16} />
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </header>
-
-      {/* Content Area */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-8 custom-scrollbar">
-        {activeTab === 'resumen' && (
-          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            {/* Daily Stats Grid */}
-            <div className="space-y-4">
-              <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em]">Resumen del Día</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-                <div className="bg-white p-6 sm:p-8 rounded-[24px] sm:rounded-[32px] border border-zinc-200 shadow-sm">
-                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600 mb-4">
-                    <ArrowUpRight size={24} />
-                  </div>
-                  <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Ingresos del Día</p>
-                  <p className="text-2xl sm:text-3xl font-black text-zinc-900 font-mono tracking-tighter">${stats.ingresosDia.toFixed(2)}</p>
+    <div className="min-h-full min-w-0 bg-transparent">
+      <div className="mx-auto flex w-full max-w-[1600px] min-w-0 flex-col gap-5 px-3 pb-8 pt-3 sm:gap-6 sm:px-5 sm:pt-5 xl:px-7">
+        <section className="overflow-hidden rounded-[28px] border border-slate-800 bg-slate-950 text-white shadow-xl shadow-slate-950/10">
+          <div className="relative p-5 sm:p-7">
+            <div className="pointer-events-none absolute -right-16 -top-24 h-56 w-56 rounded-full bg-indigo-500/20 blur-3xl" />
+            <div className="relative flex min-w-0 flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0">
+                <div className="mb-3 flex items-center gap-2 text-indigo-300">
+                  <BadgeDollarSign size={18} />
+                  <span className="text-[11px] font-black uppercase tracking-[0.2em]">Gestión financiera</span>
                 </div>
-                <div className="bg-white p-6 sm:p-8 rounded-[24px] sm:rounded-[32px] border border-zinc-200 shadow-sm">
-                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-red-50 rounded-2xl flex items-center justify-center text-red-600 mb-4">
-                    <ArrowDownLeft size={24} />
-                  </div>
-                  <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Egresos del Día</p>
-                  <p className="text-2xl sm:text-3xl font-black text-zinc-900 font-mono tracking-tighter">${stats.egresosDia.toFixed(2)}</p>
-                </div>
-                <div className={`p-6 sm:p-8 rounded-[24px] sm:rounded-[32px] shadow-2xl ${stats.resultadoDia >= 0 ? 'bg-zinc-900 shadow-zinc-200' : 'bg-red-900 shadow-red-200'}`}>
-                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white/10 rounded-2xl flex items-center justify-center text-white mb-4">
-                    <DollarSign size={24} />
-                  </div>
-                  <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1">Resultado del Día</p>
-                  <p className="text-2xl sm:text-3xl font-black text-white font-mono tracking-tighter">${stats.resultadoDia.toFixed(2)}</p>
-                </div>
+                <h2 className="break-words text-2xl font-black tracking-tight sm:text-3xl">Finanzas y Caja</h2>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+                  Controlá ingresos, egresos, movimientos diarios y cheques desde una vista clara y adaptable.
+                </p>
               </div>
-            </div>
 
-            {/* Monthly Stats Grid */}
-            <div className="space-y-4">
-              <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em]">Resumen del Mes</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-                <div className="bg-white p-6 sm:p-8 rounded-[24px] sm:rounded-[32px] border border-zinc-200 shadow-sm">
-                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600 mb-4">
-                    <TrendingUp size={24} />
-                  </div>
-                  <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Ingresos del Mes</p>
-                  <p className="text-2xl sm:text-3xl font-black text-zinc-900 font-mono tracking-tighter">${stats.ingresosMes.toFixed(2)}</p>
-                </div>
-                <div className="bg-white p-6 sm:p-8 rounded-[24px] sm:rounded-[32px] border border-zinc-200 shadow-sm">
-                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-red-50 rounded-2xl flex items-center justify-center text-red-600 mb-4">
-                    <TrendingDown size={24} />
-                  </div>
-                  <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Egresos del Mes</p>
-                  <p className="text-2xl sm:text-3xl font-black text-zinc-900 font-mono tracking-tighter">${stats.egresosMes.toFixed(2)}</p>
-                </div>
-                <div className={`p-6 sm:p-8 rounded-[24px] sm:rounded-[32px] shadow-2xl ${stats.resultadoMes >= 0 ? 'bg-emerald-600 shadow-emerald-100' : 'bg-red-600 shadow-red-100'}`}>
-                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white/20 rounded-2xl flex items-center justify-center text-white mb-4">
-                    <Wallet size={24} />
-                  </div>
-                  <p className="text-[10px] font-bold text-white/60 uppercase tracking-widest mb-1">Resultado del Mes</p>
-                  <p className="text-2xl sm:text-3xl font-black text-white font-mono tracking-tighter">${stats.resultadoMes.toFixed(2)}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Recent Activity in Resumen */}
-            <div className="bg-white rounded-[24px] sm:rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden">
-              <div className="p-6 sm:p-8 border-b border-zinc-100 flex items-center justify-between">
-                <h3 className="text-lg sm:text-xl font-black tracking-tight">Actividad Reciente</h3>
-                <button 
-                  onClick={() => setActiveTab('movimientos')}
-                  className="text-[10px] font-black uppercase tracking-widest text-zinc-400 hover:text-zinc-900 transition-colors"
+              <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 lg:w-auto">
+                <button
+                  type="button"
+                  onClick={handleRefresh}
+                  disabled={isRefreshing}
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-4 py-3 text-xs font-black uppercase tracking-wider text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
+                  title="Actualizar datos financieros"
+                  aria-label="Actualizar datos financieros"
                 >
-                  Ver Todo
+                  <RefreshCw size={18} className={isRefreshing ? 'animate-spin' : ''} />
+                  {isRefreshing ? 'Actualizando' : 'Actualizar'}
                 </button>
-              </div>
-              <div className="divide-y divide-zinc-50">
-                {movimientos.slice(0, 5).map((m) => (
-                  <div key={m.id} className="p-4 sm:p-6 flex items-center justify-between hover:bg-zinc-50 transition-colors">
-                    <div className="flex items-center gap-3 sm:gap-4">
-                      <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center ${
-                        m.tipo === 'ingreso' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
-                      }`}>
-                        {m.tipo === 'ingreso' ? <ArrowUpRight size={18} /> : <ArrowDownLeft size={18} />}
-                      </div>
-                      <div>
-                        <p className="text-xs sm:text-sm font-bold text-zinc-900 line-clamp-1">{m.descripcion}</p>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-[9px] sm:text-[10px] font-bold text-zinc-400 uppercase tracking-wider">{m.forma_pago}</span>
-                          <span className="text-zinc-200">•</span>
-                          <span className="text-[9px] sm:text-[10px] font-bold text-zinc-400 uppercase tracking-wider">{new Date(m.fecha).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <p className={`text-sm sm:text-lg font-black font-mono ${
-                      m.tipo === 'ingreso' ? 'text-emerald-600' : 'text-red-600'
-                    }`}>
-                      {m.tipo === 'ingreso' ? '+' : '-'}${m.monto.toFixed(2)}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
 
-        {activeTab === 'caja' && (
-          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <h3 className="text-2xl font-black tracking-tight">Caja Diaria</h3>
-              <div className="flex items-center gap-3">
-                <div className="relative">
-                  <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
-                  <input 
-                    type="date" 
-                    value={selectedDate}
-                    onChange={(e) => setSelectedDate(e.target.value)}
-                    className="pl-10 pr-4 py-2.5 bg-white border border-zinc-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
-                  />
-                </div>
-                <div className="px-4 py-2.5 bg-zinc-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest">
-                  {new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })}
-                </div>
-              </div>
-            </div>
-
-            {/* Caja Summary Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm">
-                <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Efectivo</p>
-                <p className="text-xl font-black text-zinc-900 font-mono">${cajaStats.efectivo.toFixed(2)}</p>
-              </div>
-              <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm">
-                <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Transferencia</p>
-                <p className="text-xl font-black text-zinc-900 font-mono">${cajaStats.transferencia.toFixed(2)}</p>
-              </div>
-              <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm">
-                <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Mercado Pago</p>
-                <p className="text-xl font-black text-zinc-900 font-mono">${cajaStats.mercadoPago.toFixed(2)}</p>
-              </div>
-              <div className={`p-6 rounded-3xl shadow-lg ${cajaStats.resultadoNeto >= 0 ? 'bg-emerald-600' : 'bg-red-600'} text-white`}>
-                <p className="text-[10px] font-bold text-white/60 uppercase tracking-widest mb-1">Resultado Neto</p>
-                <p className="text-xl font-black font-mono">${cajaStats.resultadoNeto.toFixed(2)}</p>
-              </div>
-            </div>
-            
-            <div className="bg-white rounded-[24px] sm:rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden">
-              <div className="overflow-x-auto custom-scrollbar">
-                <table className="w-full text-left border-collapse min-w-[800px]">
-                  <thead>
-                    <tr className="bg-zinc-50/50">
-                      <th className="px-4 sm:px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Hora</th>
-                      <th className="px-4 sm:px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Descripción</th>
-                      <th className="px-4 sm:px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Forma de Pago</th>
-                      <th className="px-4 sm:px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Ingreso</th>
-                      <th className="px-4 sm:px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Egreso</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-50">
-                    {cajaDiaria.length > 0 ? cajaDiaria.map((m) => (
-                      <tr key={m.id} className="hover:bg-zinc-50 transition-colors">
-                        <td className="px-4 sm:px-8 py-5 text-xs text-zinc-500 font-mono">
-                          {new Date(m.fecha).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </td>
-                        <td className="px-4 sm:px-8 py-5">
-                          <p className="text-xs sm:text-sm font-bold text-zinc-900">{m.descripcion}</p>
-                          <p className="text-[9px] sm:text-[10px] text-zinc-400 uppercase font-bold tracking-wider">{m.origen.replace('_', ' ')}</p>
-                        </td>
-                        <td className="px-4 sm:px-8 py-5 text-center">
-                          <span className="text-[9px] sm:text-[10px] font-bold uppercase bg-zinc-100 text-zinc-600 px-2 sm:px-3 py-1 rounded-full border border-zinc-200">
-                            {m.forma_pago}
-                          </span>
-                        </td>
-                        <td className="px-4 sm:px-8 py-5 text-right font-mono font-black text-emerald-600 text-xs sm:text-sm">
-                          {m.tipo === 'ingreso' ? `$${m.monto.toFixed(2)}` : '-'}
-                        </td>
-                        <td className="px-4 sm:px-8 py-5 text-right font-mono font-black text-red-600 text-xs sm:text-sm">
-                          {m.tipo === 'egreso' ? `$${m.monto.toFixed(2)}` : '-'}
-                        </td>
-                      </tr>
-                    )) : (
-                      <tr>
-                        <td colSpan={5} className="px-8 py-20 text-center text-zinc-400">
-                          No hay movimientos registrados para esta fecha.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                  <tfoot className="bg-zinc-900 text-white">
-                    <tr>
-                      <td colSpan={3} className="px-4 sm:px-8 py-6 text-xs sm:text-sm font-black uppercase tracking-widest">Totales del Día</td>
-                      <td className="px-4 sm:px-8 py-6 text-right text-lg sm:text-xl font-black font-mono text-emerald-400">
-                        +${cajaStats.totalIngresos.toFixed(2)}
-                      </td>
-                      <td className="px-4 sm:px-8 py-6 text-right text-lg sm:text-xl font-black font-mono text-red-400">
-                        -${cajaStats.totalEgresos.toFixed(2)}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'cheques' && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <h3 className="text-2xl font-black tracking-tight">Cheques en cartera</h3>
-              <div className="flex items-center gap-3">
-                <div className="px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl text-[10px] font-black uppercase tracking-widest border border-emerald-100">
-                  {cheques.filter(c => c.estado === 'en_cartera').length} En Cartera
-                </div>
-                <div className="px-4 py-2 bg-zinc-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest">
-                  Total: ${cheques.reduce((acc, c) => acc + c.importe, 0).toFixed(2)}
-                </div>
-              </div>
-            </div>
-
-            {/* Alertas de Vencimiento */}
-            {chequesProximosAVencer.length > 0 && (
-              <div className="bg-amber-50 border border-amber-200 rounded-3xl p-6 space-y-4">
-                <div className="flex items-center gap-3 text-amber-800">
-                  <AlertCircle size={24} className="animate-pulse" />
-                  <h4 className="text-sm font-black uppercase tracking-widest">Cheques próximos a vencer (7 días)</h4>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {chequesProximosAVencer.map(c => (
-                    <div key={c.id} className="bg-white/50 border border-amber-100 rounded-2xl p-4 flex justify-between items-center">
-                      <div>
-                        <p className="text-xs font-black text-zinc-900">{c.banco} - N° {c.numero_cheque}</p>
-                        <p className="text-[10px] font-bold text-amber-600 uppercase mt-1">Vence: {new Date(c.fecha_vencimiento).toLocaleDateString()}</p>
-                      </div>
-                      <p className="text-sm font-black text-zinc-900 font-mono">${c.importe.toFixed(2)}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Filtros y Búsqueda */}
-            <div className="flex flex-wrap gap-4 items-center bg-white p-6 rounded-[32px] border border-zinc-200 shadow-sm">
-              <div className="relative flex-1 min-w-[300px]">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
-                <input 
-                  type="text" 
-                  placeholder="Buscar por cliente, banco o número de cheque..."
-                  value={chequesSearch}
-                  onChange={(e) => setChequesSearch(e.target.value)}
-                  className="w-full pl-12 pr-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-zinc-900 transition-all"
-                />
-              </div>
-              
-              <div className="flex gap-3">
-                <div className="relative">
-                  <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
-                  <input 
-                    type="date" 
-                    value={chequesVencimientoFilter}
-                    onChange={(e) => setChequesVencimientoFilter(e.target.value)}
-                    className="pl-10 pr-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl text-sm font-bold outline-none focus:ring-2 focus:ring-zinc-900"
-                  />
-                </div>
-
-                <select
-                  value={chequesEstadoFilter}
-                  onChange={(e) => setChequesEstadoFilter(e.target.value)}
-                  className="px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl text-sm font-bold outline-none focus:ring-2 focus:ring-zinc-900"
-                >
-                  <option value="todos">Todos los Estados</option>
-                  <option value="en_cartera">En Cartera</option>
-                  <option value="depositado">Depositado</option>
-                  <option value="entregado_proveedor">Entregado a Prov.</option>
-                  <option value="cobrado">Cobrado</option>
-                  <option value="rechazado">Rechazado</option>
-                </select>
-
-                {(chequesSearch || chequesEstadoFilter !== 'todos' || chequesVencimientoFilter) && (
-                  <button 
+                {hasPermission('current_accounts', 'create') && (
+                  <button
+                    type="button"
                     onClick={() => {
-                      setChequesSearch('');
-                      setChequesEstadoFilter('todos');
-                      setChequesVencimientoFilter('');
+                      setEgresoError('');
+                      setShowEgresoModal(true);
                     }}
-                    className="px-6 py-3 bg-zinc-100 text-zinc-600 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-zinc-200 transition-all"
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-red-600 px-5 py-3 text-xs font-black uppercase tracking-wider text-white shadow-lg shadow-red-950/20 transition hover:bg-red-500"
                   >
-                    Limpiar
+                    <Plus size={18} />
+                    Registrar egreso
                   </button>
                 )}
               </div>
             </div>
+          </div>
+        </section>
 
-            <div className="bg-white rounded-[24px] sm:rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden">
-              <div className="overflow-x-auto custom-scrollbar">
-                <table className="w-full text-left border-collapse min-w-[1000px]">
-                  <thead>
-                    <tr className="bg-zinc-50/50">
-                      <th className="px-4 sm:px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Banco / N°</th>
-                      <th className="px-4 sm:px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
-                      <th className="px-4 sm:px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Vencimiento</th>
-                      <th className="px-4 sm:px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Importe</th>
-                      <th className="px-4 sm:px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Estado</th>
-                      <th className="px-4 sm:px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-50">
-                    {filteredCheques.length > 0 ? filteredCheques.map((cheque) => (
-                      <tr key={cheque.id} className="hover:bg-zinc-50 transition-colors">
-                        <td className="px-4 sm:px-8 py-5">
-                          <p className="text-xs sm:text-sm font-black text-zinc-900">{cheque.banco}</p>
-                          <p className="text-[9px] sm:text-[10px] font-bold text-zinc-400 uppercase tracking-widest mt-0.5">N° {cheque.numero_cheque}</p>
-                        </td>
-                        <td className="px-4 sm:px-8 py-5">
-                          <div className="flex items-center gap-2">
-                            <div className="w-6 h-6 rounded-full bg-zinc-100 flex items-center justify-center text-[10px] font-bold text-zinc-600">
-                              {cheque.nombre_cliente?.charAt(0)}
-                            </div>
-                            <p className="text-[10px] sm:text-xs font-bold text-zinc-900">{cheque.nombre_cliente}</p>
-                          </div>
-                        </td>
-                        <td className="px-4 sm:px-8 py-5">
-                          <p className={`text-[10px] sm:text-xs font-mono font-black ${
-                            new Date(cheque.fecha_vencimiento) < new Date() && cheque.estado === 'en_cartera' 
-                              ? 'text-red-600' 
-                              : 'text-zinc-600'
-                          }`}>
-                            {new Date(cheque.fecha_vencimiento).toLocaleDateString()}
-                          </p>
-                        </td>
-                        <td className="px-4 sm:px-8 py-5 text-right font-mono font-black text-zinc-900 text-xs sm:text-sm">
-                          ${cheque.importe.toFixed(2)}
-                        </td>
-                        <td className="px-4 sm:px-8 py-5 text-center">
-                          <span className={`text-[8px] sm:text-[9px] font-black uppercase px-2 sm:px-3 py-1 rounded-full border ${
-                            cheque.estado === 'en_cartera' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
-                            cheque.estado === 'depositado' ? 'bg-blue-50 text-blue-600 border-blue-100' :
-                            cheque.estado === 'cobrado' ? 'bg-zinc-50 text-zinc-600 border-zinc-100' :
-                            cheque.estado === 'rechazado' ? 'bg-red-50 text-red-600 border-red-100' :
-                            'bg-amber-50 text-amber-600 border-amber-100'
-                          }`}>
-                            {cheque.estado.replace('_', ' ')}
-                          </span>
-                        </td>
-                        <td className="px-4 sm:px-8 py-5 text-right">
-                          <div className="flex items-center justify-end gap-1 sm:gap-2">
-                            <button
-                              onClick={() => {
-                                setSelectedCheque(cheque);
-                                setShowChequeDetailModal(true);
-                              }}
-                              className="p-1.5 sm:p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-xl transition-all"
-                              title="Ver detalles"
-                            >
-                              <Eye size={14} />
-                            </button>
-                            {hasPermission('current_accounts', 'edit') ? (
-                              <select 
-                                className="text-[8px] sm:text-[10px] font-black uppercase tracking-widest bg-zinc-100 border-none rounded-xl px-2 sm:px-3 py-1.5 sm:py-2 outline-none focus:ring-2 focus:ring-zinc-900 cursor-pointer"
-                                value={cheque.estado}
-                                onChange={(e) => handleUpdateChequeStatus(cheque.id, e.target.value)}
-                              >
-                                <option value="en_cartera">En Cartera</option>
-                                <option value="depositado">Depositado</option>
-                                <option value="entregado_proveedor">Entregado a Prov.</option>
-                                <option value="cobrado">Cobrado</option>
-                                <option value="rechazado">Rechazado</option>
-                              </select>
-                            ) : (
-                              <span className="text-[8px] sm:text-[10px] font-black uppercase tracking-widest bg-zinc-50 text-zinc-400 px-2 sm:px-3 py-1.5 sm:py-2 rounded-xl border border-zinc-100">
-                                {cheque.estado.replace('_', ' ')}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )) : (
-                      <tr>
-                        <td colSpan={6} className="px-8 py-20 text-center text-zinc-400 italic">
-                          No se encontraron cheques con los filtros aplicados.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+        {successMessage && (
+          <div className="flex min-w-0 items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-800" role="status">
+            <CheckCircle2 size={20} className="mt-0.5 shrink-0" />
+            <p className="min-w-0 flex-1 break-words text-sm font-bold">{successMessage}</p>
+            <button
+              type="button"
+              onClick={() => setSuccessMessage('')}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl hover:bg-emerald-100"
+              aria-label="Cerrar mensaje"
+              title="Cerrar mensaje"
+            >
+              <X size={17} />
+            </button>
           </div>
         )}
 
-        {activeTab === 'egresos' && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <h3 className="text-xl sm:text-2xl font-black tracking-tight">Historial de Egresos</h3>
-              <div className="w-full sm:w-auto bg-red-50 text-red-600 px-4 sm:px-6 py-2 rounded-2xl font-black text-xs sm:text-sm text-center">
-                Total Gastos del Mes: ${stats.egresosMes.toFixed(2)}
-              </div>
+        {dataError && (
+          <div className="flex min-w-0 flex-col gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-red-800 sm:flex-row sm:items-center" role="alert">
+            <div className="flex min-w-0 flex-1 items-start gap-3">
+              <AlertCircle size={20} className="mt-0.5 shrink-0" />
+              <p className="min-w-0 break-words text-sm font-bold">{dataError}</p>
             </div>
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2 text-xs font-black uppercase tracking-wide text-red-700 hover:bg-red-100 disabled:opacity-60"
+            >
+              <RotateCcw size={16} className={isRefreshing ? 'animate-spin' : ''} />
+              Reintentar
+            </button>
+          </div>
+        )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-              {egresosList.map((e) => (
-                <div key={e.id} className="bg-white p-5 sm:p-6 rounded-[24px] sm:rounded-[32px] border border-zinc-200 shadow-sm hover:shadow-md transition-all">
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="w-10 h-10 bg-red-50 text-red-600 rounded-xl flex items-center justify-center">
-                      <TrendingDown size={20} />
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xl font-black text-zinc-900 font-mono">-${e.monto.toFixed(2)}</p>
-                      <span className="text-[9px] font-black uppercase px-2 py-0.5 bg-zinc-100 text-zinc-500 rounded-full border border-zinc-200">
-                        {e.categoria || 'Otros'}
-                      </span>
-                    </div>
-                  </div>
-                  <p className="text-sm font-bold text-zinc-900 mb-1">{e.descripcion}</p>
-                  <div className="flex items-center gap-2 text-[10px] text-zinc-400 font-bold uppercase tracking-wider">
-                    <Calendar size={12} />
-                    {new Date(e.fecha).toLocaleDateString()}
-                    <span className="text-zinc-200">•</span>
-                    <CreditCard size={12} />
-                    {e.forma_pago}
-                  </div>
+        <nav className="grid min-w-0 grid-cols-2 gap-2 rounded-3xl border border-slate-200 bg-white p-2 shadow-sm sm:grid-cols-3 xl:grid-cols-5" aria-label="Secciones de Finanzas">
+          {tabItems.map((tab) => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.id;
+
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex min-h-12 min-w-0 items-center justify-center gap-2 rounded-2xl px-3 py-3 text-xs font-black uppercase tracking-wide transition ${
+                  active
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950'
+                }`}
+                aria-current={active ? 'page' : undefined}
+              >
+                <Icon size={17} className="shrink-0" />
+                <span className="min-w-0 truncate">{tab.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        {loading ? (
+          <section className="space-y-4" aria-live="polite" aria-busy="true">
+            <div className="flex items-center gap-3 rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-indigo-700">
+              <Loader2 size={20} className="animate-spin" />
+              <p className="text-sm font-bold">Cargando información financiera…</p>
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {[1, 2, 3, 4, 5, 6].map((item) => (
+                <div key={item} className="h-36 animate-pulse rounded-3xl border border-slate-200 bg-white p-5">
+                  <div className="h-4 w-28 rounded bg-slate-200" />
+                  <div className="mt-6 h-8 w-40 rounded bg-slate-200" />
+                  <div className="mt-5 h-3 w-full rounded bg-slate-100" />
                 </div>
               ))}
             </div>
-          </div>
-        )}
-
-        {activeTab === 'movimientos' && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <h3 className="text-2xl font-black tracking-tight">Todos los Movimientos</h3>
-              <div className="flex flex-wrap gap-3">
-                <div className="relative min-w-[240px]">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
-                  <input 
-                    type="text" 
-                    placeholder="Buscar por cliente o descripción..."
-                    value={movimientosSearch}
-                    onChange={(e) => setMovimientosSearch(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-white border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
-                  />
-                </div>
-                
-                <div className="relative">
-                  <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
-                  <input 
-                    type="date" 
-                    value={movimientosDateFilter}
-                    onChange={(e) => setMovimientosDateFilter(e.target.value)}
-                    className="pl-10 pr-4 py-2.5 bg-white border border-zinc-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
-                  />
+          </section>
+        ) : (
+          <>
+            {activeTab === 'resumen' && (
+              <section className="space-y-6">
+                <div>
+                  <div className="mb-3 flex items-center gap-2">
+                    <Clock size={18} className="text-indigo-600" />
+                    <h3 className="text-base font-black text-slate-950">Resumen del día</h3>
+                  </div>
+                  <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                    {summaryCard('Ingresos del día', stats.ingresosDia, ArrowUpRight, 'emerald')}
+                    {summaryCard('Egresos del día', stats.egresosDia, ArrowDownLeft, 'red')}
+                    {summaryCard('Resultado del día', stats.resultadoDia, DollarSign, 'slate')}
+                  </div>
                 </div>
 
-                <select
-                  value={movimientosTypeFilter}
-                  onChange={(e) => setMovimientosTypeFilter(e.target.value as any)}
-                  className="px-4 py-2.5 bg-white border border-zinc-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
-                >
-                  <option value="todos">Todos los Tipos</option>
-                  <option value="ingreso">Ingresos</option>
-                  <option value="egreso">Egresos</option>
-                </select>
+                <div>
+                  <div className="mb-3 flex items-center gap-2">
+                    <Calendar size={18} className="text-indigo-600" />
+                    <h3 className="text-base font-black text-slate-950">Resumen del mes</h3>
+                  </div>
+                  <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                    {summaryCard('Ingresos del mes', stats.ingresosMes, TrendingUp, 'emerald')}
+                    {summaryCard('Egresos del mes', stats.egresosMes, TrendingDown, 'red')}
+                    {summaryCard('Resultado del mes', stats.resultadoMes, Wallet, 'indigo')}
+                  </div>
+                </div>
 
-                {(movimientosSearch || movimientosTypeFilter !== 'todos' || movimientosDateFilter) && (
-                  <button 
-                    onClick={() => {
-                      setMovimientosSearch('');
-                      setMovimientosTypeFilter('todos');
-                      setMovimientosDateFilter('');
-                    }}
-                    className="px-4 py-2.5 bg-zinc-100 text-zinc-600 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-zinc-200 transition-all"
-                  >
-                    Limpiar
-                  </button>
-                )}
-              </div>
-            </div>
+                <article className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                  <header className="flex flex-col gap-3 border-b border-slate-100 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+                    <div>
+                      <h3 className="text-lg font-black text-slate-950">Actividad reciente</h3>
+                      <p className="mt-1 text-sm text-slate-500">Últimos movimientos registrados en la aplicación.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('movimientos')}
+                      className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-xs font-black uppercase tracking-wide text-slate-700 hover:bg-slate-200"
+                    >
+                      Ver movimientos
+                      <ChevronRight size={16} />
+                    </button>
+                  </header>
 
-            <div className="bg-white rounded-[24px] sm:rounded-[40px] border border-zinc-200 shadow-xl overflow-hidden">
-              <div className="overflow-x-auto custom-scrollbar">
-                <table className="w-full text-left border-collapse min-w-[1200px]">
-                  <thead>
-                    <tr className="bg-zinc-50/50">
-                      <th className="px-4 sm:px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</th>
-                      <th className="px-4 sm:px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Tipo</th>
-                      <th className="px-4 sm:px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Origen</th>
-                      <th className="px-4 sm:px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
-                      <th className="px-4 sm:px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Descripción</th>
-                      <th className="px-4 sm:px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Forma de Pago</th>
-                      <th className="px-4 sm:px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Monto</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-50">
-                    {filteredMovimientos.length > 0 ? filteredMovimientos.map((m) => (
-                      <tr key={m.id} className="hover:bg-zinc-50 transition-colors">
-                        <td className="px-4 sm:px-8 py-5">
-                          <p className="text-xs text-zinc-900 font-bold">{new Date(m.fecha).toLocaleDateString()}</p>
-                          <p className="text-[10px] text-zinc-400 font-mono">{new Date(m.fecha).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                        </td>
-                        <td className="px-4 sm:px-8 py-5">
-                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full border ${
-                            m.tipo === 'ingreso' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-red-50 text-red-600 border-red-100'
-                          }`}>
-                            {m.tipo}
-                          </span>
-                        </td>
-                        <td className="px-4 sm:px-8 py-5">
-                          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider bg-zinc-100 px-2 py-1 rounded-lg">
-                            {m.origen.replace('_', ' ')}
-                          </span>
-                        </td>
-                        <td className="px-4 sm:px-8 py-5">
-                          {m.nombre_cliente ? (
-                            <div className="flex items-center gap-2">
-                              <div className="w-6 h-6 rounded-full bg-zinc-100 flex items-center justify-center text-[10px] font-bold text-zinc-600">
-                                {m.nombre_cliente.charAt(0)}
-                              </div>
-                              <p className="text-xs font-bold text-zinc-900">{m.nombre_cliente}</p>
+                  {movimientos.length > 0 ? (
+                    <div className="divide-y divide-slate-100">
+                      {movimientos.slice(0, 5).map((movement) => (
+                        <div key={movement.id} className="flex min-w-0 flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+                          <div className="flex min-w-0 items-start gap-3">
+                            <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${
+                              movement.tipo === 'ingreso'
+                                ? 'bg-emerald-50 text-emerald-700'
+                                : 'bg-red-50 text-red-700'
+                            }`}>
+                              {movement.tipo === 'ingreso' ? <ArrowUpRight size={20} /> : <ArrowDownLeft size={20} />}
                             </div>
-                          ) : (
-                            <span className="text-zinc-300 text-[10px] font-bold uppercase tracking-widest">N/A</span>
-                          )}
-                        </td>
-                        <td className="px-4 sm:px-8 py-5">
-                          <p className="text-sm font-bold text-zinc-900 line-clamp-1">{m.descripcion}</p>
-                        </td>
-                        <td className="px-4 sm:px-8 py-5 text-center">
-                          <span className="text-[10px] font-bold uppercase bg-zinc-100 text-zinc-600 px-3 py-1 rounded-full border border-zinc-200">
-                            {m.forma_pago}
-                          </span>
-                        </td>
-                        <td className={`px-4 sm:px-8 py-5 text-right font-mono font-black ${
-                          m.tipo === 'ingreso' ? 'text-emerald-600' : 'text-red-600'
+                            <div className="min-w-0">
+                              <p className="break-words text-sm font-black text-slate-900">{movement.descripcion}</p>
+                              <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs font-bold text-slate-500">
+                                <span>{paymentLabel(movement.forma_pago)}</span>
+                                <span>•</span>
+                                <span>{formatDate(movement.fecha, true)}</span>
+                                {movement.nombre_cliente && (
+                                  <>
+                                    <span>•</span>
+                                    <span className="break-words">{movement.nombre_cliente}</span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <p className={`shrink-0 text-xl font-black ${
+                            movement.tipo === 'ingreso' ? 'text-emerald-600' : 'text-red-600'
+                          }`}>
+                            {movement.tipo === 'ingreso' ? '+' : '-'}{formatCurrency(movement.monto)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-10 text-center">
+                      <History size={32} className="mx-auto text-slate-300" />
+                      <p className="mt-3 font-black text-slate-700">Todavía no hay movimientos</p>
+                      <p className="mt-1 text-sm text-slate-500">Las ventas, cobros y egresos aparecerán aquí.</p>
+                    </div>
+                  )}
+                </article>
+              </section>
+            )}
+
+            {activeTab === 'caja' && (
+              <section className="space-y-5">
+                <div className="flex min-w-0 flex-col gap-4 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="min-w-0">
+                    <h3 className="text-xl font-black text-slate-950">Caja diaria</h3>
+                    <p className="mt-1 break-words text-sm text-slate-500">
+                      {new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-AR', {
+                        weekday: 'long',
+                        day: 'numeric',
+                        month: 'long',
+                        year: 'numeric'
+                      })}
+                    </p>
+                  </div>
+                  <label className="min-w-0 lg:w-64">
+                    <span className="mb-2 block text-[11px] font-black uppercase tracking-wide text-slate-500">Fecha de caja</span>
+                    <div className="relative">
+                      <Calendar className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
+                      <input
+                        type="date"
+                        value={selectedDate}
+                        onChange={(event) => setSelectedDate(event.target.value)}
+                        className="min-h-11 w-full min-w-0 rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-3 text-sm font-bold text-slate-900 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                      />
+                    </div>
+                  </label>
+                </div>
+
+                <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  {summaryCard('Efectivo', cajaStats.efectivo, Banknote, 'emerald')}
+                  {summaryCard('Transferencias', cajaStats.transferencia, Landmark, 'indigo')}
+                  {summaryCard('Mercado Pago', cajaStats.mercadoPago, Smartphone, 'slate')}
+                  {summaryCard('Resultado neto', cajaStats.resultadoNeto, Wallet, cajaStats.resultadoNeto >= 0 ? 'emerald' : 'red')}
+                </div>
+
+                <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">
+                  {cajaDiaria.length > 0 ? cajaDiaria.map((movement) => (
+                    <article key={movement.id} className="min-w-0 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                      <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${
+                            movement.tipo === 'ingreso'
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : 'bg-red-50 text-red-700'
+                          }`}>
+                            {movement.tipo === 'ingreso' ? <ArrowUpRight size={20} /> : <ArrowDownLeft size={20} />}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="break-words text-sm font-black text-slate-950">{movement.descripcion}</p>
+                            <p className="mt-1 text-xs font-bold text-slate-500">{originLabel(movement.origen)}</p>
+                          </div>
+                        </div>
+                        <p className={`shrink-0 text-xl font-black ${
+                          movement.tipo === 'ingreso' ? 'text-emerald-600' : 'text-red-600'
                         }`}>
-                          {m.tipo === 'ingreso' ? '+' : '-'}${m.monto.toFixed(2)}
-                        </td>
-                      </tr>
-                    )) : (
-                      <tr>
-                        <td colSpan={7} className="px-8 py-20 text-center text-zinc-400">
-                          No se encontraron movimientos con los filtros seleccionados.
-                        </td>
-                      </tr>
+                          {movement.tipo === 'ingreso' ? '+' : '-'}{formatCurrency(movement.monto)}
+                        </p>
+                      </div>
+
+                      <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 border-t border-slate-100 pt-4 min-[420px]:grid-cols-2">
+                        <div className="min-w-0 rounded-2xl bg-slate-50 p-3">
+                          <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Hora</p>
+                          <p className="mt-1 text-sm font-bold text-slate-800">{formatDate(movement.fecha, true).split(',').pop()?.trim()}</p>
+                        </div>
+                        <div className="min-w-0 rounded-2xl bg-slate-50 p-3">
+                          <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Forma de pago</p>
+                          <p className="mt-1 break-words text-sm font-bold text-slate-800">{paymentLabel(movement.forma_pago)}</p>
+                        </div>
+                      </div>
+                    </article>
+                  )) : (
+                    <div className="col-span-full rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center">
+                      <Clock size={32} className="mx-auto text-slate-300" />
+                      <p className="mt-3 font-black text-slate-700">No hay movimientos para esta fecha</p>
+                      <p className="mt-1 text-sm text-slate-500">Elegí otra fecha o registrá una operación.</p>
+                    </div>
+                  )}
+                </div>
+
+                <article className="grid min-w-0 grid-cols-1 gap-3 rounded-3xl bg-slate-950 p-5 text-white sm:grid-cols-3 sm:p-6">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">Ingresos del día</p>
+                    <p className="mt-2 break-words text-xl font-black text-emerald-400">{formatCurrency(cajaStats.totalIngresos)}</p>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">Egresos del día</p>
+                    <p className="mt-2 break-words text-xl font-black text-red-400">{formatCurrency(cajaStats.totalEgresos)}</p>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">Resultado</p>
+                    <p className={`mt-2 break-words text-xl font-black ${cajaStats.resultadoNeto >= 0 ? 'text-white' : 'text-red-300'}`}>
+                      {formatCurrency(cajaStats.resultadoNeto)}
+                    </p>
+                  </div>
+                </article>
+              </section>
+            )}
+
+            {activeTab === 'egresos' && (
+              <section className="space-y-5">
+                <div className="flex min-w-0 flex-col gap-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <h3 className="text-xl font-black text-slate-950">Historial de egresos</h3>
+                    <p className="mt-1 text-sm text-slate-500">Gastos manuales y salidas registradas en Finanzas.</p>
+                  </div>
+                  <div className="min-w-0 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-red-700">
+                    <p className="text-[10px] font-black uppercase tracking-wide text-red-500">Total del mes</p>
+                    <p className="mt-1 break-words text-xl font-black">{formatCurrency(stats.egresosMes)}</p>
+                  </div>
+                </div>
+
+                <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+                  {egresosList.length > 0 ? egresosList.map((expense) => (
+                    <article key={expense.id} className="min-w-0 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                      <div className="flex min-w-0 items-start justify-between gap-4">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-red-50 text-red-700">
+                          <TrendingDown size={20} />
+                        </div>
+                        <div className="min-w-0 text-right">
+                          <p className="break-words text-xl font-black text-red-600">-{formatCurrency(expense.monto)}</p>
+                          <span className="mt-2 inline-flex max-w-full rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600">
+                            <span className="truncate">{expense.categoria || 'Otros'}</span>
+                          </span>
+                        </div>
+                      </div>
+                      <p className="mt-5 break-words text-sm font-black text-slate-950">{expense.descripcion}</p>
+                      <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 min-[420px]:grid-cols-2">
+                        <div className="min-w-0 rounded-2xl bg-slate-50 p-3">
+                          <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Fecha</p>
+                          <p className="mt-1 text-sm font-bold text-slate-800">{formatDate(expense.fecha)}</p>
+                        </div>
+                        <div className="min-w-0 rounded-2xl bg-slate-50 p-3">
+                          <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Forma de pago</p>
+                          <p className="mt-1 break-words text-sm font-bold text-slate-800">{paymentLabel(expense.forma_pago)}</p>
+                        </div>
+                      </div>
+                    </article>
+                  )) : (
+                    <div className="col-span-full rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center">
+                      <TrendingDown size={32} className="mx-auto text-slate-300" />
+                      <p className="mt-3 font-black text-slate-700">No hay egresos registrados</p>
+                      <p className="mt-1 text-sm text-slate-500">Los gastos aparecerán aquí cuando se registren.</p>
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {activeTab === 'movimientos' && (
+              <section className="space-y-5">
+                <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="mb-4 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <h3 className="text-xl font-black text-slate-950">Todos los movimientos</h3>
+                      <p className="mt-1 text-sm text-slate-500">{filteredMovimientos.length} resultados visibles.</p>
+                    </div>
+                    {(movimientosSearch || movimientosTypeFilter !== 'todos' || movimientosDateFilter) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMovimientosSearch('');
+                          setMovimientosTypeFilter('todos');
+                          setMovimientosDateFilter('');
+                        }}
+                        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-xs font-black uppercase tracking-wide text-slate-700 hover:bg-slate-200"
+                      >
+                        <RotateCcw size={16} />
+                        Limpiar filtros
+                      </button>
                     )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
+                  </div>
+
+                  <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <label className="min-w-0 sm:col-span-2">
+                      <span className="mb-2 block text-[11px] font-black uppercase tracking-wide text-slate-500">Buscar</span>
+                      <div className="relative">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
+                        <input
+                          type="text"
+                          placeholder="Cliente o descripción"
+                          value={movimientosSearch}
+                          onChange={(event) => setMovimientosSearch(event.target.value)}
+                          className="min-h-11 w-full min-w-0 rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-3 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                        />
+                      </div>
+                    </label>
+
+                    <label className="min-w-0">
+                      <span className="mb-2 block text-[11px] font-black uppercase tracking-wide text-slate-500">Fecha</span>
+                      <input
+                        type="date"
+                        value={movimientosDateFilter}
+                        onChange={(event) => setMovimientosDateFilter(event.target.value)}
+                        className="min-h-11 w-full min-w-0 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-bold outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                      />
+                    </label>
+
+                    <label className="min-w-0">
+                      <span className="mb-2 block text-[11px] font-black uppercase tracking-wide text-slate-500">Tipo</span>
+                      <select
+                        value={movimientosTypeFilter}
+                        onChange={(event) => setMovimientosTypeFilter(event.target.value as 'todos' | 'ingreso' | 'egreso')}
+                        className="min-h-11 w-full min-w-0 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-bold outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                      >
+                        <option value="todos">Todos</option>
+                        <option value="ingreso">Ingresos</option>
+                        <option value="egreso">Egresos</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">
+                  {filteredMovimientos.length > 0 ? filteredMovimientos.map((movement) => (
+                    <article key={movement.id} className="min-w-0 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                      <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${
+                            movement.tipo === 'ingreso'
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : 'bg-red-50 text-red-700'
+                          }`}>
+                            {movement.tipo === 'ingreso' ? <ArrowUpRight size={20} /> : <ArrowDownLeft size={20} />}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-wide ${
+                                movement.tipo === 'ingreso'
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                  : 'border-red-200 bg-red-50 text-red-700'
+                              }`}>
+                                {movement.tipo}
+                              </span>
+                              <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600">
+                                {originLabel(movement.origen)}
+                              </span>
+                            </div>
+                            <p className="mt-3 break-words text-sm font-black text-slate-950">{movement.descripcion}</p>
+                          </div>
+                        </div>
+                        <p className={`shrink-0 break-words text-xl font-black ${
+                          movement.tipo === 'ingreso' ? 'text-emerald-600' : 'text-red-600'
+                        }`}>
+                          {movement.tipo === 'ingreso' ? '+' : '-'}{formatCurrency(movement.monto)}
+                        </p>
+                      </div>
+
+                      <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 border-t border-slate-100 pt-4 min-[420px]:grid-cols-2">
+                        <div className="min-w-0 rounded-2xl bg-slate-50 p-3">
+                          <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Fecha</p>
+                          <p className="mt-1 break-words text-sm font-bold text-slate-800">{formatDate(movement.fecha, true)}</p>
+                        </div>
+                        <div className="min-w-0 rounded-2xl bg-slate-50 p-3">
+                          <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Forma de pago</p>
+                          <p className="mt-1 break-words text-sm font-bold text-slate-800">{paymentLabel(movement.forma_pago)}</p>
+                        </div>
+                        <div className="min-w-0 rounded-2xl bg-slate-50 p-3 min-[420px]:col-span-2">
+                          <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Cliente</p>
+                          <p className="mt-1 break-words text-sm font-bold text-slate-800">{movement.nombre_cliente || 'Sin cliente asociado'}</p>
+                        </div>
+                      </div>
+                    </article>
+                  )) : (
+                    <div className="col-span-full rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center">
+                      <Search size={32} className="mx-auto text-slate-300" />
+                      <p className="mt-3 font-black text-slate-700">No hay movimientos para estos filtros</p>
+                      <p className="mt-1 text-sm text-slate-500">Probá limpiar los filtros o elegir otra fecha.</p>
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {activeTab === 'cheques' && (
+              <section className="space-y-5">
+                <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  {summaryCard('Cheques en cartera', cheques.filter((cheque) => cheque.estado === 'en_cartera').length, CreditCard, 'emerald', false)}
+                  {summaryCard('Importe total', cheques.reduce((total, cheque) => total + Number(cheque.importe || 0), 0), Wallet, 'indigo')}
+                  {summaryCard('Próximos a vencer', chequesProximosAVencer.length, AlertCircle, chequesProximosAVencer.length > 0 ? 'red' : 'slate', false)}
+                </div>
+
+                {chequesProximosAVencer.length > 0 && (
+                  <article className="rounded-3xl border border-amber-200 bg-amber-50 p-4 sm:p-5">
+                    <div className="flex items-start gap-3 text-amber-900">
+                      <AlertCircle size={22} className="mt-0.5 shrink-0" />
+                      <div>
+                        <h3 className="font-black">Cheques próximos a vencer</h3>
+                        <p className="mt-1 text-sm text-amber-700">Vencen dentro de los próximos siete días.</p>
+                      </div>
+                    </div>
+                    <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                      {chequesProximosAVencer.map((cheque) => (
+                        <div key={cheque.id} className="min-w-0 rounded-2xl border border-amber-200 bg-white/80 p-4">
+                          <p className="break-words text-sm font-black text-slate-950">{cheque.banco} · N.º {cheque.numero_cheque}</p>
+                          <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
+                            <span className="text-xs font-bold text-amber-700">Vence {formatDate(cheque.fecha_vencimiento)}</span>
+                            <span className="break-words text-sm font-black text-slate-950">{formatCurrency(cheque.importe)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+                )}
+
+                <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="mb-4 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <h3 className="text-xl font-black text-slate-950">Cartera de cheques</h3>
+                      <p className="mt-1 text-sm text-slate-500">{filteredCheques.length} resultados visibles.</p>
+                    </div>
+                    {(chequesSearch || chequesEstadoFilter !== 'todos' || chequesVencimientoFilter) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setChequesSearch('');
+                          setChequesEstadoFilter('todos');
+                          setChequesVencimientoFilter('');
+                        }}
+                        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-xs font-black uppercase tracking-wide text-slate-700 hover:bg-slate-200"
+                      >
+                        <RotateCcw size={16} />
+                        Limpiar filtros
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <label className="min-w-0 sm:col-span-2">
+                      <span className="mb-2 block text-[11px] font-black uppercase tracking-wide text-slate-500">Buscar</span>
+                      <div className="relative">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
+                        <input
+                          type="text"
+                          placeholder="Cliente, banco o número"
+                          value={chequesSearch}
+                          onChange={(event) => setChequesSearch(event.target.value)}
+                          className="min-h-11 w-full min-w-0 rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-3 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                        />
+                      </div>
+                    </label>
+
+                    <label className="min-w-0">
+                      <span className="mb-2 block text-[11px] font-black uppercase tracking-wide text-slate-500">Vencimiento</span>
+                      <input
+                        type="date"
+                        value={chequesVencimientoFilter}
+                        onChange={(event) => setChequesVencimientoFilter(event.target.value)}
+                        className="min-h-11 w-full min-w-0 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-bold outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                      />
+                    </label>
+
+                    <label className="min-w-0">
+                      <span className="mb-2 block text-[11px] font-black uppercase tracking-wide text-slate-500">Estado</span>
+                      <select
+                        value={chequesEstadoFilter}
+                        onChange={(event) => setChequesEstadoFilter(event.target.value)}
+                        className="min-h-11 w-full min-w-0 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-bold outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                      >
+                        <option value="todos">Todos</option>
+                        <option value="en_cartera">En cartera</option>
+                        <option value="depositado">Depositado</option>
+                        <option value="entregado_proveedor">Entregado a proveedor</option>
+                        <option value="cobrado">Cobrado</option>
+                        <option value="rechazado">Rechazado</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">
+                  {filteredCheques.length > 0 ? filteredCheques.map((cheque) => (
+                    <article key={cheque.id} className="min-w-0 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                      <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-700">
+                            <CreditCard size={20} />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="break-words text-base font-black text-slate-950">{cheque.banco}</p>
+                            <p className="mt-1 break-all text-xs font-bold uppercase tracking-wide text-slate-500">N.º {cheque.numero_cheque}</p>
+                          </div>
+                        </div>
+                        <div className="min-w-0 text-left sm:text-right">
+                          <p className="break-words text-xl font-black text-slate-950">{formatCurrency(cheque.importe)}</p>
+                          <span className={`mt-2 inline-flex max-w-full rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-wide ${chequeStatusClasses(cheque.estado)}`}>
+                            <span className="truncate">{chequeStatusLabel(cheque.estado)}</span>
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 border-t border-slate-100 pt-4 min-[420px]:grid-cols-2">
+                        <div className="min-w-0 rounded-2xl bg-slate-50 p-3">
+                          <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Cliente</p>
+                          <p className="mt-1 break-words text-sm font-bold text-slate-800">{cheque.nombre_cliente || 'Sin cliente'}</p>
+                        </div>
+                        <div className="min-w-0 rounded-2xl bg-slate-50 p-3">
+                          <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Vencimiento</p>
+                          <p className={`mt-1 text-sm font-bold ${
+                            new Date(cheque.fecha_vencimiento) < new Date() && cheque.estado === 'en_cartera'
+                              ? 'text-red-700'
+                              : 'text-slate-800'
+                          }`}>
+                            {formatDate(cheque.fecha_vencimiento)}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedCheque(cheque);
+                            setShowChequeDetailModal(true);
+                          }}
+                          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-black uppercase tracking-wide text-slate-700 hover:bg-slate-100"
+                          title="Ver detalle del cheque"
+                          aria-label={`Ver detalle del cheque ${cheque.numero_cheque}`}
+                        >
+                          <Eye size={17} />
+                          Ver detalle
+                        </button>
+
+                        {hasPermission('current_accounts', 'edit') ? (
+                          <label className="min-w-0">
+                            <span className="sr-only">Cambiar estado del cheque</span>
+                            <select
+                              value={cheque.estado}
+                              disabled={updatingChequeId === cheque.id}
+                              onChange={(event) => handleUpdateChequeStatus(cheque.id, event.target.value)}
+                              className="min-h-11 w-full min-w-0 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs font-black uppercase tracking-wide text-slate-800 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+                              aria-label={`Cambiar estado del cheque ${cheque.numero_cheque}`}
+                            >
+                              <option value="en_cartera">En cartera</option>
+                              <option value="depositado">Depositado</option>
+                              <option value="entregado_proveedor">Entregado a proveedor</option>
+                              <option value="cobrado">Cobrado</option>
+                              <option value="rechazado">Rechazado</option>
+                            </select>
+                          </label>
+                        ) : (
+                          <div className="flex min-h-11 items-center justify-center rounded-2xl bg-slate-100 px-4 py-3 text-xs font-black uppercase tracking-wide text-slate-500">
+                            {chequeStatusLabel(cheque.estado)}
+                          </div>
+                        )}
+                      </div>
+
+                      {updatingChequeId === cheque.id && (
+                        <div className="mt-3 flex items-center justify-center gap-2 rounded-xl bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700">
+                          <Loader2 size={15} className="animate-spin" />
+                          Actualizando estado…
+                        </div>
+                      )}
+                    </article>
+                  )) : (
+                    <div className="col-span-full rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center">
+                      <CreditCard size={32} className="mx-auto text-slate-300" />
+                      <p className="mt-3 font-black text-slate-700">No hay cheques para estos filtros</p>
+                      <p className="mt-1 text-sm text-slate-500">Limpiá los filtros para volver a ver la cartera completa.</p>
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+          </>
         )}
       </div>
 
-      {/* Cheque Detail Modal */}
       {showChequeDetailModal && selectedCheque && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-2 sm:p-4">
-          <div className="bg-white rounded-[32px] sm:rounded-[40px] w-full max-w-lg overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300 max-h-[95vh] flex flex-col">
-            <div className="p-6 sm:p-8 border-b border-zinc-100 flex items-center justify-between bg-zinc-900 text-white shrink-0">
-              <div>
-                <h3 className="text-lg sm:text-xl font-black tracking-tight">Detalles del Cheque</h3>
-                <p className="text-zinc-400 text-[9px] sm:text-[10px] font-bold uppercase tracking-widest mt-1">
-                  N° {selectedCheque.numero_cheque} • {selectedCheque.banco}
-                </p>
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/65 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+          <div className="flex max-h-[100dvh] w-full min-w-0 flex-col overflow-hidden rounded-t-[30px] bg-white shadow-2xl sm:max-h-[90dvh] sm:max-w-xl sm:rounded-[30px]">
+            <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-100 bg-slate-950 p-5 text-white sm:p-6">
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-300">Detalle de cheque</p>
+                <h3 className="mt-2 break-words text-xl font-black">{selectedCheque.banco}</h3>
+                <p className="mt-1 break-all text-sm font-bold text-slate-300">N.º {selectedCheque.numero_cheque}</p>
               </div>
-              <button 
+              <button
+                type="button"
                 onClick={() => setShowChequeDetailModal(false)}
-                className="p-2 hover:bg-white/10 rounded-full transition-all"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/10 hover:bg-white/15"
+                aria-label="Cerrar detalle del cheque"
+                title="Cerrar"
               >
-                <X size={20} sm:size={24} />
+                <X size={20} />
               </button>
-            </div>
-            
-            <div className="p-6 sm:p-8 space-y-6 sm:space-y-8 overflow-y-auto custom-scrollbar">
-              <div className="grid grid-cols-2 gap-4 sm:gap-8">
-                <div>
-                  <label className="block text-[9px] sm:text-[10px] font-bold text-zinc-400 uppercase mb-1 tracking-widest">Importe</label>
-                  <p className="text-xl sm:text-2xl font-black text-zinc-900 font-mono">${selectedCheque.importe.toFixed(2)}</p>
+            </header>
+
+            <div className="min-w-0 flex-1 space-y-5 overflow-y-auto p-5 sm:p-6">
+              <div className="grid min-w-0 grid-cols-1 gap-3 min-[420px]:grid-cols-2">
+                <div className="min-w-0 rounded-2xl bg-indigo-50 p-4">
+                  <p className="text-[10px] font-black uppercase tracking-wide text-indigo-500">Importe</p>
+                  <p className="mt-2 break-words text-2xl font-black text-indigo-950">{formatCurrency(selectedCheque.importe)}</p>
                 </div>
-                <div>
-                  <label className="block text-[9px] sm:text-[10px] font-bold text-zinc-400 uppercase mb-1 tracking-widest">Estado Actual</label>
-                  <span className={`inline-block text-[9px] sm:text-[10px] font-black uppercase px-2 sm:px-3 py-1 rounded-full border mt-1 ${
-                    selectedCheque.estado === 'en_cartera' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
-                    selectedCheque.estado === 'depositado' ? 'bg-blue-50 text-blue-600 border-blue-100' :
-                    selectedCheque.estado === 'cobrado' ? 'bg-zinc-50 text-zinc-600 border-zinc-100' :
-                    selectedCheque.estado === 'rechazado' ? 'bg-red-50 text-red-600 border-red-100' :
-                    'bg-amber-50 text-amber-600 border-amber-100'
-                  }`}>
-                    {selectedCheque.estado.replace('_', ' ')}
+                <div className="min-w-0 rounded-2xl bg-slate-50 p-4">
+                  <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Estado</p>
+                  <span className={`mt-2 inline-flex max-w-full rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-wide ${chequeStatusClasses(selectedCheque.estado)}`}>
+                    <span className="truncate">{chequeStatusLabel(selectedCheque.estado)}</span>
                   </span>
                 </div>
               </div>
 
-              <div className="space-y-4">
-                <div className="flex items-center justify-between py-3 border-b border-zinc-50">
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente Emisor</span>
-                  <div className="text-right">
-                    <p className="text-sm font-bold text-zinc-900">{selectedCheque.nombre_cliente}</p>
-                    <p className="text-[10px] text-zinc-400 font-bold uppercase">ID Cliente: {selectedCheque.cliente_id}</p>
-                  </div>
+              <dl className="space-y-3">
+                <div className="grid min-w-0 grid-cols-1 gap-1 rounded-2xl border border-slate-100 p-4 min-[420px]:grid-cols-[140px_minmax(0,1fr)]">
+                  <dt className="text-[10px] font-black uppercase tracking-wide text-slate-400">Cliente emisor</dt>
+                  <dd className="break-words text-sm font-bold text-slate-900 min-[420px]:text-right">{selectedCheque.nombre_cliente || 'Sin cliente'}</dd>
                 </div>
-
-                <div className="flex items-center justify-between py-3 border-b border-zinc-50">
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Venta Asociada</span>
-                  <div className="text-right">
-                    {selectedCheque.numero_venta ? (
-                      <p className="text-sm font-bold text-zinc-900">Venta N° {selectedCheque.numero_venta}</p>
-                    ) : (
-                      <p className="text-sm font-bold text-zinc-300 italic">No asociada a venta</p>
-                    )}
-                  </div>
+                <div className="grid min-w-0 grid-cols-1 gap-1 rounded-2xl border border-slate-100 p-4 min-[420px]:grid-cols-[140px_minmax(0,1fr)]">
+                  <dt className="text-[10px] font-black uppercase tracking-wide text-slate-400">Venta asociada</dt>
+                  <dd className="break-words text-sm font-bold text-slate-900 min-[420px]:text-right">
+                    {selectedCheque.numero_venta ? `Venta N.º ${selectedCheque.numero_venta}` : 'No asociada a venta'}
+                  </dd>
                 </div>
-
-                <div className="flex items-center justify-between py-3 border-b border-zinc-50">
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Vencimiento</span>
-                  <p className="text-sm font-bold text-zinc-900">{new Date(selectedCheque.fecha_vencimiento).toLocaleDateString()}</p>
+                <div className="grid min-w-0 grid-cols-1 gap-1 rounded-2xl border border-slate-100 p-4 min-[420px]:grid-cols-[140px_minmax(0,1fr)]">
+                  <dt className="text-[10px] font-black uppercase tracking-wide text-slate-400">Vencimiento</dt>
+                  <dd className="text-sm font-bold text-slate-900 min-[420px]:text-right">{formatDate(selectedCheque.fecha_vencimiento)}</dd>
                 </div>
-
                 {selectedCheque.proveedor_id && (
-                  <div className="flex items-center justify-between py-3 border-b border-zinc-50">
-                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Entregado a Proveedor</span>
-                    <div className="text-right">
-                      <p className="text-sm font-bold text-zinc-900">{selectedCheque.nombre_proveedor}</p>
+                  <div className="grid min-w-0 grid-cols-1 gap-1 rounded-2xl border border-slate-100 p-4 min-[420px]:grid-cols-[140px_minmax(0,1fr)]">
+                    <dt className="text-[10px] font-black uppercase tracking-wide text-slate-400">Proveedor</dt>
+                    <dd className="break-words text-sm font-bold text-slate-900 min-[420px]:text-right">
+                      {selectedCheque.nombre_proveedor || 'Proveedor asociado'}
                       {selectedCheque.fecha_entrega && (
-                        <p className="text-[10px] text-zinc-400 font-bold uppercase">Fecha: {new Date(selectedCheque.fecha_entrega).toLocaleDateString()}</p>
+                        <span className="mt-1 block text-xs text-slate-500">Entregado el {formatDate(selectedCheque.fecha_entrega)}</span>
                       )}
-                    </div>
+                    </dd>
                   </div>
                 )}
+              </dl>
 
-                {selectedCheque.observaciones && (
-                  <div className="pt-2">
-                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest block mb-2">Observaciones</span>
-                    <div className="bg-zinc-50 p-4 rounded-2xl text-sm text-zinc-600 border border-zinc-100 italic">
-                      "{selectedCheque.observaciones}"
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="pt-4">
-                <button
-                  onClick={() => setShowChequeDetailModal(false)}
-                  className="w-full py-4 bg-zinc-900 text-white rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-900/20"
-                >
-                  Cerrar Detalles
-                </button>
-              </div>
+              {selectedCheque.observaciones && (
+                <div className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Observaciones</p>
+                  <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{selectedCheque.observaciones}</p>
+                </div>
+              )}
             </div>
+
+            <footer className="shrink-0 border-t border-slate-100 bg-white p-4 sm:p-5">
+              <button
+                type="button"
+                onClick={() => setShowChequeDetailModal(false)}
+                className="min-h-11 w-full rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black uppercase tracking-wide text-white hover:bg-slate-800"
+              >
+                Cerrar detalle
+              </button>
+            </footer>
           </div>
         </div>
       )}
 
-      {/* Egreso Modal */}
       {showEgresoModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-2 sm:p-4">
-          <div className="bg-white rounded-[32px] sm:rounded-[40px] w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300 max-h-[95vh] flex flex-col">
-            <div className="p-6 sm:p-8 border-b border-zinc-100 flex items-center justify-between bg-red-600 text-white shrink-0">
-              <h3 className="text-lg sm:text-xl font-black tracking-tight">Registrar Egreso</h3>
-              <button 
-                onClick={() => setShowEgresoModal(false)}
-                className="p-2 hover:bg-white/10 rounded-full transition-all"
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/65 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+          <div className="flex max-h-[100dvh] w-full min-w-0 flex-col overflow-hidden rounded-t-[30px] bg-white shadow-2xl sm:max-h-[92dvh] sm:max-w-2xl sm:rounded-[30px]">
+            <header className="flex shrink-0 items-start justify-between gap-4 border-b border-red-100 bg-red-600 p-5 text-white sm:p-6">
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-red-100">Nueva salida de fondos</p>
+                <h3 className="mt-2 text-xl font-black">Registrar egreso</h3>
+                <p className="mt-1 text-sm text-red-100">Completá los datos del gasto antes de confirmar.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !isSubmittingEgreso && setShowEgresoModal(false)}
+                disabled={isSubmittingEgreso}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/10 hover:bg-white/15 disabled:opacity-50"
+                aria-label="Cerrar formulario de egreso"
+                title="Cerrar"
               >
-                <X size={20} sm:size={24} />
+                <X size={20} />
               </button>
-            </div>
-            <form onSubmit={handleEgresoSubmit} className="p-6 sm:p-8 space-y-4 sm:space-y-6 overflow-y-auto custom-scrollbar">
-              <div>
-                <label className="block text-[9px] sm:text-[10px] font-bold text-zinc-400 uppercase mb-2 tracking-widest">Monto del Gasto</label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400 font-mono text-lg">$</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    required
-                    autoFocus
-                    className="w-full pl-10 pr-4 py-3 sm:py-4 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-4 focus:ring-red-500/10 focus:border-red-500 outline-none text-xl sm:text-2xl font-black font-mono"
-                    placeholder="0.00"
-                    value={egresoForm.monto}
-                    onChange={(e) => setEgresoForm({ ...egresoForm, monto: e.target.value })}
-                  />
-                </div>
-              </div>
+            </header>
 
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-2 tracking-widest">Descripción / Concepto</label>
-                <input
-                  type="text"
-                  required
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-4 focus:ring-red-500/10 focus:border-red-500 outline-none text-sm"
-                  placeholder="Ej: Pago de luz, Alquiler, Artículos de limpieza..."
-                  value={egresoForm.descripcion}
-                  onChange={(e) => setEgresoForm({ ...egresoForm, descripcion: e.target.value })}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-2 tracking-widest">Categoría</label>
-                  <select
-                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-4 focus:ring-red-500/10 focus:border-red-500 outline-none text-sm font-bold"
-                    value={egresoForm.categoria}
-                    onChange={(e) => setEgresoForm({ ...egresoForm, categoria: e.target.value })}
-                  >
-                    <option value="Proveedor">Proveedor</option>
-                    <option value="Servicios">Servicios</option>
-                    <option value="Impuestos">Impuestos</option>
-                    <option value="Sueldos">Sueldos</option>
-                    <option value="Otros">Otros</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-2 tracking-widest">Forma de Pago</label>
-                  <select
-                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-4 focus:ring-red-500/10 focus:border-red-500 outline-none text-sm font-bold"
-                    value={egresoForm.forma_pago}
-                    onChange={(e) => setEgresoForm({ ...egresoForm, forma_pago: e.target.value })}
-                  >
-                    <option value="efectivo">Efectivo</option>
-                    <option value="transferencia">Transferencia</option>
-                    <option value="mercado_pago">Mercado Pago</option>
-                    <option value="cheque_en_cartera">Cheque en Cartera</option>
-                  </select>
-                </div>
-              </div>
-
-              {egresoForm.forma_pago === 'cheque_en_cartera' && (
-                <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                  <div>
-                    <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-2 tracking-widest">Seleccionar Cheque</label>
-                    <select
-                      required
-                      className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-4 focus:ring-red-500/10 focus:border-red-500 outline-none text-sm font-bold"
-                      value={egresoForm.cheque_id}
-                      onChange={(e) => {
-                        const cheque = cheques.find(c => c.id === parseInt(e.target.value));
-                        setEgresoForm({ 
-                          ...egresoForm, 
-                          cheque_id: e.target.value,
-                          monto: cheque ? cheque.importe.toString() : egresoForm.monto,
-                          descripcion: cheque ? `Pago con Cheque N° ${cheque.numero_cheque} - ${cheque.banco}` : egresoForm.descripcion
-                        });
-                      }}
-                    >
-                      <option value="">Seleccione un cheque...</option>
-                      {cheques.filter(c => c.estado === 'en_cartera').map(c => (
-                        <option key={c.id} value={c.id}>
-                          N° {c.numero_cheque} - {c.banco} (${c.importe.toFixed(2)}) - Vence: {new Date(c.fecha_vencimiento).toLocaleDateString()}
-                        </option>
-                      ))}
-                    </select>
+            <form onSubmit={handleEgresoSubmit} className="flex min-h-0 flex-1 flex-col">
+              <div className="min-w-0 flex-1 space-y-5 overflow-y-auto p-5 sm:p-6">
+                {egresoError && (
+                  <div className="flex min-w-0 items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-800" role="alert">
+                    <AlertCircle size={20} className="mt-0.5 shrink-0" />
+                    <p className="min-w-0 break-words text-sm font-bold">{egresoError}</p>
                   </div>
+                )}
 
-                  {egresoForm.categoria === 'Proveedor' && (
-                    <div>
-                      <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-2 tracking-widest">Proveedor Destino</label>
+                <label className="block min-w-0">
+                  <span className="mb-2 block text-[11px] font-black uppercase tracking-wide text-slate-500">Monto del gasto</span>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-lg font-black text-slate-400">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      required
+                      autoFocus
+                      value={egresoForm.monto}
+                      onChange={(event) => setEgresoForm({ ...egresoForm, monto: event.target.value })}
+                      className="min-h-14 w-full min-w-0 rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-2xl font-black text-slate-950 outline-none focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                      placeholder="0,00"
+                    />
+                  </div>
+                </label>
+
+                <label className="block min-w-0">
+                  <span className="mb-2 block text-[11px] font-black uppercase tracking-wide text-slate-500">Descripción o concepto</span>
+                  <input
+                    type="text"
+                    required
+                    value={egresoForm.descripcion}
+                    onChange={(event) => setEgresoForm({ ...egresoForm, descripcion: event.target.value })}
+                    className="min-h-11 w-full min-w-0 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                    placeholder="Ej.: Alquiler, servicio, compra o impuesto"
+                  />
+                </label>
+
+                <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+                  <label className="min-w-0">
+                    <span className="mb-2 block text-[11px] font-black uppercase tracking-wide text-slate-500">Categoría</span>
+                    <select
+                      value={egresoForm.categoria}
+                      onChange={(event) => setEgresoForm({ ...egresoForm, categoria: event.target.value })}
+                      className="min-h-11 w-full min-w-0 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-bold outline-none focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                    >
+                      <option value="Proveedor">Proveedor</option>
+                      <option value="Servicios">Servicios</option>
+                      <option value="Impuestos">Impuestos</option>
+                      <option value="Sueldos">Sueldos</option>
+                      <option value="Otros">Otros</option>
+                    </select>
+                  </label>
+
+                  <label className="min-w-0">
+                    <span className="mb-2 block text-[11px] font-black uppercase tracking-wide text-slate-500">Forma de pago</span>
+                    <select
+                      value={egresoForm.forma_pago}
+                      onChange={(event) => setEgresoForm({
+                        ...egresoForm,
+                        forma_pago: event.target.value,
+                        cheque_id: event.target.value === 'cheque_en_cartera' ? egresoForm.cheque_id : '',
+                        proveedor_id: event.target.value === 'cheque_en_cartera' ? egresoForm.proveedor_id : ''
+                      })}
+                      className="min-h-11 w-full min-w-0 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-bold outline-none focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                    >
+                      <option value="efectivo">Efectivo</option>
+                      <option value="transferencia">Transferencia</option>
+                      <option value="mercado_pago">Mercado Pago</option>
+                      <option value="cheque_en_cartera">Cheque en cartera</option>
+                    </select>
+                  </label>
+                </div>
+
+                {egresoForm.forma_pago === 'cheque_en_cartera' && (
+                  <div className="space-y-4 rounded-3xl border border-amber-200 bg-amber-50 p-4 sm:p-5">
+                    <label className="block min-w-0">
+                      <span className="mb-2 block text-[11px] font-black uppercase tracking-wide text-amber-800">Seleccionar cheque</span>
                       <select
                         required
-                        disabled={proveedoresLoading || !!proveedoresError}
-                        className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-4 focus:ring-red-500/10 focus:border-red-500 outline-none text-sm font-bold disabled:opacity-60 disabled:cursor-not-allowed"
-                        value={egresoForm.proveedor_id}
-                        onChange={(e) => setEgresoForm({ ...egresoForm, proveedor_id: e.target.value })}
-                        aria-label="Seleccionar proveedor destino"
+                        value={egresoForm.cheque_id}
+                        onChange={(event) => {
+                          const cheque = cheques.find((item) => item.id === parseInt(event.target.value, 10));
+                          setEgresoForm({
+                            ...egresoForm,
+                            cheque_id: event.target.value,
+                            monto: cheque ? cheque.importe.toString() : egresoForm.monto,
+                            descripcion: cheque
+                              ? `Pago con Cheque N.º ${cheque.numero_cheque} - ${cheque.banco}`
+                              : egresoForm.descripcion
+                          });
+                        }}
+                        className="min-h-11 w-full min-w-0 rounded-2xl border border-amber-200 bg-white px-3 py-3 text-sm font-bold outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-100"
                       >
-                        <option value="">
-                          {proveedoresLoading
-                            ? 'Cargando proveedores...'
-                            : proveedores.length === 0
-                              ? 'No hay proveedores disponibles'
-                              : 'Seleccione un proveedor...'}
-                        </option>
-                        {proveedores.map(p => (
-                          <option key={p.id} value={p.id}>{p.nombre}</option>
+                        <option value="">Seleccionar cheque…</option>
+                        {cheques.filter((cheque) => cheque.estado === 'en_cartera').map((cheque) => (
+                          <option key={cheque.id} value={cheque.id}>
+                            N.º {cheque.numero_cheque} · {cheque.banco} · {formatCurrency(cheque.importe)} · {formatDate(cheque.fecha_vencimiento)}
+                          </option>
                         ))}
                       </select>
+                    </label>
 
-                      {proveedoresError && (
-                        <div className="mt-3 flex flex-col sm:flex-row sm:items-center gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3" role="alert">
-                          <div className="flex items-start gap-2 flex-1">
-                            <AlertCircle size={18} className="text-red-600 shrink-0 mt-0.5" />
-                            <div>
-                              <p className="text-xs font-black text-red-700">No se pudieron cargar los proveedores</p>
-                              <p className="text-xs text-red-600 mt-1">{proveedoresError}</p>
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={fetchProveedores}
-                            className="px-4 py-2 rounded-xl bg-white border border-red-200 text-xs font-black text-red-700 hover:bg-red-100 transition-colors"
+                    {egresoForm.categoria === 'Proveedor' && (
+                      <div className="space-y-3">
+                        <label className="block min-w-0">
+                          <span className="mb-2 block text-[11px] font-black uppercase tracking-wide text-amber-800">Proveedor destino</span>
+                          <select
+                            required
+                            disabled={proveedoresLoading || Boolean(proveedoresError)}
+                            value={egresoForm.proveedor_id}
+                            onChange={(event) => setEgresoForm({ ...egresoForm, proveedor_id: event.target.value })}
+                            className="min-h-11 w-full min-w-0 rounded-2xl border border-amber-200 bg-white px-3 py-3 text-sm font-bold outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
                           >
-                            Reintentar
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
+                            <option value="">
+                              {proveedoresLoading
+                                ? 'Cargando proveedores…'
+                                : proveedores.length === 0
+                                  ? 'No hay proveedores disponibles'
+                                  : 'Seleccionar proveedor…'}
+                            </option>
+                            {proveedores.map((provider) => (
+                              <option key={provider.id} value={provider.id}>{provider.nombre}</option>
+                            ))}
+                          </select>
+                        </label>
 
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-2 tracking-widest">Fecha</label>
-                <input
-                  type="date"
-                  required
-                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-4 focus:ring-red-500/10 focus:border-red-500 outline-none text-sm"
-                  value={egresoForm.fecha}
-                  onChange={(e) => setEgresoForm({ ...egresoForm, fecha: e.target.value })}
-                />
+                        {proveedoresError && (
+                          <div className="flex min-w-0 flex-col gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 sm:flex-row sm:items-center" role="alert">
+                            <div className="flex min-w-0 flex-1 items-start gap-2">
+                              <AlertCircle size={18} className="mt-0.5 shrink-0 text-red-600" />
+                              <p className="min-w-0 break-words text-xs font-bold text-red-700">{proveedoresError}</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={fetchProveedores}
+                              className="min-h-11 rounded-xl border border-red-200 bg-white px-4 py-2 text-xs font-black uppercase tracking-wide text-red-700 hover:bg-red-100"
+                            >
+                              Reintentar
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <label className="block min-w-0">
+                  <span className="mb-2 block text-[11px] font-black uppercase tracking-wide text-slate-500">Fecha</span>
+                  <input
+                    type="date"
+                    required
+                    value={egresoForm.fecha}
+                    onChange={(event) => setEgresoForm({ ...egresoForm, fecha: event.target.value })}
+                    className="min-h-11 w-full min-w-0 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-bold outline-none focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                  />
+                </label>
               </div>
 
-              <button
-                type="submit"
-                className="w-full py-5 bg-red-600 text-white rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-red-700 transition-all shadow-2xl shadow-red-100"
-              >
-                <CheckCircle2 size={24} />
-                Confirmar Egreso
-              </button>
+              <footer className="grid shrink-0 grid-cols-1 gap-3 border-t border-slate-100 bg-white p-4 sm:grid-cols-2 sm:p-5">
+                <button
+                  type="button"
+                  onClick={() => setShowEgresoModal(false)}
+                  disabled={isSubmittingEgreso}
+                  className="min-h-12 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black uppercase tracking-wide text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingEgreso}
+                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-red-600 px-4 py-3 text-sm font-black uppercase tracking-wide text-white shadow-lg shadow-red-200 hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isSubmittingEgreso ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle2 size={18} />}
+                  {isSubmittingEgreso ? 'Registrando…' : 'Confirmar egreso'}
+                </button>
+              </footer>
             </form>
           </div>
         </div>
