@@ -12,7 +12,7 @@ const toNumber = (value: any, fallback: number = 0) => {
   return Number.isNaN(parsed) ? fallback : parsed;
 };
 
-router.get("/summary", requirePermission("dashboard", "view"), async (_req, res) => {
+router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async (_req, res) => {
   const now = new Date();
   const currentMonth = now.toISOString().slice(0, 7);
   const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -629,9 +629,5 @@ router.get("/deuda-vencida", requirePermission("dashboard", "view"), async (_req
   }
 });
 
-router.get("/stats", requirePermission("dashboard", "view"), async (req, res) => {
-  req.url = "/summary";
-  return router.handle(req, res, () => undefined);
-});
 
 export default router;
