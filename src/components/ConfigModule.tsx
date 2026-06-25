@@ -1,26 +1,35 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Settings, 
-  Store, 
-  CreditCard, 
-  Layers, 
-  Tags, 
-  Sliders, 
-  Hash,
-  Save,
-  Plus,
-  Trash2,
-  CheckCircle2,
+import React, { useEffect, useMemo, useState } from 'react';
+import {
   AlertCircle,
-  RotateCcw,
-  ShieldAlert,
+  Building2,
+  Check,
+  CheckCircle2,
+  CreditCard,
+  Database,
   Download,
-  Upload
+  Edit3,
+  FileJson,
+  Gauge,
+  Hash,
+  Layers,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Settings,
+  ShieldAlert,
+  Store,
+  Tags,
+  Trash2,
+  Upload,
+  X,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { unwrapResponse, apiFetch } from '../utils/api';
+import { apiFetch, unwrapResponse } from '../utils/api';
 
 type Section = 'negocio' | 'pagos' | 'categorias' | 'familias' | 'parametros' | 'numeraciones';
+
+type Message = { type: 'success' | 'error'; text: string };
 
 interface ConfigItem {
   id: number;
@@ -33,237 +42,305 @@ interface ConfigItem {
   category_name?: string;
 }
 
+interface DeleteTarget {
+  endpoint: string;
+  id: number;
+  name: string;
+  label: string;
+}
+
+const tabs: Array<{
+  id: Section;
+  label: string;
+  shortLabel: string;
+  description: string;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+}> = [
+  {
+    id: 'negocio',
+    label: 'Datos del negocio',
+    shortLabel: 'Negocio',
+    description: 'Identidad, contacto y seguridad de datos',
+    icon: Store,
+  },
+  {
+    id: 'pagos',
+    label: 'Formas de pago',
+    shortLabel: 'Pagos',
+    description: 'Medios disponibles para ventas y cobros',
+    icon: CreditCard,
+  },
+  {
+    id: 'categorias',
+    label: 'Categorías de productos',
+    shortLabel: 'Categorías',
+    description: 'Clasificación general del catálogo',
+    icon: Tags,
+  },
+  {
+    id: 'familias',
+    label: 'Familias de productos',
+    shortLabel: 'Familias',
+    description: 'Agrupaciones usadas por productos y reportes',
+    icon: Layers,
+  },
+  {
+    id: 'parametros',
+    label: 'Parámetros comerciales',
+    shortLabel: 'Parámetros',
+    description: 'Moneda, impuestos, crédito y costos',
+    icon: Gauge,
+  },
+  {
+    id: 'numeraciones',
+    label: 'Numeraciones del sistema',
+    shortLabel: 'Numeraciones',
+    description: 'Próximos números de comprobantes',
+    icon: Hash,
+  },
+];
+
+const inputClass =
+  'w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500';
+const labelClass = 'block text-[11px] font-black uppercase tracking-[0.16em] text-slate-500';
+const primaryButtonClass =
+  'inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-xs font-black uppercase tracking-[0.14em] text-white transition hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-200 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto';
+const secondaryButtonClass =
+  'inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-xs font-black uppercase tracking-[0.14em] text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto';
+
 export default function ConfigModule() {
   const { hasPermission } = useAuth();
+
   const [activeTab, setActiveTab] = useState<Section>('negocio');
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [message, setMessage] = useState<Message | null>(null);
+  const [loadError, setLoadError] = useState('');
+
+  const [settings, setSettings] = useState<Record<string, string>>({});
+  const [paymentMethods, setPaymentMethods] = useState<ConfigItem[]>([]);
+  const [categories, setCategories] = useState<ConfigItem[]>([]);
+  const [families, setFamilies] = useState<ConfigItem[]>([]);
+
+  const [editingItem, setEditingItem] = useState<ConfigItem | null>(null);
+  const [paymentForm, setPaymentForm] = useState({ name: '', tipo: 'Efectivo', activo: 1 });
+  const [categoryForm, setCategoryForm] = useState({ name: '', description: '', estado: 'activo' });
+  const [familyForm, setFamilyForm] = useState({
+    name: '',
+    category_id: null as number | null,
+    estado: 'activo',
+  });
+
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [showRestoreModal, setShowRestoreModal] = useState(false);
+  const [restoreAdminPassword, setRestoreAdminPassword] = useState('');
+  const [restoreConfirmation, setRestoreConfirmation] = useState('');
 
   const [showResetModal, setShowResetModal] = useState(false);
   const [resetAdminPassword, setResetAdminPassword] = useState('');
   const [resetConfirmation, setResetConfirmation] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
-  const [backupLoading, setBackupLoading] = useState(false);
-  const [restoreLoading, setRestoreLoading] = useState(false);
 
-  // Form states
-  const [settings, setSettings] = useState<Record<string, string>>({});
-  const [paymentMethods, setPaymentMethods] = useState<ConfigItem[]>([]);
-  const [categories, setCategories] = useState<ConfigItem[]>([]);
-  const [families, setFamilies] = useState<ConfigItem[]>([]);
-  
-  const [newItemName, setNewItemName] = useState('');
-  const [editingItem, setEditingItem] = useState<ConfigItem | null>(null);
-  const [paymentForm, setPaymentForm] = useState({
-    name: '',
-    tipo: 'Efectivo',
-    activo: 1
-  });
-  const [categoryForm, setCategoryForm] = useState({
-    name: '',
-    description: '',
-    estado: 'activo'
-  });
-  const [familyForm, setFamilyForm] = useState({
-    name: '',
-    category_id: null as number | null,
-    estado: 'activo'
-  });
+  const currentTab = useMemo(
+    () => tabs.find((tab) => tab.id === activeTab) || tabs[0],
+    [activeTab],
+  );
 
-  useEffect(() => {
-    fetchData();
-  }, [activeTab]);
+  const showStatus = (text: string, type: Message['type']) => {
+    setMessage({ text, type });
+    window.setTimeout(() => setMessage(null), 4000);
+  };
 
-  const fetchData = async () => {
-    setLoading(true);
+  const resetEditor = () => {
+    setEditingItem(null);
+    setPaymentForm({ name: '', tipo: 'Efectivo', activo: 1 });
+    setCategoryForm({ name: '', description: '', estado: 'activo' });
+    setFamilyForm({ name: '', category_id: null, estado: 'activo' });
+  };
+
+  const fetchData = async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+    setLoadError('');
+
     try {
       if (activeTab === 'negocio' || activeTab === 'parametros' || activeTab === 'numeraciones') {
-        const res = await apiFetch('/api/config/settings');
-        const body = await res.json();
-        const data = unwrapResponse(body);
-        setSettings(data);
+        const response = await apiFetch('/api/config/settings');
+        const body = await response.json();
+        if (!response.ok) throw new Error(body?.message || 'No se pudo cargar la configuración');
+        setSettings(unwrapResponse(body) || {});
       } else if (activeTab === 'pagos') {
-        const res = await apiFetch('/api/config/payment-methods');
-        const body = await res.json();
-        const data = unwrapResponse(body);
-        setPaymentMethods(data);
+        const response = await apiFetch('/api/config/payment-methods');
+        const body = await response.json();
+        if (!response.ok) throw new Error(body?.message || 'No se pudieron cargar las formas de pago');
+        setPaymentMethods(unwrapResponse(body) || []);
       } else if (activeTab === 'categorias') {
-        const res = await apiFetch('/api/config/product-categories');
-        const body = await res.json();
-        const data = unwrapResponse(body);
-        setCategories(data);
+        const response = await apiFetch('/api/config/product-categories');
+        const body = await response.json();
+        if (!response.ok) throw new Error(body?.message || 'No se pudieron cargar las categorías');
+        setCategories(unwrapResponse(body) || []);
       } else if (activeTab === 'familias') {
-        const res = await apiFetch('/api/config/product-families');
-        const body = await res.json();
-        const data = unwrapResponse(body);
-        setFamilies(data);
+        const [familiesResponse, categoriesResponse] = await Promise.all([
+          apiFetch('/api/config/product-families'),
+          apiFetch('/api/config/product-categories'),
+        ]);
+        const [familiesBody, categoriesBody] = await Promise.all([
+          familiesResponse.json(),
+          categoriesResponse.json(),
+        ]);
+        if (!familiesResponse.ok) {
+          throw new Error(familiesBody?.message || 'No se pudieron cargar las familias');
+        }
+        if (!categoriesResponse.ok) {
+          throw new Error(categoriesBody?.message || 'No se pudieron cargar las categorías');
+        }
+        setFamilies(unwrapResponse(familiesBody) || []);
+        setCategories(unwrapResponse(categoriesBody) || []);
       }
-    } catch (error) {
-      console.error("Error fetching config:", error);
+    } catch (error: any) {
+      const text = error?.message || 'No se pudieron cargar los datos';
+      setLoadError(text);
+      showStatus(text, 'error');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  const handleSaveSettings = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
+  useEffect(() => {
+    resetEditor();
+    void fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  const saveSettings = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSaving(true);
     try {
-      const res = await apiFetch('/api/config/settings', {
+      const response = await apiFetch('/api/config/settings', {
         method: 'POST',
-        body: JSON.stringify(settings)
+        body: JSON.stringify(settings),
       });
-      if (res.ok) {
-        showStatus('Configuración guardada correctamente', 'success');
-      } else {
-        showStatus('Error al guardar la configuración', 'error');
-      }
-    } catch (error) {
-      showStatus('Error de conexión', 'error');
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.message || 'No se pudo guardar la configuración');
+      showStatus('Configuración guardada correctamente', 'success');
+    } catch (error: any) {
+      showStatus(error?.message || 'Error al guardar la configuración', 'error');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
-  const handleSavePaymentMethod = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const savePaymentMethod = async (event: React.FormEvent) => {
+    event.preventDefault();
     if (!paymentForm.name.trim()) return;
-    setLoading(true);
+    setSaving(true);
     try {
-      const url = editingItem 
-        ? `/api/config/payment-methods/${editingItem.id}` 
-        : '/api/config/payment-methods';
-      const method = editingItem ? 'PUT' : 'POST';
-      
-      const res = await apiFetch(url, {
-        method,
-        body: JSON.stringify(paymentForm)
-      });
-      if (res.ok) {
-        setPaymentForm({ name: '', tipo: 'Efectivo', activo: 1 });
-        setEditingItem(null);
-        fetchData();
-        showStatus(editingItem ? 'Forma de pago actualizada' : 'Forma de pago agregada', 'success');
-      }
-    } catch (error) {
-      showStatus('Error al guardar forma de pago', 'error');
+      const response = await apiFetch(
+        editingItem ? `/api/config/payment-methods/${editingItem.id}` : '/api/config/payment-methods',
+        {
+          method: editingItem ? 'PUT' : 'POST',
+          body: JSON.stringify(paymentForm),
+        },
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.message || 'No se pudo guardar la forma de pago');
+      showStatus(editingItem ? 'Forma de pago actualizada' : 'Forma de pago agregada', 'success');
+      resetEditor();
+      await fetchData(true);
+    } catch (error: any) {
+      showStatus(error?.message || 'Error al guardar la forma de pago', 'error');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
-  const handleSaveCategory = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const saveCategory = async (event: React.FormEvent) => {
+    event.preventDefault();
     if (!categoryForm.name.trim()) return;
-    setLoading(true);
+    setSaving(true);
     try {
-      const url = editingItem 
-        ? `/api/config/product-categories/${editingItem.id}` 
-        : '/api/config/product-categories';
-      const method = editingItem ? 'PUT' : 'POST';
-      
-      const res = await apiFetch(url, {
-        method,
-        body: JSON.stringify(categoryForm)
-      });
-      if (res.ok) {
-        setCategoryForm({ name: '', description: '', estado: 'activo' });
-        setEditingItem(null);
-        fetchData();
-        showStatus(editingItem ? 'Categoría actualizada' : 'Categoría agregada', 'success');
-      }
-    } catch (error) {
-      showStatus('Error al guardar categoría', 'error');
+      const response = await apiFetch(
+        editingItem
+          ? `/api/config/product-categories/${editingItem.id}`
+          : '/api/config/product-categories',
+        {
+          method: editingItem ? 'PUT' : 'POST',
+          body: JSON.stringify(categoryForm),
+        },
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.message || 'No se pudo guardar la categoría');
+      showStatus(editingItem ? 'Categoría actualizada' : 'Categoría agregada', 'success');
+      resetEditor();
+      await fetchData(true);
+    } catch (error: any) {
+      showStatus(error?.message || 'Error al guardar la categoría', 'error');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
-  const handleSaveFamily = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const saveFamily = async (event: React.FormEvent) => {
+    event.preventDefault();
     if (!familyForm.name.trim()) return;
-    setLoading(true);
+    setSaving(true);
     try {
-      const url = editingItem 
-        ? `/api/config/product-families/${editingItem.id}` 
-        : '/api/config/product-families';
-      const method = editingItem ? 'PUT' : 'POST';
-      
-      const res = await apiFetch(url, {
-        method,
-        body: JSON.stringify(familyForm)
-      });
-      if (res.ok) {
-        setFamilyForm({ name: '', category_id: null, estado: 'activo' });
-        setEditingItem(null);
-        fetchData();
-        showStatus(editingItem ? 'Familia actualizada' : 'Familia agregada', 'success');
-      }
-    } catch (error) {
-      showStatus('Error al guardar familia', 'error');
+      const response = await apiFetch(
+        editingItem ? `/api/config/product-families/${editingItem.id}` : '/api/config/product-families',
+        {
+          method: editingItem ? 'PUT' : 'POST',
+          body: JSON.stringify(familyForm),
+        },
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.message || 'No se pudo guardar la familia');
+      showStatus(editingItem ? 'Familia actualizada' : 'Familia agregada', 'success');
+      resetEditor();
+      await fetchData(true);
+    } catch (error: any) {
+      showStatus(error?.message || 'Error al guardar la familia', 'error');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
-  const handleAddItem = async (endpoint: string) => {
-    if (!newItemName.trim()) return;
-    setLoading(true);
+  const deleteItem = async () => {
+    if (!deleteTarget) return;
+    setDeleteLoading(true);
     try {
-      const res = await apiFetch(`/api/config/${endpoint}`, {
-        method: 'POST',
-        body: JSON.stringify({ name: newItemName })
+      const response = await apiFetch(`/api/config/${deleteTarget.endpoint}/${deleteTarget.id}`, {
+        method: 'DELETE',
       });
-      if (res.ok) {
-        setNewItemName('');
-        fetchData();
-        showStatus('Item agregado correctamente', 'success');
-      }
-    } catch (error) {
-      showStatus('Error al agregar item', 'error');
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.message || `No se pudo eliminar ${deleteTarget.label}`);
+      showStatus(`${deleteTarget.label} eliminada correctamente`, 'success');
+      setDeleteTarget(null);
+      await fetchData(true);
+    } catch (error: any) {
+      showStatus(error?.message || 'Error al eliminar el elemento', 'error');
     } finally {
-      setLoading(false);
+      setDeleteLoading(false);
     }
   };
 
-  const handleDeleteItem = async (endpoint: string, id: number) => {
-    if (!confirm('¿Estás seguro de eliminar este item?')) return;
-    setLoading(true);
-    try {
-      const res = await apiFetch(`/api/config/${endpoint}/${id}`, {
-        method: 'DELETE'
-      });
-      if (res.ok) {
-        fetchData();
-        showStatus('Item eliminado correctamente', 'success');
-      }
-    } catch (error) {
-      showStatus('Error al eliminar item', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const showStatus = (text: string, type: 'success' | 'error') => {
-    setMessage({ text, type });
-    setTimeout(() => setMessage(null), 3000);
-  };
-
-  
-  const downloadJsonFile = (data: any, filename: string) => {
+  const downloadJsonFile = (data: unknown, filename: string) => {
     const blob = new Blob([JSON.stringify(data, null, 2)], {
-      type: 'application/json;charset=utf-8'
+      type: 'application/json;charset=utf-8',
     });
-
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-
     link.href = url;
     link.download = filename;
     document.body.appendChild(link);
     link.click();
     link.remove();
-
     URL.revokeObjectURL(url);
   };
 
@@ -271,109 +348,86 @@ export default function ConfigModule() {
     const now = new Date();
     const date = now.toISOString().split('T')[0];
     const time = now.toTimeString().slice(0, 5).replace(':', '-');
-
     return `edugestion_backup_${date}_${time}.json`;
   };
 
-  const handleDownloadBackup = async () => {
+  const downloadBackup = async () => {
     setBackupLoading(true);
-
     try {
-      const res = await apiFetch('/api/config/backup-data');
-      const body = await res.json();
-
-      if (!res.ok) {
-        throw new Error(body?.message || 'No se pudo generar la copia de seguridad');
-      }
-
-      const backup = unwrapResponse(body);
-      downloadJsonFile(backup, buildBackupFileName());
+      const response = await apiFetch('/api/config/backup-data');
+      const body = await response.json();
+      if (!response.ok) throw new Error(body?.message || 'No se pudo generar la copia de seguridad');
+      downloadJsonFile(unwrapResponse(body), buildBackupFileName());
       showStatus('Copia de seguridad descargada correctamente', 'success');
     } catch (error: any) {
-      showStatus(error?.message || 'Error al descargar copia de seguridad', 'error');
+      showStatus(error?.message || 'Error al descargar la copia de seguridad', 'error');
     } finally {
       setBackupLoading(false);
     }
   };
 
-  const handleRestoreBackupFile = async (file: File | null) => {
+  const openRestoreModal = (file: File | null) => {
     if (!file) return;
+    setRestoreFile(file);
+    setRestoreAdminPassword('');
+    setRestoreConfirmation('');
+    setShowRestoreModal(true);
+  };
 
-    const adminPassword = window.prompt('Ingrese la contraseña del administrador para restaurar la copia');
+  const closeRestoreModal = () => {
+    if (restoreLoading) return;
+    setShowRestoreModal(false);
+    setRestoreFile(null);
+    setRestoreAdminPassword('');
+    setRestoreConfirmation('');
+  };
 
-    if (!adminPassword) {
-      showStatus('Restauración cancelada', 'error');
-      return;
-    }
-
-    const confirmed = window.confirm(
-      'Esta acción reemplazará los datos actuales por los datos del archivo JSON. ¿Desea continuar?'
-    );
-
-    if (!confirmed) {
-      showStatus('Restauración cancelada', 'error');
-      return;
-    }
+  const restoreBackup = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!restoreFile || !restoreAdminPassword.trim() || restoreConfirmation.trim() !== 'RESTAURAR') return;
 
     setRestoreLoading(true);
-
     try {
-      const text = await file.text();
+      const text = await restoreFile.text();
       const backup = JSON.parse(text);
-
-      const res = await apiFetch('/api/config/restore-app-data', {
+      const response = await apiFetch('/api/config/restore-app-data', {
         method: 'POST',
         body: JSON.stringify({
-          adminPassword,
+          adminPassword: restoreAdminPassword,
           confirmation: 'RESTAURAR',
-          backup
-        })
+          backup,
+        }),
       });
-
-      const body = await res.json();
-
-      if (!res.ok) {
-        throw new Error(body?.message || 'No se pudo restaurar la copia de seguridad');
-      }
-
-      await fetchData();
+      const body = await response.json();
+      if (!response.ok) throw new Error(body?.message || 'No se pudo restaurar la copia de seguridad');
+      setShowRestoreModal(false);
+      setRestoreFile(null);
+      setRestoreAdminPassword('');
+      setRestoreConfirmation('');
+      await fetchData(true);
       showStatus('Copia de seguridad restaurada correctamente', 'success');
     } catch (error: any) {
-      showStatus(error?.message || 'Error al restaurar copia de seguridad', 'error');
+      showStatus(error?.message || 'Error al restaurar la copia de seguridad', 'error');
     } finally {
       setRestoreLoading(false);
     }
   };
 
-  const handleResetAppData = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!resetAdminPassword.trim()) {
-      showStatus('Ingrese la contraseña del administrador', 'error');
-      return;
-    }
-
-    if (resetConfirmation.trim() !== 'REESTABLECER') {
-      showStatus('Debe escribir REESTABLECER para confirmar', 'error');
-      return;
-    }
+  const resetAppData = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!resetAdminPassword.trim() || resetConfirmation.trim() !== 'REESTABLECER') return;
 
     setResetLoading(true);
-
     try {
-      const res = await apiFetch('/api/config/reset-app-data', {
+      const response = await apiFetch('/api/config/reset-app-data', {
         method: 'POST',
         body: JSON.stringify({
           adminPassword: resetAdminPassword,
-          confirmation: resetConfirmation.trim()
-        })
+          confirmation: resetConfirmation.trim(),
+        }),
       });
-
-      const body = await res.json();
-
-      if (!res.ok) {
-        throw new Error(body?.message || 'No se pudo restablecer la app');
-      }
+      const body = await response.json();
+      if (!response.ok) throw new Error(body?.message || 'No se pudo restablecer la aplicación');
 
       setShowResetModal(false);
       setResetAdminPassword('');
@@ -382,878 +436,719 @@ export default function ConfigModule() {
       setPaymentMethods([]);
       setCategories([]);
       setFamilies([]);
-      await fetchData();
+      await fetchData(true);
       showStatus('Datos restablecidos correctamente', 'success');
     } catch (error: any) {
-      showStatus(error?.message || 'Error al restablecer datos', 'error');
+      showStatus(error?.message || 'Error al restablecer los datos', 'error');
     } finally {
       setResetLoading(false);
     }
   };
 
-const renderTabs = () => {
-    const tabs = [
-      { id: 'negocio', label: 'Datos del Negocio', icon: Store },
-      { id: 'pagos', label: 'Formas de Pago', icon: CreditCard },
-      { id: 'categorias', label: 'Categorías de Productos', icon: Tags },
-      { id: 'familias', label: 'Familias de Productos', icon: Layers },
-      { id: 'parametros', label: 'Parámetros Comerciales', icon: Sliders },
-      { id: 'numeraciones', label: 'Numeraciones del Sistema', icon: Hash },
-    ];
-
-    return (
-      <div className="flex lg:flex-col w-full lg:w-64 border-b lg:border-b-0 lg:border-r border-zinc-200 bg-zinc-50/50 p-3 sm:p-4 gap-2 lg:gap-1 overflow-x-auto lg:overflow-visible shrink-0 no-scrollbar">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id as Section)}
-            className={`flex items-center gap-2 lg:gap-3 px-3 lg:px-4 py-3 rounded-xl text-xs sm:text-sm font-bold transition-all whitespace-nowrap shrink-0 ${
-              activeTab === tab.id
-                ? 'bg-zinc-900 text-white shadow-lg shadow-zinc-200'
-                : 'text-zinc-500 hover:bg-zinc-200/50 hover:text-zinc-900'
-            }`}
-          >
-            <tab.icon size={18} />
-            {tab.label}
-          </button>
-        ))}
+  const SectionTitle = ({
+    icon: Icon,
+    title,
+    description,
+    badge,
+  }: {
+    icon: React.ComponentType<{ size?: number; className?: string }>;
+    title: string;
+    description: string;
+    badge?: string;
+  }) => (
+    <div className="flex min-w-0 items-start gap-3">
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600">
+        <Icon size={21} />
       </div>
-    );
-  };
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="break-words text-lg font-black tracking-tight text-slate-950 sm:text-xl">{title}</h3>
+          {badge && (
+            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-slate-600">
+              {badge}
+            </span>
+          )}
+        </div>
+        <p className="mt-1 text-sm font-medium leading-relaxed text-slate-500">{description}</p>
+      </div>
+    </div>
+  );
+
+  const EmptyState = ({ title, description }: { title: string; description: string }) => (
+    <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
+      <Settings className="mx-auto text-slate-300" size={34} />
+      <h4 className="mt-3 text-sm font-black text-slate-800">{title}</h4>
+      <p className="mx-auto mt-1 max-w-md text-sm text-slate-500">{description}</p>
+    </div>
+  );
+
+  const renderBusiness = () => (
+    <form onSubmit={saveSettings} className="space-y-5">
+      <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6 lg:p-7">
+        <SectionTitle
+          icon={Building2}
+          title="Identidad del negocio"
+          description="Estos datos aparecen en comprobantes, reportes y documentos emitidos por el sistema."
+        />
+
+        <div className="mt-6 grid gap-6 xl:grid-cols-[240px_minmax(0,1fr)]">
+          <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+            <p className={labelClass}>Logo del negocio</p>
+            <div className="mt-3 flex flex-col items-center gap-3">
+              <label className="group relative flex h-36 w-full cursor-pointer items-center justify-center overflow-hidden rounded-3xl border-2 border-dashed border-slate-300 bg-white transition hover:border-indigo-400">
+                {settings.business_logo ? (
+                  <img src={settings.business_logo} alt="Logo del negocio" className="h-full w-full object-contain p-3" />
+                ) : (
+                  <div className="text-center text-slate-400">
+                    <Store className="mx-auto" size={34} />
+                    <span className="mt-2 block text-xs font-bold">Seleccionar imagen</span>
+                  </div>
+                )}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="sr-only"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onloadend = () =>
+                      setSettings((current) => ({ ...current, business_logo: reader.result as string }));
+                    reader.readAsDataURL(file);
+                  }}
+                />
+              </label>
+              <p className="text-center text-xs leading-relaxed text-slate-500">PNG o JPG. Se adapta automáticamente a comprobantes y reportes.</p>
+              {settings.business_logo && (
+                <button
+                  type="button"
+                  onClick={() => setSettings((current) => ({ ...current, business_logo: '' }))}
+                  className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-xs font-black uppercase tracking-widest text-red-600 transition hover:bg-red-100"
+                >
+                  <Trash2 size={15} /> Quitar logo
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+            <label className="space-y-2">
+              <span className={labelClass}>Nombre del negocio</span>
+              <input
+                className={inputClass}
+                value={settings.business_name || ''}
+                onChange={(event) => setSettings({ ...settings, business_name: event.target.value })}
+                placeholder="Ej.: Mi Negocio"
+              />
+            </label>
+            <label className="space-y-2">
+              <span className={labelClass}>Razón social</span>
+              <input
+                className={inputClass}
+                value={settings.business_razon_social || ''}
+                onChange={(event) => setSettings({ ...settings, business_razon_social: event.target.value })}
+                placeholder="Ej.: Mi Negocio S.A."
+              />
+            </label>
+            <label className="space-y-2">
+              <span className={labelClass}>CUIT</span>
+              <input
+                className={inputClass}
+                value={settings.business_cuit || ''}
+                onChange={(event) => setSettings({ ...settings, business_cuit: event.target.value })}
+                placeholder="00-00000000-0"
+              />
+            </label>
+            <label className="space-y-2">
+              <span className={labelClass}>Teléfono</span>
+              <input
+                className={inputClass}
+                value={settings.business_phone || ''}
+                onChange={(event) => setSettings({ ...settings, business_phone: event.target.value })}
+                placeholder="Código de área y número"
+              />
+            </label>
+            <label className="space-y-2 sm:col-span-2">
+              <span className={labelClass}>Email de contacto</span>
+              <input
+                type="email"
+                className={inputClass}
+                value={settings.business_email || ''}
+                onChange={(event) => setSettings({ ...settings, business_email: event.target.value })}
+                placeholder="contacto@negocio.com"
+              />
+            </label>
+            <label className="space-y-2">
+              <span className={labelClass}>Dirección</span>
+              <input
+                className={inputClass}
+                value={settings.business_address || ''}
+                onChange={(event) => setSettings({ ...settings, business_address: event.target.value })}
+                placeholder="Calle y número"
+              />
+            </label>
+            <label className="space-y-2">
+              <span className={labelClass}>Localidad</span>
+              <input
+                className={inputClass}
+                value={settings.business_localidad || ''}
+                onChange={(event) => setSettings({ ...settings, business_localidad: event.target.value })}
+                placeholder="Localidad"
+              />
+            </label>
+          </div>
+        </div>
+
+        {hasPermission('settings', 'edit') && (
+          <div className="mt-6 flex justify-end">
+            <button type="submit" disabled={saving} className={primaryButtonClass}>
+              <Save size={16} /> {saving ? 'Guardando...' : 'Guardar datos del negocio'}
+            </button>
+          </div>
+        )}
+      </section>
+
+      {hasPermission('settings', 'delete') && (
+        <section className="rounded-3xl border border-amber-200 bg-amber-50/70 p-4 shadow-sm sm:p-6 lg:p-7">
+          <SectionTitle
+            icon={Database}
+            title="Copias y recuperación"
+            description="Descargá una copia completa o restaurá la aplicación desde un archivo JSON válido."
+          />
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <button type="button" onClick={downloadBackup} disabled={backupLoading} className={secondaryButtonClass}>
+              <Download size={17} /> {backupLoading ? 'Generando copia...' : 'Descargar copia JSON'}
+            </button>
+            <label className={`${secondaryButtonClass} cursor-pointer`}>
+              <Upload size={17} /> Seleccionar copia para restaurar
+              <input
+                type="file"
+                accept="application/json,.json"
+                className="sr-only"
+                disabled={restoreLoading}
+                onChange={(event) => {
+                  openRestoreModal(event.target.files?.[0] || null);
+                  event.currentTarget.value = '';
+                }}
+              />
+            </label>
+          </div>
+        </section>
+      )}
+
+      {hasPermission('settings', 'delete') && (
+        <section className="rounded-3xl border border-red-200 bg-red-50/70 p-4 shadow-sm sm:p-6 lg:p-7">
+          <SectionTitle
+            icon={ShieldAlert}
+            title="Zona de peligro"
+            description="El restablecimiento borra datos operativos. Usuarios, permisos, datos del negocio y formas de pago se conservan."
+          />
+          <div className="mt-5 rounded-2xl border border-red-200 bg-white/80 p-4 text-sm font-medium leading-relaxed text-red-700">
+            Se eliminarán productos, clientes, ventas, compras, movimientos financieros, rutas, checklist, pedidos a proveedor, proveedores, categorías y familias.
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowResetModal(true)}
+            className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-red-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white transition hover:bg-red-700 sm:w-auto"
+          >
+            <RotateCcw size={17} /> Restablecer datos de la aplicación
+          </button>
+        </section>
+      )}
+    </form>
+  );
+
+  const renderPayments = () => (
+    <div className="grid gap-5 xl:grid-cols-[minmax(320px,420px)_minmax(0,1fr)]">
+      <form onSubmit={savePaymentMethod} className="h-fit rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+        <SectionTitle
+          icon={CreditCard}
+          title={editingItem ? 'Editar forma de pago' : 'Nueva forma de pago'}
+          description="Definí cómo se registran ventas, cobros y movimientos financieros."
+        />
+        <div className="mt-5 space-y-4">
+          <label className="space-y-2">
+            <span className={labelClass}>Nombre</span>
+            <input
+              className={inputClass}
+              value={paymentForm.name}
+              onChange={(event) => setPaymentForm({ ...paymentForm, name: event.target.value })}
+              placeholder="Ej.: Tarjeta de crédito"
+            />
+          </label>
+          <label className="space-y-2">
+            <span className={labelClass}>Tipo</span>
+            <select
+              className={inputClass}
+              value={paymentForm.tipo}
+              onChange={(event) => setPaymentForm({ ...paymentForm, tipo: event.target.value })}
+            >
+              <option value="Efectivo">Efectivo</option>
+              <option value="Transferencia">Transferencia</option>
+              <option value="Digital">Digital (billeteras)</option>
+              <option value="Crédito">Crédito / Cuenta corriente</option>
+            </select>
+          </label>
+          <label className="flex min-h-12 cursor-pointer items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <span>
+              <span className="block text-sm font-black text-slate-800">Forma de pago activa</span>
+              <span className="block text-xs text-slate-500">Disponible para nuevas operaciones.</span>
+            </span>
+            <input
+              type="checkbox"
+              checked={paymentForm.activo === 1}
+              onChange={(event) => setPaymentForm({ ...paymentForm, activo: event.target.checked ? 1 : 0 })}
+              className="h-5 w-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+            />
+          </label>
+        </div>
+        <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
+          {editingItem && (
+            <button type="button" onClick={resetEditor} className={secondaryButtonClass}>Cancelar</button>
+          )}
+          {((editingItem && hasPermission('settings', 'edit')) ||
+            (!editingItem && hasPermission('settings', 'create'))) && (
+            <button type="submit" disabled={saving || !paymentForm.name.trim()} className={primaryButtonClass}>
+              {editingItem ? <Save size={16} /> : <Plus size={16} />}
+              {saving ? 'Guardando...' : editingItem ? 'Actualizar' : 'Agregar'}
+            </button>
+          )}
+        </div>
+      </form>
+
+      <section className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+        <SectionTitle
+          icon={FileJson}
+          title="Formas de pago registradas"
+          description="Revisá el estado y tipo de cada medio disponible."
+          badge={`${paymentMethods.length} registradas`}
+        />
+        <div className="mt-5 grid gap-3 md:grid-cols-2">
+          {paymentMethods.map((item) => {
+            const active = item.activo !== 0;
+            return (
+              <article key={item.id} className="min-w-0 rounded-3xl border border-slate-200 bg-slate-50/70 p-4">
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${active ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                      <h4 className="break-words text-sm font-black text-slate-900">{item.name}</h4>
+                    </div>
+                    <p className="mt-1 text-xs font-bold uppercase tracking-widest text-slate-500">{item.tipo || 'Sin tipo'}</p>
+                  </div>
+                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-widest ${active ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                    {active ? 'Activa' : 'Inactiva'}
+                  </span>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  {hasPermission('settings', 'edit') && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingItem(item);
+                        setPaymentForm({
+                          name: item.name,
+                          tipo: item.tipo || 'Efectivo',
+                          activo: item.activo === 0 ? 0 : 1,
+                        });
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                      }}
+                      className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700"
+                      aria-label={`Editar forma de pago ${item.name}`}
+                    >
+                      <Edit3 size={15} /> Editar
+                    </button>
+                  )}
+                  {hasPermission('settings', 'delete') && (
+                    <button
+                      type="button"
+                      onClick={() => setDeleteTarget({ endpoint: 'payment-methods', id: item.id, name: item.name, label: 'Forma de pago' })}
+                      className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-3 text-xs font-black text-red-600 transition hover:bg-red-100"
+                      aria-label={`Eliminar forma de pago ${item.name}`}
+                    >
+                      <Trash2 size={15} /> Eliminar
+                    </button>
+                  )}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+        {!loading && paymentMethods.length === 0 && (
+          <div className="mt-5"><EmptyState title="No hay formas de pago" description="Agregá el primer medio para utilizarlo en ventas, compras y cobranzas." /></div>
+        )}
+      </section>
+    </div>
+  );
+
+  const renderCategories = () => (
+    <div className="grid gap-5 xl:grid-cols-[minmax(320px,420px)_minmax(0,1fr)]">
+      <form onSubmit={saveCategory} className="h-fit rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+        <SectionTitle
+          icon={Tags}
+          title={editingItem ? 'Editar categoría' : 'Nueva categoría'}
+          description="Clasificación general para ordenar y buscar productos."
+        />
+        <div className="mt-5 space-y-4">
+          <label className="space-y-2">
+            <span className={labelClass}>Nombre</span>
+            <input className={inputClass} value={categoryForm.name} onChange={(event) => setCategoryForm({ ...categoryForm, name: event.target.value })} placeholder="Ej.: Bebidas" />
+          </label>
+          <label className="space-y-2">
+            <span className={labelClass}>Descripción</span>
+            <textarea className={`${inputClass} min-h-28 resize-y`} value={categoryForm.description} onChange={(event) => setCategoryForm({ ...categoryForm, description: event.target.value })} placeholder="Descripción opcional" />
+          </label>
+          <label className="space-y-2">
+            <span className={labelClass}>Estado</span>
+            <select className={inputClass} value={categoryForm.estado} onChange={(event) => setCategoryForm({ ...categoryForm, estado: event.target.value })}>
+              <option value="activo">Activo</option>
+              <option value="inactivo">Inactivo</option>
+            </select>
+          </label>
+        </div>
+        <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
+          {editingItem && <button type="button" onClick={resetEditor} className={secondaryButtonClass}>Cancelar</button>}
+          {((editingItem && hasPermission('settings', 'edit')) || (!editingItem && hasPermission('settings', 'create'))) && (
+            <button type="submit" disabled={saving || !categoryForm.name.trim()} className={primaryButtonClass}>
+              {editingItem ? <Save size={16} /> : <Plus size={16} />}
+              {saving ? 'Guardando...' : editingItem ? 'Actualizar' : 'Agregar'}
+            </button>
+          )}
+        </div>
+      </form>
+
+      <section className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+        <SectionTitle icon={Tags} title="Categorías registradas" description="Listado actual de categorías del catálogo." badge={`${categories.length} registradas`} />
+        <div className="mt-5 grid gap-3 md:grid-cols-2">
+          {categories.map((item) => {
+            const active = item.estado !== 'inactivo';
+            return (
+              <article key={item.id} className="min-w-0 rounded-3xl border border-slate-200 bg-slate-50/70 p-4">
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h4 className="break-words text-sm font-black text-slate-900">{item.name}</h4>
+                    <p className="mt-1 break-words text-sm leading-relaxed text-slate-500">{item.description || 'Sin descripción'}</p>
+                  </div>
+                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-widest ${active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
+                    {active ? 'Activa' : 'Inactiva'}
+                  </span>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  {hasPermission('settings', 'edit') && (
+                    <button type="button" onClick={() => {
+                      setEditingItem(item);
+                      setCategoryForm({ name: item.name, description: item.description || '', estado: item.estado || 'activo' });
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700">
+                      <Edit3 size={15} /> Editar
+                    </button>
+                  )}
+                  {hasPermission('settings', 'delete') && (
+                    <button type="button" onClick={() => setDeleteTarget({ endpoint: 'product-categories', id: item.id, name: item.name, label: 'Categoría' })} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-3 text-xs font-black text-red-600 transition hover:bg-red-100">
+                      <Trash2 size={15} /> Eliminar
+                    </button>
+                  )}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+        {!loading && categories.length === 0 && <div className="mt-5"><EmptyState title="No hay categorías" description="Creá una categoría para clasificar el catálogo de productos." /></div>}
+      </section>
+    </div>
+  );
+
+  const renderFamilies = () => (
+    <div className="grid gap-5 xl:grid-cols-[minmax(320px,420px)_minmax(0,1fr)]">
+      <form onSubmit={saveFamily} className="h-fit rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+        <SectionTitle icon={Layers} title={editingItem ? 'Editar familia' : 'Nueva familia'} description="Agrupación utilizada para productos, filtros, precios y reportes." />
+        <div className="mt-5 space-y-4">
+          <label className="space-y-2">
+            <span className={labelClass}>Nombre</span>
+            <input className={inputClass} value={familyForm.name} onChange={(event) => setFamilyForm({ ...familyForm, name: event.target.value })} placeholder="Ej.: Gaseosas" />
+          </label>
+          <label className="space-y-2">
+            <span className={labelClass}>Categoría asociada</span>
+            <select className={inputClass} value={familyForm.category_id || ''} onChange={(event) => setFamilyForm({ ...familyForm, category_id: event.target.value ? Number(event.target.value) : null })}>
+              <option value="">Sin categoría asociada</option>
+              {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+            </select>
+            <span className="block text-xs leading-relaxed text-slate-500">La asociación es informativa y no reemplaza la categoría propia de cada producto.</span>
+          </label>
+          <label className="space-y-2">
+            <span className={labelClass}>Estado</span>
+            <select className={inputClass} value={familyForm.estado} onChange={(event) => setFamilyForm({ ...familyForm, estado: event.target.value })}>
+              <option value="activo">Activo</option>
+              <option value="inactivo">Inactivo</option>
+            </select>
+          </label>
+        </div>
+        <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
+          {editingItem && <button type="button" onClick={resetEditor} className={secondaryButtonClass}>Cancelar</button>}
+          {((editingItem && hasPermission('settings', 'edit')) || (!editingItem && hasPermission('settings', 'create'))) && (
+            <button type="submit" disabled={saving || !familyForm.name.trim()} className={primaryButtonClass}>
+              {editingItem ? <Save size={16} /> : <Plus size={16} />}
+              {saving ? 'Guardando...' : editingItem ? 'Actualizar' : 'Agregar'}
+            </button>
+          )}
+        </div>
+      </form>
+
+      <section className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+        <SectionTitle icon={Layers} title="Familias registradas" description="Listado actual de agrupaciones utilizadas por los productos." badge={`${families.length} registradas`} />
+        <div className="mt-5 grid gap-3 md:grid-cols-2">
+          {families.map((item) => {
+            const active = item.estado !== 'inactivo';
+            return (
+              <article key={item.id} className="min-w-0 rounded-3xl border border-slate-200 bg-slate-50/70 p-4">
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h4 className="break-words text-sm font-black text-slate-900">{item.name}</h4>
+                    <p className="mt-1 break-words text-xs font-bold text-slate-500">Categoría: {item.category_name || 'Sin asociación'}</p>
+                  </div>
+                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-widest ${active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
+                    {active ? 'Activa' : 'Inactiva'}
+                  </span>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  {hasPermission('settings', 'edit') && (
+                    <button type="button" onClick={() => {
+                      setEditingItem(item);
+                      setFamilyForm({ name: item.name, category_id: item.category_id || null, estado: item.estado || 'activo' });
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700">
+                      <Edit3 size={15} /> Editar
+                    </button>
+                  )}
+                  {hasPermission('settings', 'delete') && (
+                    <button type="button" onClick={() => setDeleteTarget({ endpoint: 'product-families', id: item.id, name: item.name, label: 'Familia' })} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-3 text-xs font-black text-red-600 transition hover:bg-red-100">
+                      <Trash2 size={15} /> Eliminar
+                    </button>
+                  )}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+        {!loading && families.length === 0 && <div className="mt-5"><EmptyState title="No hay familias" description="Creá una familia para organizar productos y reportes." /></div>}
+      </section>
+    </div>
+  );
+
+  const renderParameters = () => (
+    <form onSubmit={saveSettings} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6 lg:p-7">
+      <SectionTitle icon={Gauge} title="Parámetros comerciales" description="Valores predeterminados que utiliza la operación diaria." />
+      <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <label className="space-y-2">
+          <span className={labelClass}>Moneda del sistema</span>
+          <select className={inputClass} value={settings.system_currency || 'ARS'} onChange={(event) => setSettings({ ...settings, system_currency: event.target.value })}>
+            <option value="ARS">Peso argentino ($)</option>
+            <option value="USD">Dólar estadounidense (USD)</option>
+          </select>
+        </label>
+        <label className="space-y-2">
+          <span className={labelClass}>IVA predeterminado (%)</span>
+          <input type="number" className={inputClass} value={settings.default_iva || '21'} onChange={(event) => setSettings({ ...settings, default_iva: event.target.value })} />
+        </label>
+        <label className="space-y-2">
+          <span className={labelClass}>Margen sugerido (%)</span>
+          <input type="number" className={inputClass} value={settings.default_markup || '30'} onChange={(event) => setSettings({ ...settings, default_markup: event.target.value })} />
+        </label>
+        <label className="space-y-2">
+          <span className={labelClass}>Días para alerta de deuda</span>
+          <input type="number" className={inputClass} value={settings.customer_debt_alert_days || '7'} onChange={(event) => setSettings({ ...settings, customer_debt_alert_days: event.target.value })} />
+        </label>
+        <label className="space-y-2">
+          <span className={labelClass}>Límite de crédito inicial</span>
+          <input type="number" className={inputClass} value={settings.default_credit_limit || '0'} onChange={(event) => setSettings({ ...settings, default_credit_limit: event.target.value })} />
+        </label>
+        <label className="space-y-2">
+          <span className={labelClass}>Método de cálculo de costo</span>
+          <select className={inputClass} value={settings.cost_calculation_method || 'PEPS'} onChange={(event) => setSettings({ ...settings, cost_calculation_method: event.target.value })}>
+            <option value="PEPS">PEPS (Primero entrado, primero salido)</option>
+            <option value="PPP">PPP (Precio promedio ponderado)</option>
+            <option value="UEPS">UEPS (Último entrado, primero salido)</option>
+          </select>
+        </label>
+      </div>
+      <label className="mt-5 flex cursor-pointer items-start justify-between gap-4 rounded-3xl border border-amber-200 bg-amber-50 p-4 sm:items-center">
+        <div>
+          <span className="block text-sm font-black text-amber-900">Permitir ventas sin stock</span>
+          <span className="mt-1 block text-xs leading-relaxed text-amber-700">Habilita stock negativo. Activar solamente si el flujo comercial realmente lo necesita.</span>
+        </div>
+        <input type="checkbox" checked={settings.allow_negative_stock === 'true'} onChange={(event) => setSettings({ ...settings, allow_negative_stock: event.target.checked ? 'true' : 'false' })} className="mt-1 h-5 w-5 shrink-0 rounded border-amber-300 text-indigo-600 focus:ring-indigo-500 sm:mt-0" />
+      </label>
+      {hasPermission('settings', 'edit') && (
+        <div className="mt-6 flex justify-end"><button type="submit" disabled={saving} className={primaryButtonClass}><Save size={16} /> {saving ? 'Guardando...' : 'Guardar parámetros'}</button></div>
+      )}
+    </form>
+  );
+
+  const renderNumbering = () => (
+    <form onSubmit={saveSettings} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6 lg:p-7">
+      <SectionTitle icon={Hash} title="Numeraciones del sistema" description="Próximos identificadores que utilizarán ventas, pedidos y recibos." />
+      <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <label className="space-y-2"><span className={labelClass}>Próxima venta</span><input type="number" className={inputClass} value={settings.next_sale_number || '1'} onChange={(event) => setSettings({ ...settings, next_sale_number: event.target.value })} /></label>
+        <label className="space-y-2"><span className={labelClass}>Próximo pedido</span><input type="number" className={inputClass} value={settings.next_order_number || '1'} onChange={(event) => setSettings({ ...settings, next_order_number: event.target.value })} /></label>
+        <label className="space-y-2"><span className={labelClass}>Próximo pago / recibo</span><input type="number" className={inputClass} value={settings.next_payment_number || '1'} onChange={(event) => setSettings({ ...settings, next_payment_number: event.target.value })} /></label>
+        <label className="space-y-2"><span className={labelClass}>Prefijo de facturación</span><input className={inputClass} value={settings.billing_prefix || '0001'} onChange={(event) => setSettings({ ...settings, billing_prefix: event.target.value })} /></label>
+      </div>
+      <div className="mt-5 rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-sm leading-relaxed text-indigo-800">
+        Cambiar estos valores modifica el próximo número emitido. No altera comprobantes ya registrados.
+      </div>
+      {hasPermission('settings', 'edit') && (
+        <div className="mt-6 flex justify-end"><button type="submit" disabled={saving} className={primaryButtonClass}><Save size={16} /> {saving ? 'Guardando...' : 'Guardar numeraciones'}</button></div>
+      )}
+    </form>
+  );
 
   const renderContent = () => {
-    if (loading && Object.keys(settings).length === 0 && paymentMethods.length === 0) {
+    if (loading) {
       return (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-zinc-900"></div>
+        <div className="space-y-4" role="status" aria-live="polite">
+          <div className="h-32 animate-pulse rounded-3xl bg-slate-200" />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="h-56 animate-pulse rounded-3xl bg-slate-100" />
+            <div className="h-56 animate-pulse rounded-3xl bg-slate-100" />
+          </div>
+          <p className="text-center text-sm font-bold text-slate-500">Cargando configuración...</p>
+        </div>
+      );
+    }
+
+    if (loadError) {
+      return (
+        <div className="rounded-3xl border border-red-200 bg-red-50 p-6 text-center">
+          <AlertCircle className="mx-auto text-red-500" size={34} />
+          <h3 className="mt-3 text-lg font-black text-red-800">No se pudo cargar esta sección</h3>
+          <p className="mt-1 text-sm text-red-700">{loadError}</p>
+          <button type="button" onClick={() => fetchData()} className="mt-5 inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-red-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-red-700">
+            <RefreshCw size={16} /> Reintentar
+          </button>
         </div>
       );
     }
 
     switch (activeTab) {
-      case 'negocio':
-        return (
-          <form onSubmit={handleSaveSettings} className="space-y-6 max-w-2xl w-full">
-            <div className="grid grid-cols-1 gap-6">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-5 sm:gap-8 p-4 sm:p-6 bg-zinc-50 rounded-3xl sm:rounded-[32px] border border-zinc-200">
-                <div className="relative group">
-                  <div className="w-24 h-24 sm:w-32 sm:h-32 bg-white rounded-2xl border-2 border-dashed border-zinc-200 flex items-center justify-center overflow-hidden transition-all group-hover:border-zinc-400">
-                    {settings.business_logo ? (
-                      <img src={settings.business_logo} alt="Logo" className="w-full h-full object-contain" />
-                    ) : (
-                      <Store size={32} className="text-zinc-300" />
-                    )}
-                  </div>
-                  <input 
-                    type="file" 
-                    accept="image/*"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        const reader = new FileReader();
-                        reader.onloadend = () => {
-                          setSettings({...settings, business_logo: reader.result as string});
-                        };
-                        reader.readAsDataURL(file);
-                      }
-                    }}
-                    className="absolute inset-0 opacity-0 cursor-pointer"
-                  />
-                  {settings.business_logo && (
-                    <button 
-                      type="button"
-                      onClick={() => setSettings({...settings, business_logo: ''})}
-                      className="absolute -top-2 -right-2 bg-red-500 text-white p-1 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-all"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h4 className="font-black text-zinc-900 uppercase tracking-widest text-xs mb-1">Logo del Negocio</h4>
-                  <p className="text-zinc-500 text-xs font-medium">Sube una imagen para tus comprobantes y reportes (PNG/JPG)</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Nombre del Negocio</label>
-                  <input 
-                    type="text" 
-                    value={settings.business_name || ''} 
-                    onChange={(e) => setSettings({...settings, business_name: e.target.value})}
-                    className="w-full bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                    placeholder="Ej: Mi Negocio"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Razón Social</label>
-                  <input 
-                    type="text" 
-                    value={settings.business_razon_social || ''} 
-                    onChange={(e) => setSettings({...settings, business_razon_social: e.target.value})}
-                    className="w-full bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                    placeholder="Ej: Mi Negocio S.A."
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-xs font-black uppercase tracking-widest text-zinc-400">CUIT</label>
-                  <input 
-                    type="text" 
-                    value={settings.business_cuit || ''} 
-                    onChange={(e) => setSettings({...settings, business_cuit: e.target.value})}
-                    className="w-full bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                    placeholder="00-00000000-0"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Teléfono</label>
-                  <input 
-                    type="text" 
-                    value={settings.business_phone || ''} 
-                    onChange={(e) => setSettings({...settings, business_phone: e.target.value})}
-                    className="w-full bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Dirección</label>
-                  <input 
-                    type="text" 
-                    value={settings.business_address || ''} 
-                    onChange={(e) => setSettings({...settings, business_address: e.target.value})}
-                    className="w-full bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Localidad</label>
-                  <input 
-                    type="text" 
-                    value={settings.business_localidad || ''} 
-                    onChange={(e) => setSettings({...settings, business_localidad: e.target.value})}
-                    className="w-full bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Email de Contacto</label>
-                <input 
-                  type="email" 
-                  value={settings.business_email || ''} 
-                  onChange={(e) => setSettings({...settings, business_email: e.target.value})}
-                  className="w-full bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                />
-              </div>
-            </div>
-            {hasPermission('settings', 'edit') && (
-              <button 
-                type="submit" 
-                disabled={loading}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 bg-zinc-900 text-white px-6 sm:px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50"
-              >
-                <Save size={16} />
-                Guardar Cambios
-              </button>
-            )}
-
-            {hasPermission('settings', 'delete') && (
-              <div className="mt-8 p-4 sm:p-6 rounded-3xl border border-red-200 bg-red-50/60 space-y-4">
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center shrink-0">
-                    <ShieldAlert size={20} />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-black text-red-700 uppercase tracking-widest">Zona de peligro</h3>
-                    <p className="text-xs text-red-600/80 font-bold mt-1 leading-relaxed">
-                      Restablece todos los datos operativos de la app para empezar pruebas desde cero.
-                      Se conservan usuarios, permisos, configuración base y formas de pago.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={handleDownloadBackup}
-                    disabled={backupLoading}
-                    className="w-full flex items-center justify-center gap-2 bg-zinc-900 text-white px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50"
-                  >
-                    <Download size={16} />
-                    {backupLoading ? 'Descargando...' : 'Descargar copia JSON'}
-                  </button>
-
-                  <label className="w-full flex items-center justify-center gap-2 bg-white text-zinc-900 px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-100 transition-all border border-zinc-200 cursor-pointer">
-                    <Upload size={16} />
-                    {restoreLoading ? 'Restaurando...' : 'Restaurar copia JSON'}
-                    <input
-                      type="file"
-                      accept="application/json,.json"
-                      className="hidden"
-                      disabled={restoreLoading}
-                      onChange={(e) => {
-                        const file = e.target.files?.[0] || null;
-                        e.currentTarget.value = '';
-                        handleRestoreBackupFile(file);
-                      }}
-                    />
-                  </label>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setShowResetModal(true)}
-                  className="w-full sm:w-auto flex items-center justify-center gap-2 bg-red-600 text-white px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-red-700 transition-all"
-                >
-                  <RotateCcw size={16} />
-                  Restablecer datos de la app
-                </button>
-              </div>
-            )}
-          </form>
-        );
-
-      case 'pagos':
-        return (
-          <div className="space-y-6 sm:space-y-8 max-w-3xl w-full">
-            <form onSubmit={handleSavePaymentMethod} className="bg-white p-4 sm:p-6 lg:p-8 rounded-3xl sm:rounded-[32px] border border-zinc-200 shadow-sm space-y-5 sm:space-y-6">
-              <h3 className="text-base sm:text-lg font-black text-zinc-900 uppercase tracking-widest">
-                {editingItem ? 'Editar Forma de Pago' : 'Nueva Forma de Pago'}
-              </h3>
-              
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
-                <div className="space-y-2">
-                  <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Nombre</label>
-                  <input 
-                    type="text" 
-                    value={paymentForm.name}
-                    onChange={(e) => setPaymentForm({ ...paymentForm, name: e.target.value })}
-                    className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                    placeholder="Ej: Tarjeta de Crédito"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Tipo</label>
-                  <select 
-                    value={paymentForm.tipo}
-                    onChange={(e) => setPaymentForm({ ...paymentForm, tipo: e.target.value })}
-                    className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                  >
-                    <option value="Efectivo">Efectivo</option>
-                    <option value="Transferencia">Transferencia</option>
-                    <option value="Digital">Digital (Billeteras)</option>
-                    <option value="Crédito">Crédito / Cuenta Corriente</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <input 
-                    type="checkbox" 
-                    id="pm-activo"
-                    checked={paymentForm.activo === 1}
-                    onChange={(e) => setPaymentForm({ ...paymentForm, activo: e.target.checked ? 1 : 0 })}
-                    className="w-5 h-5 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900"
-                  />
-                  <label htmlFor="pm-activo" className="text-sm font-bold text-zinc-700 leading-snug">Activo</label>
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-                  {editingItem && (
-                    <button 
-                      type="button"
-                      onClick={() => {
-                        setEditingItem(null);
-                        setPaymentForm({ name: '', tipo: 'Efectivo', activo: 1 });
-                      }}
-                      className="w-full sm:w-auto px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs text-zinc-500 hover:bg-zinc-100 transition-all"
-                    >
-                      Cancelar
-                    </button>
-                  )}
-                  {((editingItem && hasPermission('settings', 'edit')) || (!editingItem && hasPermission('settings', 'create'))) && (
-                    <button 
-                      type="submit"
-                      disabled={loading || !paymentForm.name.trim()}
-                      className="w-full sm:w-auto bg-zinc-900 text-white px-6 sm:px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50 flex items-center gap-2"
-                    >
-                      {editingItem ? <Save size={16} /> : <Plus size={16} />}
-                      {editingItem ? 'Actualizar' : 'Agregar'}
-                    </button>
-                  )}
-                </div>
-              </div>
-            </form>
-
-            <div className="grid grid-cols-1 gap-3">
-              <h4 className="text-xs font-black text-zinc-400 uppercase tracking-widest px-2">Formas de Pago Registradas</h4>
-              {paymentMethods.map((item) => (
-                <div key={item.id} className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white px-4 sm:px-6 py-4 rounded-2xl border ${item.activo ? 'border-zinc-100' : 'border-red-100 bg-red-50/30'} hover:border-zinc-200 transition-all group`}>
-                  <div className="flex items-center gap-4 min-w-0">
-                    <div className={`w-2 h-2 rounded-full ${item.activo ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
-                    <div>
-                      <span className={`font-bold break-words ${item.activo ? 'text-zinc-900' : 'text-zinc-400 line-through'}`}>{item.name}</span>
-                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">{item.tipo}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all self-end sm:self-auto">
-                    {hasPermission('settings', 'edit') && (
-                      <button 
-                        onClick={() => {
-                          setEditingItem(item);
-                          setPaymentForm({
-                            name: item.name,
-                            tipo: item.tipo || 'Efectivo',
-                            activo: item.activo !== undefined ? item.activo : 1
-                          });
-                          window.scrollTo({ top: 0, behavior: 'smooth' });
-                        }}
-                        className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-xl transition-all"
-                        title="Editar"
-                      >
-                        <Sliders size={16} />
-                      </button>
-                    )}
-                    {hasPermission('settings', 'delete') && (
-                      <button 
-                        onClick={() => handleDeleteItem('payment-methods', item.id)}
-                        className="p-2 text-zinc-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
-                        title="Eliminar"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {paymentMethods.length === 0 && !loading && (
-                <p className="text-center py-12 text-zinc-400 font-medium italic">No hay formas de pago registradas</p>
-              )}
-            </div>
-          </div>
-        );
-
-      case 'categorias':
-        return (
-          <div className="space-y-6 sm:space-y-8 max-w-3xl w-full">
-            <form onSubmit={handleSaveCategory} className="bg-white p-4 sm:p-6 lg:p-8 rounded-3xl sm:rounded-[32px] border border-zinc-200 shadow-sm space-y-5 sm:space-y-6">
-              <h3 className="text-base sm:text-lg font-black text-zinc-900 uppercase tracking-widest">
-                {editingItem ? 'Editar Categoría' : 'Nueva Categoría'}
-              </h3>
-              
-              <div className="grid grid-cols-1 gap-6">
-                <div className="space-y-2">
-                  <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Nombre de Categoría</label>
-                  <input 
-                    type="text" 
-                    value={categoryForm.name}
-                    onChange={(e) => setCategoryForm({ ...categoryForm, name: e.target.value })}
-                    className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                    placeholder="Ej: Lácteos, Bebidas, etc."
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Descripción (Opcional)</label>
-                  <textarea 
-                    value={categoryForm.description}
-                    onChange={(e) => setCategoryForm({ ...categoryForm, description: e.target.value })}
-                    className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all resize-none"
-                    rows={3}
-                    placeholder="Breve descripción de la categoría..."
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <input 
-                    type="checkbox" 
-                    id="cat-activo"
-                    checked={categoryForm.estado === 'activo'}
-                    onChange={(e) => setCategoryForm({ ...categoryForm, estado: e.target.checked ? 'activo' : 'inactivo' })}
-                    className="w-5 h-5 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900"
-                  />
-                  <label htmlFor="cat-activo" className="text-sm font-bold text-zinc-700 leading-snug">Activa</label>
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-                  {editingItem && (
-                    <button 
-                      type="button"
-                      onClick={() => {
-                        setEditingItem(null);
-                        setCategoryForm({ name: '', description: '', estado: 'activo' });
-                      }}
-                      className="w-full sm:w-auto px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs text-zinc-500 hover:bg-zinc-100 transition-all"
-                    >
-                      Cancelar
-                    </button>
-                  )}
-                  {((editingItem && hasPermission('settings', 'edit')) || (!editingItem && hasPermission('settings', 'create'))) && (
-                    <button 
-                      type="submit"
-                      disabled={loading || !categoryForm.name.trim()}
-                      className="w-full sm:w-auto bg-zinc-900 text-white px-6 sm:px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50 flex items-center gap-2"
-                    >
-                      {editingItem ? <Save size={16} /> : <Plus size={16} />}
-                      {editingItem ? 'Actualizar' : 'Agregar'}
-                    </button>
-                  )}
-                </div>
-              </div>
-            </form>
-
-            <div className="grid grid-cols-1 gap-3">
-              <h4 className="text-xs font-black text-zinc-400 uppercase tracking-widest px-2">Categorías Registradas</h4>
-              {categories.map((item) => (
-                <div key={item.id} className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white px-4 sm:px-6 py-4 rounded-2xl border ${item.estado === 'activo' ? 'border-zinc-100' : 'border-red-100 bg-red-50/30'} hover:border-zinc-200 transition-all group`}>
-                  <div className="flex items-center gap-4 min-w-0">
-                    <div className={`w-2 h-2 rounded-full ${item.estado === 'activo' ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
-                    <div>
-                      <span className={`font-bold break-words ${item.estado === 'activo' ? 'text-zinc-900' : 'text-zinc-400 line-through'}`}>{item.name}</span>
-                      {item.description && (
-                        <p className="text-[10px] font-medium text-zinc-400 line-clamp-2 sm:line-clamp-1">{item.description}</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all self-end sm:self-auto">
-                    {hasPermission('settings', 'edit') && (
-                      <button 
-                        onClick={() => {
-                          setEditingItem(item);
-                          setCategoryForm({
-                            name: item.name,
-                            description: item.description || '',
-                            estado: item.estado || 'activo'
-                          });
-                          window.scrollTo({ top: 0, behavior: 'smooth' });
-                        }}
-                        className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-xl transition-all"
-                        title="Editar"
-                      >
-                        <Sliders size={16} />
-                      </button>
-                    )}
-                    {hasPermission('settings', 'delete') && (
-                      <button 
-                        onClick={() => handleDeleteItem('product-categories', item.id)}
-                        className="p-2 text-zinc-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
-                        title="Eliminar"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {categories.length === 0 && !loading && (
-                <p className="text-center py-12 text-zinc-400 font-medium italic">No hay categorías registradas</p>
-              )}
-            </div>
-          </div>
-        );
-
-      case 'familias':
-        return (
-          <div className="space-y-6 sm:space-y-8 max-w-3xl w-full">
-            <form onSubmit={handleSaveFamily} className="bg-white p-4 sm:p-6 lg:p-8 rounded-3xl sm:rounded-[32px] border border-zinc-200 shadow-sm space-y-5 sm:space-y-6">
-              <h3 className="text-base sm:text-lg font-black text-zinc-900 uppercase tracking-widest">
-                {editingItem ? 'Editar Familia' : 'Nueva Familia'}
-              </h3>
-              
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
-                <div className="space-y-2">
-                  <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Nombre de Familia</label>
-                  <input 
-                    type="text" 
-                    value={familyForm.name}
-                    onChange={(e) => setFamilyForm({ ...familyForm, name: e.target.value })}
-                    className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                    placeholder="Ej: Almacén, Bebidas, etc."
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Categoría Asociada</label>
-                  <select 
-                    value={familyForm.category_id || ''}
-                    onChange={(e) => setFamilyForm({ ...familyForm, category_id: e.target.value ? parseInt(e.target.value) : null })}
-                    className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                  >
-                    <option value="">Seleccionar categoría...</option>
-                    {categories.map(cat => (
-                      <option key={cat.id} value={cat.id}>{cat.name}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <input 
-                    type="checkbox" 
-                    id="fam-activo"
-                    checked={familyForm.estado === 'activo'}
-                    onChange={(e) => setFamilyForm({ ...familyForm, estado: e.target.checked ? 'activo' : 'inactivo' })}
-                    className="w-5 h-5 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900"
-                  />
-                  <label htmlFor="fam-activo" className="text-sm font-bold text-zinc-700 leading-snug">Activa</label>
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-                  {editingItem && (
-                    <button 
-                      type="button"
-                      onClick={() => {
-                        setEditingItem(null);
-                        setFamilyForm({ name: '', category_id: null, estado: 'activo' });
-                      }}
-                      className="w-full sm:w-auto px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs text-zinc-500 hover:bg-zinc-100 transition-all"
-                    >
-                      Cancelar
-                    </button>
-                  )}
-                  {((editingItem && hasPermission('settings', 'edit')) || (!editingItem && hasPermission('settings', 'create'))) && (
-                    <button 
-                      type="submit"
-                      disabled={loading || !familyForm.name.trim()}
-                      className="w-full sm:w-auto bg-zinc-900 text-white px-6 sm:px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50 flex items-center gap-2"
-                    >
-                      {editingItem ? <Save size={16} /> : <Plus size={16} />}
-                      {editingItem ? 'Actualizar' : 'Agregar'}
-                    </button>
-                  )}
-                </div>
-              </div>
-            </form>
-
-            <div className="grid grid-cols-1 gap-3">
-              <h4 className="text-xs font-black text-zinc-400 uppercase tracking-widest px-2">Familias Registradas</h4>
-              {families.map((item) => (
-                <div key={item.id} className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white px-4 sm:px-6 py-4 rounded-2xl border ${item.estado === 'activo' ? 'border-zinc-100' : 'border-red-100 bg-red-50/30'} hover:border-zinc-200 transition-all group`}>
-                  <div className="flex items-center gap-4 min-w-0">
-                    <div className={`w-2 h-2 rounded-full ${item.estado === 'activo' ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
-                    <div>
-                      <span className={`font-bold break-words ${item.estado === 'activo' ? 'text-zinc-900' : 'text-zinc-400 line-through'}`}>{item.name}</span>
-                      {item.category_name && (
-                        <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">{item.category_name}</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all self-end sm:self-auto">
-                    {hasPermission('settings', 'edit') && (
-                      <button 
-                        onClick={() => {
-                          setEditingItem(item);
-                          setFamilyForm({
-                            name: item.name,
-                            category_id: item.category_id || null,
-                            estado: item.estado || 'activo'
-                          });
-                          window.scrollTo({ top: 0, behavior: 'smooth' });
-                        }}
-                        className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-xl transition-all"
-                        title="Editar"
-                      >
-                        <Sliders size={16} />
-                      </button>
-                    )}
-                    {hasPermission('settings', 'delete') && (
-                      <button 
-                        onClick={() => handleDeleteItem('product-families', item.id)}
-                        className="p-2 text-zinc-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
-                        title="Eliminar"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {families.length === 0 && !loading && (
-                <p className="text-center py-12 text-zinc-400 font-medium italic">No hay familias registradas</p>
-              )}
-            </div>
-          </div>
-        );
-
-      case 'parametros':
-        return (
-          <form onSubmit={handleSaveSettings} className="space-y-6 max-w-2xl w-full">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Moneda del Sistema</label>
-                <select 
-                  value={settings.system_currency || 'ARS'} 
-                  onChange={(e) => setSettings({...settings, system_currency: e.target.value})}
-                  className="w-full bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                >
-                  <option value="ARS">Peso Argentino ($)</option>
-                  <option value="USD">Dólar Estadounidense (USD)</option>
-                </select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-zinc-400">IVA Predeterminado (%)</label>
-                <input 
-                  type="number" 
-                  value={settings.default_iva || '21'} 
-                  onChange={(e) => setSettings({...settings, default_iva: e.target.value})}
-                  className="w-full bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Margen de Ganancia Sugerido (%)</label>
-                <input 
-                  type="number" 
-                  value={settings.default_markup || '30'} 
-                  onChange={(e) => setSettings({...settings, default_markup: e.target.value})}
-                  className="w-full bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Días Alerta Deuda Cliente</label>
-                <input 
-                  type="number" 
-                  value={settings.customer_debt_alert_days || '7'} 
-                  onChange={(e) => setSettings({...settings, customer_debt_alert_days: e.target.value})}
-                  className="w-full bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Límite Crédito Default</label>
-                <input 
-                  type="number" 
-                  value={settings.default_credit_limit || '0'} 
-                  onChange={(e) => setSettings({...settings, default_credit_limit: e.target.value})}
-                  className="w-full bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Método Cálculo Costo</label>
-                <select 
-                  value={settings.cost_calculation_method || 'PEPS'} 
-                  onChange={(e) => setSettings({...settings, cost_calculation_method: e.target.value})}
-                  className="w-full bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                >
-                  <option value="PEPS">PEPS (Primero Entrado, Primero Salido)</option>
-                  <option value="PPP">PPP (Precio Promedio Ponderado)</option>
-                  <option value="UEPS">UEPS (Último Entrado, Primero Salido)</option>
-                </select>
-              </div>
-            </div>
-            <div className="flex items-start sm:items-center gap-3 p-4 bg-zinc-100 rounded-2xl border border-zinc-200">
-              <input 
-                type="checkbox" 
-                id="allow-negative-stock"
-                checked={settings.allow_negative_stock === 'true'} 
-                onChange={(e) => setSettings({...settings, allow_negative_stock: e.target.checked ? 'true' : 'false'})}
-                className="w-5 h-5 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900"
-              />
-              <label htmlFor="allow-negative-stock" className="text-sm font-bold text-zinc-700 leading-snug">Permitir Ventas sin Stock (Stock Negativo)</label>
-            </div>
-            <button 
-              type="submit" 
-              disabled={loading}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 bg-zinc-900 text-white px-6 sm:px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50"
-            >
-              <Save size={16} />
-              Guardar Parámetros Comerciales
-            </button>
-          </form>
-        );
-
-      case 'numeraciones':
-        return (
-          <form onSubmit={handleSaveSettings} className="space-y-6 max-w-2xl w-full">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Próximo Número de Venta</label>
-                <input 
-                  type="number" 
-                  value={settings.next_sale_number || '1'} 
-                  onChange={(e) => setSettings({...settings, next_sale_number: e.target.value})}
-                  className="w-full bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Próximo Número de Pedido</label>
-                <input 
-                  type="number" 
-                  value={settings.next_order_number || '1'} 
-                  onChange={(e) => setSettings({...settings, next_order_number: e.target.value})}
-                  className="w-full bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Próximo Número de Pago/Recibo</label>
-                <input 
-                  type="number" 
-                  value={settings.next_payment_number || '1'} 
-                  onChange={(e) => setSettings({...settings, next_payment_number: e.target.value})}
-                  className="w-full bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-zinc-400">Prefijo de Facturación</label>
-                <input 
-                  type="text" 
-                  value={settings.billing_prefix || '0001'} 
-                  onChange={(e) => setSettings({...settings, billing_prefix: e.target.value})}
-                  className="w-full bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                />
-              </div>
-            </div>
-            <button 
-              type="submit" 
-              disabled={loading}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 bg-zinc-900 text-white px-6 sm:px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-zinc-800 transition-all disabled:opacity-50"
-            >
-              <Save size={16} />
-              Guardar Numeraciones
-            </button>
-          </form>
-        );
-
-      default:
-        return null;
+      case 'negocio': return renderBusiness();
+      case 'pagos': return renderPayments();
+      case 'categorias': return renderCategories();
+      case 'familias': return renderFamilies();
+      case 'parametros': return renderParameters();
+      case 'numeraciones': return renderNumbering();
+      default: return null;
     }
   };
 
   return (
-    <div className="h-full flex flex-col bg-white overflow-hidden">
-      {/* Header */}
-      <header className="bg-white border-b border-zinc-200 p-4 sm:p-6 lg:p-8 shrink-0">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h2 className="text-2xl sm:text-3xl font-black text-zinc-900 tracking-tight flex items-center gap-3">
-              <Settings className="text-zinc-400" size={32} />
-              CONFIGURACIÓN
-            </h2>
-            <p className="text-zinc-500 text-sm font-medium">Gestiona los parámetros y datos maestros del sistema</p>
-          </div>
-          
-          {message && (
-            <div className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-xl text-xs font-bold animate-in fade-in slide-in-from-top-2 w-full sm:w-auto ${
-              message.type === 'success' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-red-50 text-red-600 border border-red-100'
-            }`}>
-              {message.type === 'success' ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
-              {message.text}
+    <div className="min-h-full bg-slate-50/70 pb-8">
+      <header className="border-b border-slate-200 bg-white px-4 py-5 sm:px-6 lg:px-8">
+        <div className="mx-auto flex max-w-[1600px] flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-200">
+              <Settings size={25} />
             </div>
-          )}
+            <div className="min-w-0">
+              <h2 className="break-words text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">Configuración</h2>
+              <p className="mt-1 text-sm font-medium leading-relaxed text-slate-500">Datos maestros, parámetros comerciales, numeraciones y seguridad de la aplicación.</p>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            {message && (
+              <div className={`flex min-h-11 min-w-0 items-center gap-2 rounded-2xl border px-4 py-2 text-sm font-bold ${message.type === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'}`} role="status">
+                {message.type === 'success' ? <CheckCircle2 size={17} className="shrink-0" /> : <AlertCircle size={17} className="shrink-0" />}
+                <span className="break-words">{message.text}</span>
+              </div>
+            )}
+            <button type="button" onClick={() => fetchData(true)} disabled={refreshing || loading} className={secondaryButtonClass}>
+              <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+              {refreshing ? 'Actualizando...' : 'Actualizar'}
+            </button>
+          </div>
         </div>
       </header>
 
-      {/* Main Layout */}
-      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-        {renderTabs()}
-        
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-12 bg-white custom-scrollbar">
+      <div className="mx-auto max-w-[1600px] px-4 py-5 sm:px-6 lg:px-8">
+        <nav className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6" aria-label="Secciones de configuración">
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`min-w-0 rounded-2xl border p-3 text-left transition focus:outline-none focus:ring-4 focus:ring-indigo-100 sm:p-4 ${active ? 'border-indigo-500 bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50'}`}
+                aria-current={active ? 'page' : undefined}
+              >
+                <Icon size={19} className={active ? 'text-white' : 'text-indigo-600'} />
+                <span className="mt-2 block break-words text-xs font-black leading-tight sm:hidden">{tab.shortLabel}</span>
+                <span className="mt-2 hidden break-words text-xs font-black leading-tight sm:block">{tab.label}</span>
+                <span className={`mt-1 hidden break-words text-[11px] leading-snug lg:block ${active ? 'text-indigo-100' : 'text-slate-500'}`}>{tab.description}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        <section className="mt-5">
+          <div className="mb-4 rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-700"><currentTab.icon size={19} /></div>
+              <div className="min-w-0"><h3 className="break-words text-base font-black text-slate-900">{currentTab.label}</h3><p className="break-words text-sm text-slate-500">{currentTab.description}</p></div>
+            </div>
+          </div>
           {renderContent()}
-        </main>
+        </section>
       </div>
 
-      {showResetModal && (
-        <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm flex items-start sm:items-center justify-center p-3 sm:p-6">
-          <form
-            onSubmit={handleResetAppData}
-            className="bg-white w-full max-w-lg rounded-3xl sm:rounded-[40px] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
-          >
-            <div className="p-5 sm:p-8 bg-red-600 text-white flex items-start gap-4">
-              <div className="w-12 h-12 rounded-2xl bg-white/15 flex items-center justify-center shrink-0">
-                <ShieldAlert size={26} />
-              </div>
-              <div>
-                <h3 className="text-xl sm:text-2xl font-black tracking-tight">Restablecer datos</h3>
-                <p className="text-xs sm:text-sm text-white/80 font-bold mt-1">
-                  Esta acción borra datos operativos y no se puede deshacer.
-                </p>
-              </div>
+      {deleteTarget && (
+        <div className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-5">
+          <div className="max-h-[100dvh] w-full overflow-y-auto rounded-t-[28px] bg-white shadow-2xl sm:max-w-md sm:rounded-[28px]">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5 sm:p-6">
+              <div className="flex items-start gap-3"><div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-red-100 text-red-600"><Trash2 size={21} /></div><div><h3 className="text-lg font-black text-slate-950">Eliminar {deleteTarget.label.toLowerCase()}</h3><p className="mt-1 break-words text-sm text-slate-500">{deleteTarget.name}</p></div></div>
+              <button type="button" onClick={() => setDeleteTarget(null)} disabled={deleteLoading} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-slate-500 hover:bg-slate-100" aria-label="Cerrar"><X size={20} /></button>
             </div>
+            <div className="p-5 sm:p-6"><p className="text-sm leading-relaxed text-slate-600">Esta acción puede afectar filtros o registros que utilicen este elemento. Confirmá solamente si ya no se necesita.</p></div>
+            <div className="grid gap-3 border-t border-slate-200 bg-slate-50 p-5 sm:grid-cols-2 sm:p-6"><button type="button" onClick={() => setDeleteTarget(null)} disabled={deleteLoading} className={secondaryButtonClass}>Cancelar</button><button type="button" onClick={deleteItem} disabled={deleteLoading} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-red-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-red-700 disabled:opacity-50"><Trash2 size={16} /> {deleteLoading ? 'Eliminando...' : 'Eliminar'}</button></div>
+          </div>
+        </div>
+      )}
 
-            <div className="p-5 sm:p-8 space-y-5">
-              <div className="p-4 rounded-2xl bg-red-50 border border-red-100 text-red-700 text-xs font-bold leading-relaxed">
-                Se eliminarán productos, clientes, ventas, compras, finanzas, rutas, checklist,
-                reportes operativos, pedidos a proveedor, proveedores, categorías y familias.
-                Se conservarán usuarios, permisos, datos del negocio y formas de pago.
-              </div>
-
-              <div className="p-4 rounded-2xl bg-amber-50 border border-amber-100 text-amber-800 text-xs font-bold leading-relaxed space-y-3">
-                <p>
-                  Antes de restablecer, se recomienda descargar una copia de seguridad JSON para poder volver a este punto.
-                </p>
-                <button
-                  type="button"
-                  onClick={handleDownloadBackup}
-                  disabled={backupLoading}
-                  className="w-full sm:w-auto flex items-center justify-center gap-2 bg-amber-600 text-white px-5 py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-amber-700 transition-all disabled:opacity-50"
-                >
-                  <Download size={16} />
-                  {backupLoading ? 'Descargando...' : 'Sí, descargar copia antes'}
-                </button>
-              </div>
-
-
-
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-zinc-400">
-                  Contraseña del administrador
-                </label>
-                <input
-                  type="password"
-                  value={resetAdminPassword}
-                  onChange={(e) => setResetAdminPassword(e.target.value)}
-                  className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-red-500 outline-none transition-all"
-                  placeholder="Ingrese la contraseña"
-                  autoComplete="current-password"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-xs font-black uppercase tracking-widest text-zinc-400">
-                  Confirmación
-                </label>
-                <input
-                  type="text"
-                  value={resetConfirmation}
-                  onChange={(e) => setResetConfirmation(e.target.value)}
-                  className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-red-500 outline-none transition-all"
-                  placeholder="Escriba REESTABLECER"
-                />
-              </div>
+      {showRestoreModal && restoreFile && (
+        <div className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-5">
+          <form onSubmit={restoreBackup} className="max-h-[100dvh] w-full overflow-y-auto rounded-t-[28px] bg-white shadow-2xl sm:max-w-lg sm:rounded-[28px]">
+            <div className="flex items-start justify-between gap-4 bg-amber-500 p-5 text-white sm:p-6">
+              <div className="flex items-start gap-3"><div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/20"><Upload size={21} /></div><div><h3 className="text-xl font-black">Restaurar copia de seguridad</h3><p className="mt-1 text-sm font-medium text-amber-50">Los datos actuales serán reemplazados por el archivo seleccionado.</p></div></div>
+              <button type="button" onClick={closeRestoreModal} disabled={restoreLoading} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white hover:bg-white/15" aria-label="Cerrar"><X size={20} /></button>
             </div>
-
-            <div className="p-5 sm:p-8 bg-zinc-50 border-t border-zinc-100 flex flex-col sm:flex-row gap-3 sm:justify-end">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowResetModal(false);
-                  setResetAdminPassword('');
-                  setResetConfirmation('');
-                }}
-                disabled={resetLoading}
-                className="w-full sm:w-auto px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs text-zinc-600 hover:bg-zinc-200 transition-all disabled:opacity-50"
-              >
-                Cancelar
-              </button>
-
-              <button
-                type="submit"
-                disabled={resetLoading || !resetAdminPassword.trim() || resetConfirmation.trim() !== 'REESTABLECER'}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 bg-red-600 text-white px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-red-700 transition-all disabled:opacity-50"
-              >
-                <RotateCcw size={16} />
-                {resetLoading ? 'Restableciendo...' : 'Confirmar reset'}
-              </button>
+            <div className="space-y-4 p-5 sm:p-6">
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><p className="text-xs font-black uppercase tracking-widest text-amber-700">Archivo seleccionado</p><p className="mt-1 break-all text-sm font-bold text-amber-900">{restoreFile.name}</p></div>
+              <label className="space-y-2"><span className={labelClass}>Contraseña del administrador</span><input type="password" className={inputClass} value={restoreAdminPassword} onChange={(event) => setRestoreAdminPassword(event.target.value)} autoComplete="current-password" placeholder="Ingrese la contraseña" /></label>
+              <label className="space-y-2"><span className={labelClass}>Confirmación escrita</span><input className={inputClass} value={restoreConfirmation} onChange={(event) => setRestoreConfirmation(event.target.value)} placeholder="Escriba RESTAURAR" /><span className="block text-xs text-slate-500">Escribí exactamente RESTAURAR para habilitar la acción.</span></label>
             </div>
+            <div className="grid gap-3 border-t border-slate-200 bg-slate-50 p-5 sm:grid-cols-2 sm:p-6"><button type="button" onClick={closeRestoreModal} disabled={restoreLoading} className={secondaryButtonClass}>Cancelar</button><button type="submit" disabled={restoreLoading || !restoreAdminPassword.trim() || restoreConfirmation.trim() !== 'RESTAURAR'} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-amber-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-amber-700 disabled:opacity-50"><Upload size={16} /> {restoreLoading ? 'Restaurando...' : 'Restaurar datos'}</button></div>
           </form>
         </div>
       )}
 
+      {showResetModal && (
+        <div className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/65 p-0 backdrop-blur-sm sm:items-center sm:p-5">
+          <form onSubmit={resetAppData} className="max-h-[100dvh] w-full overflow-y-auto rounded-t-[28px] bg-white shadow-2xl sm:max-w-lg sm:rounded-[28px]">
+            <div className="flex items-start justify-between gap-4 bg-red-600 p-5 text-white sm:p-6">
+              <div className="flex items-start gap-3"><div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/15"><ShieldAlert size={22} /></div><div><h3 className="text-xl font-black">Restablecer datos</h3><p className="mt-1 text-sm font-medium text-red-100">Esta acción no se puede deshacer sin una copia JSON.</p></div></div>
+              <button type="button" onClick={() => !resetLoading && setShowResetModal(false)} disabled={resetLoading} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white hover:bg-white/15" aria-label="Cerrar"><X size={20} /></button>
+            </div>
+            <div className="space-y-4 p-5 sm:p-6">
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-medium leading-relaxed text-red-800">Se eliminarán los datos operativos. Usuarios, permisos, datos del negocio y formas de pago se conservarán.</div>
+              <button type="button" onClick={downloadBackup} disabled={backupLoading} className={secondaryButtonClass}><Download size={16} /> {backupLoading ? 'Generando copia...' : 'Descargar copia antes'}</button>
+              <label className="space-y-2"><span className={labelClass}>Contraseña del administrador</span><input type="password" className={inputClass} value={resetAdminPassword} onChange={(event) => setResetAdminPassword(event.target.value)} autoComplete="current-password" placeholder="Ingrese la contraseña" /></label>
+              <label className="space-y-2"><span className={labelClass}>Confirmación escrita</span><input className={inputClass} value={resetConfirmation} onChange={(event) => setResetConfirmation(event.target.value)} placeholder="Escriba REESTABLECER" /><span className="block text-xs text-slate-500">Escribí exactamente REESTABLECER para habilitar la acción.</span></label>
+            </div>
+            <div className="grid gap-3 border-t border-slate-200 bg-slate-50 p-5 sm:grid-cols-2 sm:p-6"><button type="button" onClick={() => { setShowResetModal(false); setResetAdminPassword(''); setResetConfirmation(''); }} disabled={resetLoading} className={secondaryButtonClass}>Cancelar</button><button type="submit" disabled={resetLoading || !resetAdminPassword.trim() || resetConfirmation.trim() !== 'REESTABLECER'} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-red-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-red-700 disabled:opacity-50"><RotateCcw size={16} /> {resetLoading ? 'Restableciendo...' : 'Confirmar restablecimiento'}</button></div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
