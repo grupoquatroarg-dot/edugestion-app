@@ -79,6 +79,36 @@ const targetFieldLabels: Record<PriceTargetField, string> = {
   sale_price: 'Precio de venta',
 };
 
+const normalizeSearchText = (value: unknown) =>
+  String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('es-AR')
+    .trim();
+
+const normalizeProductCode = (value: unknown) =>
+  normalizeSearchText(value).replace(/[^a-z0-9]/g, '');
+
+const findExactProduct = (products: Product[], value: string) => {
+  const normalizedText = normalizeSearchText(value);
+  const normalizedCode = normalizeProductCode(value);
+
+  if (!normalizedText) return undefined;
+
+  return products.find((product) => {
+    const id = String(product.id);
+    const name = normalizeSearchText(product.name);
+    const code = normalizeProductCode(product.code);
+    const uniqueCode = normalizeProductCode(product.codigo_unico);
+
+    return (
+      id === normalizedText ||
+      name === normalizedText ||
+      (normalizedCode.length > 0 && (code === normalizedCode || uniqueCode === normalizedCode))
+    );
+  });
+};
+
 export default function BulkPriceUpdate() {
   const [products, setProducts] = useState<Product[]>([]);
   const [families, setFamilies] = useState<ProductFamily[]>([]);
@@ -115,6 +145,24 @@ export default function BulkPriceUpdate() {
   }, []);
 
   useEffect(() => {
+    const refreshProductCatalog = () => {
+      if (document.visibilityState === 'visible') {
+        void fetchProducts().catch((error) => {
+          console.error('Error refreshing products for bulk price search:', error);
+        });
+      }
+    };
+
+    window.addEventListener('focus', refreshProductCatalog);
+    document.addEventListener('visibilitychange', refreshProductCatalog);
+
+    return () => {
+      window.removeEventListener('focus', refreshProductCatalog);
+      document.removeEventListener('visibilitychange', refreshProductCatalog);
+    };
+  }, []);
+
+  useEffect(() => {
     setPreviewProducts([]);
     setPreviewConfig(null);
     setShowConfirm(false);
@@ -146,7 +194,13 @@ export default function BulkPriceUpdate() {
   };
 
   const fetchProducts = async () => {
-    const res = await apiFetch('/api/products');
+    const params = new URLSearchParams({
+      all: 'true',
+      fresh: Date.now().toString(),
+    });
+    const res = await apiFetch(`/api/products?${params.toString()}`, {
+      cache: 'no-store',
+    });
     const body = await res.json();
 
     if (!res.ok) {
@@ -155,7 +209,14 @@ export default function BulkPriceUpdate() {
     }
 
     const data = unwrapResponse<Product[]>(body);
-    setProducts(Array.isArray(data) ? data : []);
+    const nextProducts = Array.isArray(data) ? data : [];
+
+    setProducts(nextProducts);
+    setSelectedProductId((currentId) =>
+      currentId && nextProducts.some((product) => product.id.toString() === currentId)
+        ? currentId
+        : ''
+    );
   };
 
   const fetchHistory = async () => {
@@ -188,31 +249,53 @@ export default function BulkPriceUpdate() {
     }
   };
 
-  const resolveProductId = (value: string) => {
-    const normalizedValue = value.trim();
-    if (!normalizedValue) return '';
-
-    const found = products.find(
-      (product) =>
-        product.id.toString() === normalizedValue ||
-        product.name.toLocaleLowerCase('es-AR') === normalizedValue.toLocaleLowerCase('es-AR')
-    );
-
-    return found?.id.toString() || '';
-  };
+  const resolveProductId = (value: string) =>
+    findExactProduct(products, value)?.id.toString() || '';
 
   const productMatches = useMemo(() => {
-    const query = productSearch.trim().toLocaleLowerCase('es-AR');
-    if (!query) return products.slice(0, 8);
+    const queryText = normalizeSearchText(productSearch);
+    const queryCode = normalizeProductCode(productSearch);
+
+    if (!queryText) return products.slice(0, 8);
 
     return products
-      .filter((product) =>
-        [product.name, product.code, product.codigo_unico, product.family_name, product.company]
-          .filter(Boolean)
-          .some((value) => String(value).toLocaleLowerCase('es-AR').includes(query))
-      )
-      .slice(0, 8);
+      .map((product) => {
+        const name = normalizeSearchText(product.name);
+        const code = normalizeProductCode(product.code);
+        const uniqueCode = normalizeProductCode(product.codigo_unico);
+        const family = normalizeSearchText(product.family_name);
+        const category = normalizeSearchText(product.category_name);
+        const company = normalizeSearchText(product.company);
+
+        const matches =
+          name.includes(queryText) ||
+          family.includes(queryText) ||
+          category.includes(queryText) ||
+          company.includes(queryText) ||
+          (queryCode.length > 0 && (code.includes(queryCode) || uniqueCode.includes(queryCode)));
+
+        if (!matches) return null;
+
+        let rank = 50;
+
+        if (queryCode.length > 0 && (code === queryCode || uniqueCode === queryCode)) rank = 0;
+        else if (name === queryText) rank = 1;
+        else if (queryCode.length > 0 && (code.startsWith(queryCode) || uniqueCode.startsWith(queryCode))) rank = 2;
+        else if (name.startsWith(queryText)) rank = 3;
+        else if (family.startsWith(queryText) || category.startsWith(queryText) || company.startsWith(queryText)) rank = 4;
+
+        return { product, rank };
+      })
+      .filter((entry): entry is { product: Product; rank: number } => entry !== null)
+      .sort((a, b) => a.rank - b.rank || a.product.name.localeCompare(b.product.name, 'es-AR'))
+      .slice(0, 8)
+      .map((entry) => entry.product);
   }, [productSearch, products]);
+
+  const exactProductMatch = useMemo(
+    () => findExactProduct(products, productSearch),
+    [productSearch, products]
+  );
 
   const selectedProduct = useMemo(
     () => products.find((product) => product.id.toString() === selectedProductId),
@@ -229,7 +312,10 @@ export default function BulkPriceUpdate() {
     scope,
     familyId: selectedFamilyId,
     company: selectedCompany,
-    productId: scope === 'manual' ? resolveProductId(selectedProductId) : '',
+    productId:
+      scope === 'manual'
+        ? selectedProductId || resolveProductId(productSearch)
+        : '',
     activeOnly,
     changeType,
     changeValue,
@@ -739,9 +825,20 @@ export default function BulkPriceUpdate() {
                       value={productSearch}
                       onFocus={() => setProductPickerOpen(true)}
                       onChange={(event) => { setProductSearch(event.target.value); setSelectedProductId(''); setProductPickerOpen(true); }}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'Enter') return;
+
+                        const productToSelect = exactProductMatch || (productMatches.length === 1 ? productMatches[0] : undefined);
+
+                        if (productToSelect) {
+                          event.preventDefault();
+                          selectProduct(productToSelect);
+                        }
+                      }}
                       onBlur={() => window.setTimeout(() => setProductPickerOpen(false), 150)}
                       className="min-h-12 w-full rounded-2xl border border-slate-200 bg-white py-3 pl-11 pr-11 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
-                      placeholder="Nombre, código, familia o empresa"
+                      placeholder="Nombre, código, familia, categoría o empresa"
+                      aria-label="Buscar producto por nombre, código, familia, categoría o empresa"
                       autoComplete="off"
                     />
                     {(productSearch || selectedProductId) && <button type="button" onClick={() => { setProductSearch(''); setSelectedProductId(''); setProductPickerOpen(false); }} className="absolute right-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100" aria-label="Limpiar producto"><X size={18} /></button>}
@@ -749,14 +846,50 @@ export default function BulkPriceUpdate() {
                       <div className="absolute z-30 mt-2 max-h-72 w-full overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl">
                         {productMatches.length > 0 ? productMatches.map((product) => (
                           <button key={product.id} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => selectProduct(product)} className="flex w-full items-start justify-between gap-3 rounded-xl p-3 text-left hover:bg-indigo-50">
-                            <div className="min-w-0"><p className="break-words font-black text-slate-900">{product.name}</p><p className="mt-1 break-words text-xs text-slate-500">{product.code || product.codigo_unico || `ID ${product.id}`} · {product.family_name || 'Sin familia'}</p></div>
+                            <div className="min-w-0">
+                              <p className="break-words font-black text-slate-900">{product.name}</p>
+                              <p className="mt-1 break-words text-xs text-slate-500">
+                                {product.code || `ID ${product.id}`}
+                                {product.codigo_unico && product.codigo_unico !== product.code ? ` · ${product.codigo_unico}` : ''}
+                              </p>
+                              <p className="mt-1 break-words text-[11px] text-slate-400">
+                                {product.family_name || 'Sin familia'} · {product.category_name || 'Sin categoría'}
+                              </p>
+                            </div>
                             <span className="shrink-0 rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-600">{product.company}</span>
                           </button>
-                        )) : <div className="p-4 text-center text-sm text-slate-500">No encontramos productos con esa búsqueda.</div>}
+                        )) : (
+                          <div className="p-4 text-center">
+                            <p className="text-sm font-bold text-slate-700">No encontramos productos con ese código o nombre.</p>
+                            <p className="mt-1 text-xs leading-5 text-slate-500">También podés buscar por familia, categoría o empresa.</p>
+                            <button
+                              type="button"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => void loadData(false)}
+                              disabled={refreshing}
+                              className="mt-3 min-h-10 rounded-xl bg-slate-100 px-4 py-2 text-xs font-black text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 disabled:opacity-50"
+                            >
+                              {refreshing ? 'Actualizando productos…' : 'Actualizar productos'}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
-                  {selectedProduct ? <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900"><span className="font-black">Seleccionado:</span> {selectedProduct.name}</div> : productSearch ? <p className="mt-2 text-xs font-semibold text-amber-700">Elegí una coincidencia de la lista antes de continuar.</p> : null}
+                  {selectedProduct ? (
+                    <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+                      <span className="font-black">Seleccionado:</span> {selectedProduct.name}
+                      <span className="ml-2 font-mono text-xs font-bold">
+                        {selectedProduct.code || selectedProduct.codigo_unico}
+                      </span>
+                    </div>
+                  ) : exactProductMatch ? (
+                    <p className="mt-2 text-xs font-semibold text-indigo-700">
+                      Coincidencia exacta encontrada. Presioná Enter o elegila de la lista.
+                    </p>
+                  ) : productSearch ? (
+                    <p className="mt-2 text-xs font-semibold text-amber-700">Elegí una coincidencia de la lista antes de continuar.</p>
+                  ) : null}
                 </div>
               )}
 
