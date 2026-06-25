@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   X, 
   TrendingUp, 
@@ -66,6 +66,10 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
     observaciones: ''
   });
   const [submittingPayment, setSubmittingPayment] = useState(false);
+  const detailPanelRef = useRef<HTMLDivElement | null>(null);
+  const detailScrollRef = useRef<HTMLDivElement | null>(null);
+  const detailHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const paymentAmountRef = useRef<HTMLInputElement | null>(null);
 
   const fetchStats = async (): Promise<boolean> => {
     try {
@@ -213,6 +217,39 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
     };
   }, [clienteId]);
 
+  useEffect(() => {
+    setActiveTab(initialTab);
+
+    const frameId = window.requestAnimationFrame(() => {
+      detailPanelRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      detailPanelRef.current?.focus({ preventScroll: true });
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [clienteId, initialTab]);
+
+  useEffect(() => {
+    if (loading || loadError || !data?.cliente) return;
+
+    const frameId = window.requestAnimationFrame(() => {
+      detailScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+      detailHeadingRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      detailHeadingRef.current?.focus({ preventScroll: true });
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [clienteId, initialTab, loading, loadError, data?.cliente?.id]);
+
+  useEffect(() => {
+    if (!showPaymentModal) return;
+
+    const frameId = window.requestAnimationFrame(() => {
+      paymentAmountRef.current?.focus({ preventScroll: true });
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [showPaymentModal]);
+
   const filteredMovements = useMemo(() => {
     const search = movementFilters.search.trim().toLowerCase();
 
@@ -277,7 +314,9 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
   if (loading) {
     return (
       <div
-        className="absolute inset-0 z-30 flex min-w-0 flex-col overflow-hidden bg-slate-50"
+        ref={detailPanelRef}
+        tabIndex={-1}
+        className="absolute inset-0 z-30 flex min-w-0 flex-col overflow-hidden bg-slate-50 outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500"
         role="status"
         aria-live="polite"
         aria-label="Cargando ficha del cliente"
@@ -336,7 +375,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
 
   if (loadError || !data || !data.cliente) {
     return (
-      <div className="absolute inset-0 z-30 flex min-w-0 flex-col overflow-hidden bg-slate-50">
+      <div ref={detailPanelRef} tabIndex={-1} className="absolute inset-0 z-30 flex min-w-0 flex-col overflow-hidden bg-slate-50 outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500">
         <div className="shrink-0 border-b border-slate-200 bg-white px-3 py-3 shadow-sm sm:px-5">
           <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-3">
             <button type="button" onClick={onClose} className="flex h-11 w-11 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100" aria-label="Volver a clientes" title="Volver a clientes">
@@ -375,7 +414,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
   const { cliente, summary, sales, total_payments, pending_orders } = data;
 
   return (
-    <div className="absolute inset-0 z-30 flex min-w-0 flex-col overflow-hidden bg-slate-50 animate-in slide-in-from-right duration-300">
+    <div ref={detailPanelRef} tabIndex={-1} className="absolute inset-0 z-30 flex min-w-0 flex-col overflow-hidden bg-slate-50 outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500 animate-in slide-in-from-right duration-300">
       <header className="sticky top-0 z-20 shrink-0 border-b border-slate-200 bg-white/95 shadow-sm backdrop-blur">
         <div className="mx-auto flex max-w-[1500px] flex-col gap-3 px-3 py-3 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 items-start gap-3">
@@ -391,7 +430,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
 
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
-                <h1 className="min-w-0 break-words text-lg font-black leading-6 text-slate-950 sm:text-2xl">
+                <h1 ref={detailHeadingRef} tabIndex={-1} className="min-w-0 break-words rounded-lg text-lg font-black leading-6 text-slate-950 outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 sm:text-2xl">
                   {cliente.nombre_apellido}
                 </h1>
                 <span className={`rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-wider ${
@@ -466,7 +505,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-2 sm:p-4 lg:p-6 custom-scrollbar">
+      <div ref={detailScrollRef} className="min-h-0 flex-1 overflow-y-auto p-2 sm:p-4 lg:p-6 custom-scrollbar">
         <div className="mx-auto max-w-[1500px] space-y-4 sm:space-y-5">
           <section className="grid grid-cols-1 gap-3 min-[430px]:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
@@ -819,7 +858,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                   <label className="mb-1.5 block text-[10px] font-black uppercase text-slate-400">Monto a pagar</label>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400">$</span>
-                    <input type="number" step="0.01" min="0.01" required className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-8 pr-4 text-lg font-black outline-none focus:ring-4 focus:ring-emerald-100" value={paymentForm.monto} onChange={(event) => setPaymentForm({ ...paymentForm, monto: event.target.value })} />
+                    <input ref={paymentAmountRef} type="number" step="0.01" min="0.01" required className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-8 pr-4 text-lg font-black outline-none focus:ring-4 focus:ring-emerald-100" value={paymentForm.monto} onChange={(event) => setPaymentForm({ ...paymentForm, monto: event.target.value })} />
                   </div>
                 </div>
 

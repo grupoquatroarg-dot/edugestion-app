@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Search, UserPlus, User, Phone, Mail, MapPin, Edit2, Trash2, X, AlertCircle, Building2, CreditCard, Eye, KeyRound, Users, WalletCards, AlertTriangle, ShieldCheck, RefreshCw, ChevronRight } from 'lucide-react';
 import CustomerDetail from './CustomerDetail';
 import AddressAutocomplete from './AddressAutocomplete';
@@ -45,6 +45,9 @@ export default function CustomerModule() {
   const [selectedClienteId, setSelectedClienteId] = useState<number | null>(null);
   const [initialDetailTab, setInitialDetailTab] = useState<'ventas' | 'movimientos' | 'pedidos'>('ventas');
   const [editingCliente, setEditingCliente] = useState<Cliente | null>(null);
+  const customerFormRef = useRef<HTMLFormElement | null>(null);
+  const customerNameInputRef = useRef<HTMLInputElement | null>(null);
+  const lastTriggerRef = useRef<HTMLElement | null>(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -79,6 +82,18 @@ export default function CustomerModule() {
       socket.off('sale_confirmed');
     };
   }, []);
+
+  useEffect(() => {
+    if (!isModalOpen) return;
+
+    const frameId = window.requestAnimationFrame(() => {
+      customerFormRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+      customerFormRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      customerNameInputRef.current?.focus({ preventScroll: true });
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [isModalOpen, editingCliente?.id]);
 
   const fetchClientes = async (showInitialLoader = false) => {
     if (showInitialLoader) setLoading(true);
@@ -194,6 +209,8 @@ export default function CustomerModule() {
   };
 
   const openModal = async (cliente?: Cliente) => {
+    lastTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
     if (cliente) {
       setEditingCliente(cliente);
       setFormData({
@@ -253,16 +270,32 @@ export default function CustomerModule() {
   };
 
 
+  const restoreTriggerFocus = () => {
+    const target = lastTriggerRef.current;
+    lastTriggerRef.current = null;
+
+    window.requestAnimationFrame(() => {
+      if (target?.isConnected) target.focus({ preventScroll: true });
+    });
+  };
+
   const closeModal = () => {
     setIsModalOpen(false);
     setEditingCliente(null);
+    restoreTriggerFocus();
   };
 
-
   const openDetail = (clienteId: number, tab: 'ventas' | 'movimientos' | 'pedidos' = 'ventas') => {
+    lastTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setInitialDetailTab(tab);
     setSelectedClienteId(clienteId);
     setIsDetailOpen(true);
+  };
+
+  const closeDetail = () => {
+    setIsDetailOpen(false);
+    setSelectedClienteId(null);
+    restoreTriggerFocus();
   };
 
   const formatCurrency = (value: number) =>
@@ -721,7 +754,7 @@ export default function CustomerModule() {
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6 custom-scrollbar">
+            <form ref={customerFormRef} onSubmit={handleSubmit} className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6 custom-scrollbar">
               <div className="space-y-5">
                 <section className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5">
                   <div className="mb-4">
@@ -730,8 +763,8 @@ export default function CustomerModule() {
                   </div>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div>
-                      <label className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Nombre y apellido *</label>
-                      <input required type="text" className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.nombre_apellido} onChange={(event) => setFormData({ ...formData, nombre_apellido: event.target.value })} />
+                      <label htmlFor="customer-name" className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Nombre y apellido *</label>
+                      <input ref={customerNameInputRef} id="customer-name" required type="text" className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.nombre_apellido} onChange={(event) => setFormData({ ...formData, nombre_apellido: event.target.value })} />
                     </div>
                     <div>
                       <label className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Razón social</label>
@@ -926,10 +959,7 @@ export default function CustomerModule() {
         <CustomerDetail
           clienteId={selectedClienteId}
           initialTab={initialDetailTab}
-          onClose={() => {
-            setIsDetailOpen(false);
-            setSelectedClienteId(null);
-          }}
+          onClose={closeDetail}
         />
       )}
     </div>
