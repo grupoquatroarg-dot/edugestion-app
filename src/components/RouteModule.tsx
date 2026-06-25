@@ -8,7 +8,6 @@ import {
   CheckCircle2, 
   XCircle, 
   Clock, 
-  ChevronRight, 
   Trash2, 
   Save, 
   ArrowRight,
@@ -23,7 +22,19 @@ import {
   ClipboardList,
   ShoppingCart,
   Minus,
-  BellRing
+  BellRing,
+  RefreshCw,
+  Loader2,
+  Navigation,
+  History,
+  Route as RouteIcon,
+  DollarSign,
+  PackageCheck,
+  WalletCards,
+  X,
+  RotateCcw,
+  LocateFixed,
+  ListOrdered
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../contexts/AuthContext';
@@ -80,7 +91,7 @@ const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
 };
 
 export default function RouteModule() {
-  const { user, hasPermission } = useAuth();
+  const { hasPermission } = useAuth();
   const [activeTab, setActiveTab] = useState<'planificar' | 'hoy' | 'historial'>('hoy');
   const [loading, setLoading] = useState(true);
   const [routes, setRoutes] = useState<Route[]>([]);
@@ -101,12 +112,37 @@ export default function RouteModule() {
   const [nearbyClient, setNearbyClient] = useState<any | null>(null);
   const [lastNotifiedClientId, setLastNotifiedClientId] = useState<number | null>(null);
   const [showProximityAlert, setShowProximityAlert] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [productSearch, setProductSearch] = useState('');
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [savingRoute, setSavingRoute] = useState(false);
+  const [quickActionSaving, setQuickActionSaving] = useState(false);
+  const [updatingItemId, setUpdatingItemId] = useState<number | null>(null);
+  const [routeActionId, setRouteActionId] = useState<number | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ type: 'complete' | 'delete'; routeId: number; routeName: string } | null>(null);
 
   // Planning state
   const [planDate, setPlanDate] = useState(new Date(Date.now() + 86400000).toISOString().split('T')[0]);
   const [planName, setPlanName] = useState('');
   const [selectedCustomerIds, setSelectedCustomerIds] = useState<number[]>([]);
   const [customerSearch, setCustomerSearch] = useState('');
+
+  const showNotification = (type: 'success' | 'error', message: string) => {
+    setNotification({ type, message });
+    window.setTimeout(() => setNotification(null), type === 'success' ? 3200 : 5200);
+  };
+
+  const readApiError = async (response: Response, fallback: string) => {
+    try {
+      const body = await response.json();
+      return body?.message || body?.error || fallback;
+    } catch {
+      return fallback;
+    }
+  };
 
   useEffect(() => {
     fetchInitialData();
@@ -172,52 +208,77 @@ export default function RouteModule() {
       }
     }
   }, [userLocation, todayRoute, lastNotifiedClientId, nearbyClient, showProximityAlert]);
-  const fetchInitialData = async () => {
-    setLoading(true);
+  const fetchInitialData = async (showFullLoader: boolean = true) => {
+    if (showFullLoader) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
+    setLoadError(null);
+
     try {
-      const [routesRes, todayRes, clientesRes, productsRes] = await Promise.all([
+      const responses = await Promise.all([
         apiFetch('/api/clientes?endpoint=routes'),
         apiFetch('/api/clientes?endpoint=routes-today'),
         apiFetch('/api/clientes'),
         apiFetch('/api/products')
       ]);
-      
-      const routesBody = await routesRes.json();
-      const todayBody = await todayRes.json();
-      const clientesBody = await clientesRes.json();
-      const productsBody = await productsRes.json();
 
-      const routesData = unwrapResponse(routesBody);
-      const todayData = unwrapResponse(todayBody);
-      const clientesData = unwrapResponse(clientesBody);
-      const productsData = unwrapResponse(productsBody);
+      const failed = responses.find(response => !response.ok);
+      if (failed) {
+        throw new Error(await readApiError(failed, 'No se pudieron cargar las rutas.'));
+      }
 
-      setRoutes(routesData);
-      setTodayRoute(todayData);
-      setClientes(clientesData);
-      setProducts(productsData);
-      
-      // Set default plan name
+      const [routesBody, todayBody, clientesBody, productsBody] = await Promise.all(
+        responses.map(response => response.json())
+      );
+
+      setRoutes(unwrapResponse(routesBody));
+      setTodayRoute(unwrapResponse(todayBody));
+      setClientes(unwrapResponse(clientesBody));
+      setProducts(unwrapResponse(productsBody));
+
       const tomorrow = new Date(Date.now() + 86400000).toLocaleDateString();
-      setPlanName(`Ruta ${tomorrow}`);
-    } catch (error) {
-      console.error("Error fetching route data:", error);
+      setPlanName(current => current || `Ruta ${tomorrow}`);
+    } catch (error: any) {
+      console.error('Error fetching route data:', error);
+      setLoadError(error?.message || 'No se pudieron cargar los datos de rutas.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
   useEffect(() => {
-    if (selectedRouteForDetail && !selectedRouteForDetail.items) {
-      apiFetch(`/api/clientes?endpoint=routes&id=${selectedRouteForDetail.id}`)
-        .then(res => res.json())
-        .then(body => {
-          const data = unwrapResponse(body);
-          setSelectedRouteForDetail(data);
-        })
-        .catch(err => console.error("Error fetching route detail:", err));
-    }
-  }, [selectedRouteForDetail]);
+    if (!selectedRouteForDetail || selectedRouteForDetail.items) return;
+
+    let cancelled = false;
+    setDetailLoading(true);
+    setDetailError(null);
+
+    apiFetch(`/api/clientes?endpoint=routes&id=${selectedRouteForDetail.id}`)
+      .then(async response => {
+        if (!response.ok) {
+          throw new Error(await readApiError(response, 'No se pudo cargar el detalle de la ruta.'));
+        }
+        return response.json();
+      })
+      .then(body => {
+        if (!cancelled) setSelectedRouteForDetail(unwrapResponse(body));
+      })
+      .catch(error => {
+        if (cancelled) return;
+        console.error('Error fetching route detail:', error);
+        setDetailError(error?.message || 'No se pudo cargar el detalle de la ruta.');
+      })
+      .finally(() => {
+        if (!cancelled) setDetailLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRouteForDetail?.id]);
 
   const fetchRoutes = async () => {
     try {
@@ -243,10 +304,11 @@ export default function RouteModule() {
 
   const handleCreateRoute = async () => {
     if (selectedCustomerIds.length === 0) {
-      alert("Selecciona al menos un cliente para la ruta.");
+      showNotification('error', 'Seleccioná al menos un cliente para la ruta.');
       return;
     }
 
+    setSavingRoute(true);
     try {
       const res = await apiFetch('/api/clientes?endpoint=routes', {
         method: 'POST',
@@ -260,22 +322,26 @@ export default function RouteModule() {
       const body = await res.json();
       if (res.ok) {
         unwrapResponse(body);
-        alert("Ruta planificada con éxito.");
+        showNotification('success', 'Ruta planificada correctamente.');
         setSelectedCustomerIds([]);
-        fetchInitialData();
+        await fetchInitialData(false);
         setActiveTab('historial');
       } else {
         const errorData = unwrapResponse(body);
-        alert(errorData.message || "Error al crear la ruta");
+        showNotification('error', errorData.message || 'No se pudo crear la ruta.');
       }
     } catch (error) {
       console.error("Error creating route:", error);
+      showNotification('error', 'No se pudo crear la ruta.');
+    } finally {
+      setSavingRoute(false);
     }
   };
 
   const handleConfirmQuickAction = async () => {
-    if (!selectedItemForAction) return;
+    if (!selectedItemForAction || quickActionSaving) return;
 
+    setQuickActionSaving(true);
     try {
       if (quickActionType === 'venta') {
         if (actionCart.length === 0) return;
@@ -303,15 +369,16 @@ export default function RouteModule() {
           const body = await res.json();
           const data = unwrapResponse(body);
           if (data.type === 'supplier_order') {
-            alert(data.message);
+            showNotification('success', data.message);
             await handleUpdateItemStatus(selectedItemForAction.id, 'pedido tomado');
           } else {
             await handleUpdateItemStatus(selectedItemForAction.id, 'venta realizada');
+            showNotification('success', 'Venta registrada correctamente.');
           }
         } else {
           const body = await res.json();
           const errorData = unwrapResponse(body);
-          alert(errorData.message || "Error al procesar la venta");
+          showNotification('error', errorData.message || 'No se pudo procesar la venta.');
         }
       } else if (quickActionType === 'pedido') {
         if (actionCart.length === 0) return;
@@ -332,9 +399,10 @@ export default function RouteModule() {
         if (res.ok) {
           unwrapResponse(body);
           await handleUpdateItemStatus(selectedItemForAction.id, 'pedido tomado');
+          showNotification('success', 'Pedido registrado correctamente.');
         } else {
           const errorData = unwrapResponse(body);
-          alert(errorData.message || "Error al procesar el pedido");
+          showNotification('error', errorData.message || 'No se pudo procesar el pedido.');
         }
       } else if (quickActionType === 'pago') {
         if (paymentAmount <= 0) return;
@@ -351,9 +419,10 @@ export default function RouteModule() {
         if (res.ok) {
           unwrapResponse(body);
           await handleUpdateItemStatus(selectedItemForAction.id, 'visitado', `Pago registrado: $${paymentAmount}`, { cobranza_realizada: 1 });
+          showNotification('success', 'Cobro registrado correctamente.');
         } else {
           const errorData = unwrapResponse(body);
-          alert(errorData.message || "Error al registrar el pago");
+          showNotification('error', errorData.message || 'No se pudo registrar el pago.');
         }
       }
       setActionNotes('');
@@ -361,10 +430,14 @@ export default function RouteModule() {
       fetchTodayRoute();
     } catch (error) {
       console.error("Error confirming quick action:", error);
+      showNotification('error', 'No se pudo completar la operación.');
+    } finally {
+      setQuickActionSaving(false);
     }
   };
 
   const handleUpdateItemStatus = async (itemId: number, status: 'visitado' | 'omitido' | 'pendiente' | 'pedido tomado' | 'venta realizada', notes: string = '', extraFields: any = {}) => {
+    setUpdatingItemId(itemId);
     try {
       // If the route is still 'planificada', update it to 'en curso'
       if (todayRoute && todayRoute.status === 'planificada') {
@@ -394,16 +467,18 @@ export default function RouteModule() {
         fetchTodayRoute();
       } else {
         const errorData = unwrapResponse(resBody);
-        alert(errorData.message || "Error al actualizar el estado");
+        showNotification('error', errorData.message || 'No se pudo actualizar el estado.');
       }
     } catch (error) {
       console.error("Error updating route item:", error);
+      showNotification('error', 'No se pudo actualizar la visita.');
+    } finally {
+      setUpdatingItemId(null);
     }
   };
 
   const handleCompleteRoute = async (routeId: number) => {
-    if (!confirm("¿Estás seguro de marcar esta ruta como completada?")) return;
-    
+    setRouteActionId(routeId);
     try {
       const res = await apiFetch(`/api/clientes?endpoint=routes&id=${routeId}`, {
         method: 'PATCH',
@@ -413,14 +488,18 @@ export default function RouteModule() {
       const body = await res.json();
       if (res.ok) {
         unwrapResponse(body);
-        fetchInitialData();
+        await fetchInitialData(false);
         setActiveTab('historial');
       } else {
         const errorData = unwrapResponse(body);
-        alert(errorData.message || "Error al finalizar la ruta");
+        showNotification('error', errorData.message || 'No se pudo finalizar la ruta.');
       }
     } catch (error) {
       console.error("Error completing route:", error);
+      showNotification('error', 'No se pudo finalizar la ruta.');
+    } finally {
+      setRouteActionId(null);
+      setConfirmAction(null);
     }
   };
 
@@ -456,7 +535,7 @@ export default function RouteModule() {
         fetchTodayRoute();
       } else {
         const errorData = unwrapResponse(body);
-        alert(errorData.message || "Error al reordenar items");
+        showNotification('error', errorData.message || 'No se pudo actualizar el orden de la ruta.');
       }
     } catch (error) {
       console.error("Error reordering items:", error);
@@ -527,7 +606,7 @@ export default function RouteModule() {
         fetchTodayRoute();
       } else {
         const errorData = unwrapResponse(body);
-        alert(errorData.message || "Error al reordenar items");
+        showNotification('error', errorData.message || 'No se pudo actualizar el orden de la ruta.');
       }
     } catch (error) {
       console.error("Error reordering items:", error);
@@ -535,8 +614,7 @@ export default function RouteModule() {
   };
 
   const handleDeleteRoute = async (routeId: number) => {
-    if (!confirm("¿Estás seguro de eliminar esta ruta?")) return;
-
+    setRouteActionId(routeId);
     try {
       const res = await apiFetch(`/api/clientes?endpoint=routes&id=${routeId}`, {
         method: 'DELETE'
@@ -545,19 +623,24 @@ export default function RouteModule() {
       const body = await res.json();
       if (res.ok) {
         unwrapResponse(body);
-        fetchRoutes();
+        await fetchRoutes();
+        showNotification('success', 'Ruta eliminada correctamente.');
       } else {
         const errorData = unwrapResponse(body);
-        alert(errorData.message || "Error al eliminar la ruta");
+        showNotification('error', errorData.message || 'No se pudo eliminar la ruta.');
       }
     } catch (error) {
       console.error("Error deleting route:", error);
+      showNotification('error', 'No se pudo eliminar la ruta.');
+    } finally {
+      setRouteActionId(null);
+      setConfirmAction(null);
     }
   };
 
   const optimizeRoute = () => {
     if (selectedCustomerIds.length === 0 || !userLocation) {
-      if (!userLocation) alert("Se requiere tu ubicación actual para optimizar la ruta.");
+      if (!userLocation) showNotification('error', 'Se requiere tu ubicación actual para optimizar la ruta.');
       return;
     }
 
@@ -620,1138 +703,539 @@ export default function RouteModule() {
     setSelectedCustomerIds(newIds);
   };
 
+  const todayItems = todayRoute?.items || [];
+  const completedToday = todayItems.filter(item => item.status !== 'pendiente').length;
+  const pendingToday = todayItems.filter(item => item.status === 'pendiente').length;
+  const salesToday = todayItems.filter(item => item.venta_registrada || item.status === 'venta realizada').length;
+  const ordersToday = todayItems.filter(item => item.pedido_generado || item.status === 'pedido tomado').length;
+  const selectedCustomers = selectedCustomerIds
+    .map(id => clientes.find(cliente => cliente.id === id))
+    .filter(Boolean);
+  const selectedDistance = (() => {
+    if (!userLocation || selectedCustomers.length === 0) return 0;
+    let total = 0;
+    let current: [number, number] = userLocation;
+    selectedCustomers.forEach((cliente: any) => {
+      if (cliente.latitud && cliente.longitud) {
+        total += calculateDistance(current[0], current[1], cliente.latitud, cliente.longitud);
+        current = [cliente.latitud, cliente.longitud];
+      }
+    });
+    return total;
+  })();
+  const selectedMinutes = Math.round((selectedDistance / 30) * 60) + selectedCustomers.length * 10;
+  const activeProducts = products.filter(product => {
+    const active = product.estado === 'activo';
+    const term = productSearch.trim().toLowerCase();
+    if (!term) return active;
+    return active && [product.name, product.code, product.family_name, product.empresa]
+      .filter(Boolean)
+      .some(value => String(value).toLowerCase().includes(term));
+  });
+  const routeProgress = todayItems.length > 0 ? Math.round((completedToday / todayItems.length) * 100) : 0;
+  const formatCurrency = (value: number | null | undefined) =>
+    new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(Number(value || 0));
+  const formatDate = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString('es-AR');
+  const routeStatusClasses = (status: Route['status']) => {
+    if (status === 'finalizada') return 'bg-emerald-100 text-emerald-700';
+    if (status === 'en curso') return 'bg-indigo-100 text-indigo-700';
+    if (status === 'cancelada') return 'bg-rose-100 text-rose-700';
+    return 'bg-amber-100 text-amber-700';
+  };
+  const itemStatusClasses = (status: RouteItem['status']) => {
+    if (status === 'visitado') return 'border-emerald-200 bg-emerald-50/70 text-emerald-700';
+    if (status === 'venta realizada') return 'border-indigo-200 bg-indigo-50/70 text-indigo-700';
+    if (status === 'pedido tomado') return 'border-amber-200 bg-amber-50/70 text-amber-700';
+    if (status === 'omitido') return 'border-rose-200 bg-rose-50/70 text-rose-700';
+    return 'border-slate-200 bg-white text-slate-700';
+  };
+
   if (loading) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-zinc-900"></div>
+      <div className="h-full min-h-0 overflow-y-auto bg-slate-50 px-3 py-4 sm:px-5 lg:px-8">
+        <div className="mx-auto w-full max-w-[1500px] animate-pulse space-y-5">
+          <div className="h-48 rounded-[28px] bg-slate-200" />
+          <div className="grid grid-cols-3 gap-2">
+            {[0, 1, 2].map(item => <div key={item} className="h-14 rounded-2xl bg-slate-200" />)}
+          </div>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="h-96 rounded-[28px] bg-white" />
+            <div className="h-96 rounded-[28px] bg-white" />
+          </div>
+          <div className="flex items-center justify-center gap-3 py-4 text-sm font-bold text-slate-500">
+            <Loader2 size={20} className="animate-spin text-indigo-600" />
+            Cargando rutas y clientes...
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col bg-zinc-50 overflow-hidden">
-      {/* Header */}
-      <header className="bg-white border-b border-zinc-200 px-4 md:px-8 py-3 md:py-4 shrink-0">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h2 className="text-xl md:text-2xl font-black text-zinc-900 tracking-tight flex items-center gap-2">
-              <Map className="text-zinc-400" size={24} />
-              RUTA DEL DÍA
-            </h2>
-            <p className="text-zinc-500 text-[10px] md:text-xs font-medium uppercase tracking-widest">Logística y Seguimiento</p>
-          </div>
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0 no-scrollbar">
-            {hasPermission('routes', 'create') && (
-              <button
-                onClick={() => setActiveTab('planificar')}
-                className={`flex-1 md:flex-none px-4 md:px-6 py-2 rounded-lg text-xs md:text-sm font-bold transition-all whitespace-nowrap ${
-                  activeTab === 'planificar' ? 'bg-zinc-900 text-white shadow-md' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
-                }`}
-              >
-                Planificar
-              </button>
-            )}
-            <button
-              onClick={() => setActiveTab('hoy')}
-              className={`flex-1 md:flex-none px-4 md:px-6 py-2 rounded-lg text-xs md:text-sm font-bold transition-all whitespace-nowrap ${
-                activeTab === 'hoy' ? 'bg-zinc-900 text-white shadow-md' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
-              }`}
-            >
-              Ruta de Hoy
-            </button>
-            <button
-              onClick={() => setActiveTab('historial')}
-              className={`flex-1 md:flex-none px-4 md:px-6 py-2 rounded-lg text-xs md:text-sm font-bold transition-all whitespace-nowrap ${
-                activeTab === 'historial' ? 'bg-zinc-900 text-white shadow-md' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
-              }`}
-            >
-              Historial
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Content */}
-      <main className="flex-1 overflow-y-auto p-8 custom-scrollbar">
-        <AnimatePresence mode="wait">
-          {activeTab === 'planificar' && (
-            <motion.div
-              key="planificar"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8"
-            >
-              {/* Route Info & Selection */}
-              <div className="space-y-6">
-                <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm space-y-4">
-                  <h3 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
-                    <Calendar size={20} className="text-zinc-400" />
-                    Detalles de la Ruta
-                  </h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Fecha</label>
-                      <input
-                        type="date"
-                        className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm"
-                        value={planDate}
-                        onChange={(e) => setPlanDate(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Nombre de Ruta</label>
-                      <input
-                        type="text"
-                        className="w-full px-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm"
-                        placeholder="Ej: Ruta Norte"
-                        value={planName}
-                        onChange={(e) => setPlanName(e.target.value)}
-                      />
-                    </div>
-                  </div>
+    <div className="h-full min-h-0 overflow-y-auto bg-slate-50">
+      <div className="mx-auto w-full max-w-[1500px] space-y-5 px-3 py-4 pb-24 sm:px-5 sm:py-6 lg:px-8 lg:py-8">
+        <section className="overflow-hidden rounded-[28px] bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 p-5 text-white shadow-xl sm:p-7 lg:p-8">
+          <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-3">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/10">
+                  <RouteIcon size={25} />
                 </div>
-
-                <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm flex flex-col h-[500px]">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
-                      <Users size={20} className="text-zinc-400" />
-                      Seleccionar Clientes
-                    </h3>
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
-                      <input
-                        type="text"
-                        placeholder="Buscar cliente..."
-                        className="pl-9 pr-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs focus:ring-2 focus:ring-zinc-900 outline-none w-48"
-                        value={customerSearch}
-                        onChange={(e) => setCustomerSearch(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                  <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-2">
-                    {filteredClientes.map(cliente => (
-                      <button
-                        key={cliente.id}
-                        onClick={() => toggleCustomerSelection(cliente.id)}
-                        className={`w-full flex items-center justify-between p-3 rounded-2xl border transition-all ${
-                          selectedCustomerIds.includes(cliente.id)
-                            ? 'bg-zinc-900 border-zinc-900 text-white shadow-md'
-                            : 'bg-white border-zinc-100 text-zinc-900 hover:border-zinc-300'
-                        }`}
-                      >
-                        <div className="text-left">
-                          <p className="text-sm font-bold">{cliente.nombre_apellido}</p>
-                          <p className={`text-[10px] font-medium ${selectedCustomerIds.includes(cliente.id) ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                            {cliente.localidad} • {cliente.razon_social}
-                          </p>
-                        </div>
-                        {selectedCustomerIds.includes(cliente.id) ? (
-                          <CheckCircle2 size={18} />
-                        ) : (
-                          <Plus size={18} className="text-zinc-300" />
-                        )}
-                      </button>
-                    ))}
-                  </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black uppercase tracking-[0.22em] text-indigo-200">Logística comercial</p>
+                  <h1 className="mt-1 break-words text-2xl font-black tracking-tight sm:text-3xl">Ruta del día</h1>
                 </div>
               </div>
+              <p className="mt-4 max-w-2xl text-sm leading-6 text-slate-300">
+                Planificá recorridos, registrá visitas y seguí ventas o pedidos desde cualquier dispositivo.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => fetchInitialData(false)}
+              disabled={refreshing}
+              className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-black text-slate-900 shadow-lg transition hover:bg-indigo-50 disabled:opacity-60 sm:w-auto"
+            >
+              <RefreshCw size={17} className={refreshing ? 'animate-spin' : ''} />
+              {refreshing ? 'Actualizando...' : 'Actualizar datos'}
+            </button>
+          </div>
 
-              {/* Order & Summary */}
-              <div className="space-y-6">
-                <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm flex flex-col h-[500px]">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
-                      <Map size={20} className="text-zinc-400" />
-                      Vista Previa del Recorrido
-                    </h3>
-                  </div>
-                  <div className="flex-1 rounded-2xl overflow-hidden border border-zinc-100">
-                    <RouteMap 
-                      items={selectedCustomerIds.map(id => {
-                        const c = clientes.find(cli => cli.id === id);
-                        return { ...c, status: 'pendiente' };
-                      })} 
-                      userLocation={userLocation}
-                    />
+          <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <div className="min-w-0 rounded-2xl bg-white/8 p-4 ring-1 ring-white/10">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Ruta de hoy</p>
+              <p className="mt-1 break-words text-lg font-black">{todayRoute ? todayRoute.name : 'Sin planificar'}</p>
+            </div>
+            <div className="rounded-2xl bg-white/8 p-4 ring-1 ring-white/10">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Clientes</p>
+              <p className="mt-1 text-2xl font-black">{todayItems.length}</p>
+            </div>
+            <div className="rounded-2xl bg-white/8 p-4 ring-1 ring-white/10">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Completados</p>
+              <p className="mt-1 text-2xl font-black text-emerald-300">{completedToday}</p>
+            </div>
+            <div className="rounded-2xl bg-white/8 p-4 ring-1 ring-white/10">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Historial</p>
+              <p className="mt-1 text-2xl font-black text-indigo-200">{routes.length}</p>
+            </div>
+          </div>
+        </section>
+
+        {notification && (
+          <div className={`flex min-w-0 items-start justify-between gap-3 rounded-2xl border px-4 py-3 text-sm font-bold shadow-sm ${notification.type === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-800'}`}>
+            <div className="flex min-w-0 items-start gap-2">
+              {notification.type === 'success' ? <CheckCircle2 size={18} className="mt-0.5 shrink-0" /> : <AlertCircle size={18} className="mt-0.5 shrink-0" />}
+              <span className="break-words">{notification.message}</span>
+            </div>
+            <button type="button" onClick={() => setNotification(null)} className="shrink-0 rounded-lg p-1 hover:bg-black/5" aria-label="Cerrar mensaje"><X size={16} /></button>
+          </div>
+        )}
+
+        {loadError && (
+          <div className="rounded-[24px] border border-rose-200 bg-rose-50 p-5 text-rose-800">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-start gap-3">
+                <AlertCircle size={22} className="mt-0.5 shrink-0" />
+                <div className="min-w-0">
+                  <p className="font-black">No se pudieron cargar las rutas</p>
+                  <p className="mt-1 break-words text-sm">{loadError}</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => fetchInitialData(true)} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-rose-700 px-4 py-3 text-sm font-bold text-white sm:w-auto">
+                <RefreshCw size={17} /> Reintentar
+              </button>
+            </div>
+          </div>
+        )}
+
+        <nav className={`grid ${hasPermission('routes', 'create') ? 'grid-cols-3' : 'grid-cols-2'} gap-2 rounded-[22px] border border-slate-200 bg-white p-2 shadow-sm`} aria-label="Secciones de rutas">
+          {hasPermission('routes', 'create') && (
+            <button type="button" onClick={() => setActiveTab('planificar')} className={`flex min-h-12 min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2 text-center text-xs font-black transition sm:flex-row sm:text-sm ${activeTab === 'planificar' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'}`}>
+              <Plus size={17} className="shrink-0" /><span className="break-words">Planificar</span>
+            </button>
+          )}
+          <button type="button" onClick={() => setActiveTab('hoy')} className={`flex min-h-12 min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2 text-center text-xs font-black transition sm:flex-row sm:text-sm ${activeTab === 'hoy' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'}`}>
+            <Navigation size={17} className="shrink-0" /><span className="break-words">Ruta de hoy</span>
+          </button>
+          <button type="button" onClick={() => setActiveTab('historial')} className={`flex min-h-12 min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2 text-center text-xs font-black transition sm:flex-row sm:text-sm ${activeTab === 'historial' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'}`}>
+            <History size={17} className="shrink-0" /><span className="break-words">Historial</span>
+          </button>
+        </nav>
+
+        <AnimatePresence mode="wait">
+          {activeTab === 'planificar' && (
+            <motion.div key="planificar" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-5">
+              <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-indigo-100 text-indigo-700"><Calendar size={21} /></div>
+                  <div className="min-w-0">
+                    <h2 className="text-lg font-black text-slate-900">Datos de la nueva ruta</h2>
+                    <p className="mt-1 text-sm text-slate-500">Elegí la fecha, el nombre y los clientes que formarán parte del recorrido.</p>
                   </div>
                 </div>
+                <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                  <label className="min-w-0">
+                    <span className="mb-2 block text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Fecha</span>
+                    <input type="date" value={planDate} onChange={event => setPlanDate(event.target.value)} className="min-h-12 w-full min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100" />
+                  </label>
+                  <label className="min-w-0">
+                    <span className="mb-2 block text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Nombre de la ruta</span>
+                    <input type="text" value={planName} onChange={event => setPlanName(event.target.value)} placeholder="Ejemplo: Ruta zona norte" className="min-h-12 w-full min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100" />
+                  </label>
+                </div>
+              </section>
 
-                <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm flex flex-col h-[600px]">
-                  <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
-                      <Plus size={20} className="text-zinc-400" />
-                      Orden de Visita
-                    </h3>
-                    <div className="flex items-center gap-2">
-                      {selectedCustomerIds.length > 1 && (
-                        <button
-                          onClick={optimizeRoute}
-                          className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full hover:bg-indigo-100 transition-all flex items-center gap-1"
-                        >
-                          <Map size={12} />
-                          Optimizar Recorrido
-                        </button>
-                      )}
-                      <span className="text-xs font-bold text-zinc-400 bg-zinc-100 px-3 py-1 rounded-full">
-                        {selectedCustomerIds.length} Clientes
-                      </span>
+              <div className="grid min-w-0 gap-5 2xl:grid-cols-[minmax(0,1fr)_minmax(420px,0.78fr)]">
+                <section className="min-w-0 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                    <div className="min-w-0">
+                      <h2 className="text-lg font-black text-slate-900">Seleccionar clientes</h2>
+                      <p className="mt-1 text-sm text-slate-500">{filteredClientes.length} disponibles · {selectedCustomerIds.length} seleccionados</p>
                     </div>
+                    <label className="relative block w-full sm:max-w-sm">
+                      <Search size={18} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input type="search" value={customerSearch} onChange={event => setCustomerSearch(event.target.value)} placeholder="Nombre, razón social o localidad" className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 pl-11 pr-4 text-sm outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100" />
+                    </label>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-2">
-                    {selectedCustomerIds.map((id, index) => {
-                      const cliente = clientes.find(c => c.id === id);
-                      if (!cliente) return null;
+                  <div className="mt-5 grid max-h-[620px] gap-3 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-2">
+                    {filteredClientes.map(cliente => {
+                      const selected = selectedCustomerIds.includes(cliente.id);
                       return (
-                        <div
-                          key={id}
-                          className="flex items-center gap-3 p-4 bg-zinc-50 rounded-2xl border border-zinc-100 group"
-                        >
-                          <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-xs font-bold text-zinc-400 border border-zinc-100">
-                            {index + 1}
-                          </div>
-                          <div className="flex-1">
-                            <p className="text-sm font-bold text-zinc-900">{cliente.nombre_apellido}</p>
-                            <div className="flex items-center gap-2">
-                              <p className="text-[10px] text-zinc-500">{cliente.direccion}, {cliente.localidad}</p>
-                              {index > 0 && userLocation && (
-                                <span className="text-[9px] font-bold text-indigo-500 bg-indigo-50 px-1.5 py-0.5 rounded">
-                                  {(() => {
-                                    const prevId = selectedCustomerIds[index - 1];
-                                    const prevCliente = clientes.find(c => c.id === prevId);
-                                    let dist = 0;
-                                    if (prevCliente && prevCliente.latitud && prevCliente.longitud && cliente.latitud && cliente.longitud) {
-                                      dist = calculateDistance(prevCliente.latitud, prevCliente.longitud, cliente.latitud, cliente.longitud);
-                                    } else if (index === 0 && userLocation && cliente.latitud && cliente.longitud) {
-                                      dist = calculateDistance(userLocation[0], userLocation[1], cliente.latitud, cliente.longitud);
-                                    }
-                                    
-                                    const estTime = (d: number) => {
-                                      const mins = Math.round((d / 30) * 60) + 5; // 30km/h + 5 min buffer
-                                      return mins < 60 ? `${mins}m` : `${Math.floor(mins/60)}h ${mins%60}m`;
-                                    };
-
-                                    return dist > 0 ? `~${dist.toFixed(1)}km (${estTime(dist)})` : '';
-                                  })()}
-                                </span>
-                              )}
-                              {index === 0 && userLocation && cliente.latitud && cliente.longitud && (
-                                <span className="text-[9px] font-bold text-emerald-500 bg-emerald-50 px-1.5 py-0.5 rounded">
-                                  {(() => {
-                                    const dist = calculateDistance(userLocation[0], userLocation[1], cliente.latitud, cliente.longitud);
-                                    const estTime = (d: number) => {
-                                      const mins = Math.round((d / 30) * 60) + 2; // 30km/h + 2 min buffer
-                                      return mins < 60 ? `${mins}m` : `${Math.floor(mins/60)}h ${mins%60}m`;
-                                    };
-                                    return `Desde tu ubicación: ~${dist.toFixed(1)}km (${estTime(dist)})`;
-                                  })()}
-                                </span>
-                              )}
+                        <button key={cliente.id} type="button" onClick={() => toggleCustomerSelection(cliente.id)} className={`min-h-24 min-w-0 rounded-2xl border p-4 text-left transition ${selected ? 'border-indigo-600 bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'border-slate-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/40'}`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="break-words text-sm font-black">{cliente.nombre_apellido}</p>
+                              <p className={`mt-1 break-words text-xs ${selected ? 'text-indigo-100' : 'text-slate-500'}`}>{cliente.razon_social || 'Sin razón social'}</p>
+                              <p className={`mt-2 flex items-start gap-1 break-words text-xs ${selected ? 'text-indigo-100' : 'text-slate-500'}`}><MapPin size={13} className="mt-0.5 shrink-0" />{cliente.localidad || 'Sin localidad'}</p>
                             </div>
+                            {selected ? <CheckCircle2 size={20} className="shrink-0" /> : <Plus size={20} className="shrink-0 text-slate-300" />}
                           </div>
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button
-                              onClick={() => moveCustomer(index, 'up')}
-                              disabled={index === 0}
-                              className="p-1.5 hover:bg-white rounded-lg text-zinc-400 hover:text-zinc-900 disabled:opacity-30"
-                            >
-                              <ArrowUp size={16} />
-                            </button>
-                            <button
-                              onClick={() => moveCustomer(index, 'down')}
-                              disabled={index === selectedCustomerIds.length - 1}
-                              className="p-1.5 hover:bg-white rounded-lg text-zinc-400 hover:text-zinc-900 disabled:opacity-30"
-                            >
-                              <ArrowDown size={16} />
-                            </button>
-                            <button
-                              onClick={() => toggleCustomerSelection(id)}
-                              className="p-1.5 hover:bg-red-50 rounded-lg text-zinc-400 hover:text-red-600"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        </div>
+                        </button>
                       );
                     })}
-                    {selectedCustomerIds.length === 0 && (
-                      <div className="h-full flex flex-col items-center justify-center text-zinc-400 space-y-2">
-                        <Users size={48} className="opacity-10" />
-                        <p className="text-sm">No hay clientes seleccionados</p>
+                    {filteredClientes.length === 0 && (
+                      <div className="col-span-full rounded-2xl border-2 border-dashed border-slate-200 p-8 text-center">
+                        <Users size={34} className="mx-auto text-slate-300" />
+                        <p className="mt-3 font-black text-slate-800">No hay clientes que coincidan</p>
+                        <p className="mt-1 text-sm text-slate-500">Probá con otro nombre, razón social o localidad.</p>
                       </div>
                     )}
                   </div>
+                </section>
 
-                  <div className="pt-4 px-2 space-y-1">
-                    {selectedCustomerIds.length > 0 && userLocation && (
-                      <div className="flex items-center justify-between text-[11px] font-bold text-zinc-500">
-                        <span>Resumen del Recorrido:</span>
-                        <div className="flex gap-3">
-                          <span className="flex items-center gap-1">
-                            <Map size={12} />
-                            {(() => {
-                              let totalDist = 0;
-                              let currentPos = userLocation;
-                              selectedCustomerIds.forEach(id => {
-                                const c = clientes.find(cli => cli.id === id);
-                                if (c && c.latitud && c.longitud) {
-                                  totalDist += calculateDistance(currentPos[0], currentPos[1], c.latitud, c.longitud);
-                                  currentPos = [c.latitud, c.longitud];
-                                }
-                              });
-                              return `~${totalDist.toFixed(1)} km`;
-                            })()}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Clock size={12} />
-                            {(() => {
-                              let totalDist = 0;
-                              let currentPos = userLocation;
-                              selectedCustomerIds.forEach(id => {
-                                const c = clientes.find(cli => cli.id === id);
-                                if (c && c.latitud && c.longitud) {
-                                  totalDist += calculateDistance(currentPos[0], currentPos[1], c.latitud, c.longitud);
-                                  currentPos = [c.latitud, c.longitud];
-                                }
-                              });
-                              const mins = Math.round((totalDist / 30) * 60) + (selectedCustomerIds.length * 10); // 30km/h + 10 min per stop
-                              return mins < 60 ? `${mins} min` : `${Math.floor(mins/60)}h ${mins%60}m`;
-                            })()}
-                          </span>
+                <div className="min-w-0 space-y-5">
+                  <section className="min-w-0 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
+                        <h2 className="text-lg font-black text-slate-900">Orden de visita</h2>
+                        <p className="mt-1 text-sm text-slate-500">Reordená el recorrido antes de guardarlo.</p>
+                      </div>
+                      {selectedCustomerIds.length > 1 && (
+                        <button type="button" onClick={optimizeRoute} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-indigo-50 px-4 py-3 text-sm font-black text-indigo-700 hover:bg-indigo-100 sm:w-auto"><LocateFixed size={17} />Optimizar</button>
+                      )}
+                    </div>
+
+                    <div className="mt-4 space-y-3">
+                      {selectedCustomers.map((cliente: any, index) => (
+                        <article key={cliente.id} className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
+                          <div className="flex min-w-0 items-start gap-3">
+                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-sm font-black text-indigo-700 shadow-sm ring-1 ring-slate-200">{index + 1}</div>
+                            <div className="min-w-0 flex-1">
+                              <p className="break-words text-sm font-black text-slate-900">{cliente.nombre_apellido}</p>
+                              <p className="mt-1 flex items-start gap-1 break-words text-xs text-slate-500"><MapPin size={13} className="mt-0.5 shrink-0" />{cliente.direccion || 'Sin dirección'}, {cliente.localidad || 'Sin localidad'}</p>
+                            </div>
+                          </div>
+                          <div className="mt-3 grid grid-cols-3 gap-2">
+                            <button type="button" onClick={() => moveCustomer(index, 'up')} disabled={index === 0} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-600 disabled:opacity-30"><ArrowUp size={15} />Subir</button>
+                            <button type="button" onClick={() => moveCustomer(index, 'down')} disabled={index === selectedCustomers.length - 1} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-600 disabled:opacity-30"><ArrowDown size={15} />Bajar</button>
+                            <button type="button" onClick={() => toggleCustomerSelection(cliente.id)} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-rose-200 bg-rose-50 text-xs font-bold text-rose-700"><Trash2 size={15} />Quitar</button>
+                          </div>
+                        </article>
+                      ))}
+                      {selectedCustomers.length === 0 && (
+                        <div className="rounded-2xl border-2 border-dashed border-slate-200 p-7 text-center">
+                          <ListOrdered size={32} className="mx-auto text-slate-300" />
+                          <p className="mt-3 font-black text-slate-800">Todavía no seleccionaste clientes</p>
+                          <p className="mt-1 text-sm text-slate-500">Elegí clientes del listado para armar el orden de visita.</p>
                         </div>
+                      )}
+                    </div>
+
+                    {selectedCustomers.length > 0 && (
+                      <div className="mt-4 grid grid-cols-3 gap-2 rounded-2xl bg-slate-950 p-3 text-white">
+                        <div className="min-w-0 text-center"><p className="text-[9px] font-bold uppercase text-slate-400">Paradas</p><p className="mt-1 text-lg font-black">{selectedCustomers.length}</p></div>
+                        <div className="min-w-0 text-center"><p className="text-[9px] font-bold uppercase text-slate-400">Distancia</p><p className="mt-1 break-words text-lg font-black">~{selectedDistance.toFixed(1)} km</p></div>
+                        <div className="min-w-0 text-center"><p className="text-[9px] font-bold uppercase text-slate-400">Tiempo</p><p className="mt-1 break-words text-lg font-black">{selectedMinutes < 60 ? `${selectedMinutes} min` : `${Math.floor(selectedMinutes / 60)}h ${selectedMinutes % 60}m`}</p></div>
                       </div>
                     )}
-                  </div>
+                  </section>
 
-                  <div className="pt-6 mt-auto border-t border-zinc-100">
-                    <button
-                      onClick={handleCreateRoute}
-                      disabled={selectedCustomerIds.length === 0}
-                      className="w-full py-4 bg-zinc-900 text-white rounded-2xl font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <Save size={20} />
-                      Guardar y Planificar Ruta
-                    </button>
-                  </div>
+                  <section className="min-w-0 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+                    <div className="mb-4 flex items-center justify-between gap-3">
+                      <div className="min-w-0"><h2 className="text-lg font-black text-slate-900">Mapa del recorrido</h2><p className="mt-1 text-sm text-slate-500">Vista previa según el orden seleccionado.</p></div>
+                      <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-600">{selectedCustomers.length}</span>
+                    </div>
+                    <RouteMap items={selectedCustomers.map((cliente: any) => ({ ...cliente, status: 'pendiente' }))} userLocation={userLocation} className="h-[300px] sm:h-[380px]" />
+                  </section>
+
+                  <button type="button" onClick={handleCreateRoute} disabled={selectedCustomerIds.length === 0 || savingRoute} className="inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-5 py-4 text-sm font-black text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    {savingRoute ? <Loader2 size={20} className="animate-spin" /> : <Save size={20} />}
+                    {savingRoute ? 'Guardando ruta...' : 'Guardar y planificar ruta'}
+                  </button>
                 </div>
               </div>
             </motion.div>
           )}
 
           {activeTab === 'hoy' && (
-            <motion.div
-              key="hoy"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="max-w-4xl mx-auto"
-            >
+            <motion.div key="hoy" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-5">
               {!todayRoute ? (
-                <div className="bg-white p-12 rounded-[40px] border border-zinc-200 shadow-sm text-center space-y-4">
-                  <div className="w-20 h-20 bg-zinc-50 rounded-3xl flex items-center justify-center mx-auto text-zinc-300">
-                    <Map size={40} />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-bold text-zinc-900">No hay ruta para hoy</h3>
-                    <p className="text-zinc-500 text-sm max-w-xs mx-auto mt-2">
-                      Planifica una nueva ruta para comenzar el día con organización.
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setActiveTab('planificar')}
-                    className="px-8 py-3 bg-zinc-900 text-white rounded-2xl font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200 inline-flex items-center gap-2"
-                  >
-                    <Plus size={20} />
-                    Planificar Ahora
-                  </button>
-                </div>
+                <section className="rounded-[28px] border-2 border-dashed border-slate-200 bg-white p-8 text-center sm:p-12">
+                  <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-slate-100 text-slate-400"><Navigation size={38} /></div>
+                  <h2 className="mt-5 text-xl font-black text-slate-900">No hay una ruta planificada para hoy</h2>
+                  <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">Creá una ruta para organizar visitas, ventas y pedidos del día.</p>
+                  {hasPermission('routes', 'create') && <button type="button" onClick={() => setActiveTab('planificar')} className="mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white sm:w-auto"><Plus size={18} />Planificar ahora</button>}
+                </section>
               ) : (
-                <div className="space-y-4 md:space-y-6">
-                  <div className="bg-zinc-900 p-4 md:p-8 rounded-3xl md:rounded-[40px] text-white shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4 md:gap-0">
-                    <div>
-                      <div className="flex items-center gap-3 mb-2">
-                        <span className="px-3 py-1 bg-white/10 rounded-full text-[10px] font-bold uppercase tracking-wider">Ruta Activa</span>
-                        <span className="text-white/60 text-xs font-medium">{new Date(todayRoute.date).toLocaleDateString()}</span>
+                <>
+                  <section className="overflow-hidden rounded-[28px] bg-gradient-to-br from-indigo-700 to-indigo-950 p-5 text-white shadow-xl sm:p-7">
+                    <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-wider">Ruta activa</span><span className="text-xs font-semibold text-indigo-200">{formatDate(todayRoute.date)}</span></div>
+                        <h2 className="mt-3 break-words text-2xl font-black sm:text-3xl">{todayRoute.name}</h2>
+                        <div className="mt-5 h-2 overflow-hidden rounded-full bg-white/15"><div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: `${routeProgress}%` }} /></div>
+                        <p className="mt-2 text-sm text-indigo-100">{completedToday} de {todayItems.length} visitas procesadas · {routeProgress}%</p>
                       </div>
-                      <h3 className="text-xl md:text-3xl font-black tracking-tight">{todayRoute.name}</h3>
-                      <div className="flex items-center gap-4 md:gap-6 mt-3 md:mt-4">
-                        <div>
-                          <p className="text-white/40 text-[8px] md:text-[10px] font-bold uppercase">Progreso</p>
-                          <p className="text-lg md:text-xl font-black">
-                            {todayRoute.items?.filter(i => i.status !== 'pendiente').length} / {todayRoute.items?.length}
-                          </p>
-                        </div>
-                        <div className="h-6 md:h-8 w-px bg-white/10" />
-                        <div>
-                          <p className="text-white/40 text-[8px] md:text-[10px] font-bold uppercase">Estado</p>
-                          <p className="text-lg md:text-xl font-black capitalize">{todayRoute.status}</p>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-2 md:gap-3">
-                      <button
-                        onClick={() => setShowMap(!showMap)}
-                        className={`flex-1 md:flex-none px-4 md:px-6 py-3 md:py-4 rounded-xl md:rounded-2xl font-bold transition-all shadow-lg flex items-center justify-center gap-2 text-xs md:text-base ${
-                          showMap ? 'bg-white text-zinc-900' : 'bg-white/10 text-white hover:bg-white/20'
-                        }`}
-                      >
-                        <Map size={18} />
-                        <span className="whitespace-nowrap">{showMap ? 'Ocultar Mapa' : 'Ver Mapa'}</span>
-                      </button>
-                      {todayRoute.status === 'planificada' && hasPermission('routes', 'edit') && (
-                        <button
-                          onClick={async () => {
-                            const res = await apiFetch(`/api/clientes?endpoint=routes&id=${todayRoute.id}`, {
-                              method: 'PATCH',
-                              body: JSON.stringify({ status: 'en curso' })
-                            });
-                            const body = await res.json();
-                            unwrapResponse(body);
-                            fetchTodayRoute();
-                          }}
-                          className="flex-1 md:flex-none px-4 md:px-8 py-3 md:py-4 bg-emerald-500 text-white rounded-xl md:rounded-2xl font-bold hover:bg-emerald-600 transition-all shadow-lg flex items-center justify-center gap-2 text-xs md:text-base"
-                        >
-                          <ArrowRight size={18} />
-                          <span className="whitespace-nowrap">Iniciar Ruta</span>
-                        </button>
-                      )}
-                      {hasPermission('routes', 'edit') && (
-                        <button
-                          onClick={() => handleCompleteRoute(todayRoute.id)}
-                          className="flex-1 md:flex-none px-4 md:px-8 py-3 md:py-4 bg-white text-zinc-900 rounded-xl md:rounded-2xl font-bold hover:bg-zinc-100 transition-all shadow-lg flex items-center justify-center gap-2 text-xs md:text-base"
-                        >
-                          <CheckCircle2 size={18} />
-                          <span className="whitespace-nowrap">Finalizar</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {showMap && todayRoute.items && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="overflow-hidden rounded-3xl border border-zinc-200"
-                    >
-                      <RouteMap 
-                        items={todayRoute.items} 
-                        userLocation={userLocation}
-                        onClientClick={(clientId) => setShowCustomerDetailId(clientId)}
-                        className="h-[300px] md:h-[450px]"
-                      />
-                    </motion.div>
-                  )}
-
-                  <div className="space-y-3 md:space-y-4">
-                    {todayRoute.items?.map((item, index) => (
-                      <div
-                        key={item.id}
-                        className={`bg-white p-4 md:p-6 rounded-2xl md:rounded-3xl border transition-all ${
-                          item.status === 'visitado' ? 'border-emerald-100 bg-emerald-50/10' : 
-                          item.status === 'venta realizada' ? 'border-indigo-100 bg-indigo-50/10' :
-                          item.status === 'pedido tomado' ? 'border-amber-100 bg-amber-50/10' :
-                          item.status === 'omitido' ? 'border-red-100 bg-red-50/10' : 
-                          'border-zinc-200'
-                        }`}
-                      >
-                        <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 md:gap-6">
-                          <div className="flex items-start gap-3 md:gap-4">
-                            <div className={`w-8 h-8 md:w-10 md:h-10 rounded-lg md:rounded-xl flex items-center justify-center text-xs md:text-sm font-bold shrink-0 ${
-                              item.status === 'visitado' ? 'bg-emerald-600 text-white' : 
-                              item.status === 'venta realizada' ? 'bg-indigo-600 text-white' :
-                              item.status === 'pedido tomado' ? 'bg-amber-600 text-white' :
-                              item.status === 'omitido' ? 'bg-red-600 text-white' : 
-                              'bg-zinc-100 text-zinc-400'
-                            }`}>
-                              {index + 1}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <h4 className="text-base md:text-lg font-bold text-zinc-900 truncate">{item.nombre_apellido}</h4>
-                                <span className={`px-2 py-0.5 rounded-full text-[8px] md:text-[9px] font-bold uppercase ${
-                                  item.tipo_cliente === 'mayorista' ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-600'
-                                }`}>
-                                  {item.tipo_cliente}
-                                </span>
-                              </div>
-                              <p className="text-zinc-500 text-xs md:text-sm font-medium flex items-center gap-1 mt-0.5 truncate">
-                                <MapPin size={12} className="text-zinc-300" />
-                                {item.direccion}, {item.localidad}
-                              </p>
-                              {item.status === 'pendiente' && userLocation && item.latitud && item.longitud && (
-                                <p className="text-[9px] md:text-[10px] font-bold text-indigo-500 mt-1.5 md:mt-2 flex items-center gap-1">
-                                  <Clock size={10} />
-                                  A ~{calculateDistance(userLocation[0], userLocation[1], item.latitud, item.longitud).toFixed(1)} km
-                                </p>
-                              )}
-                              
-                              <div className="flex flex-wrap items-center gap-3 md:gap-4 mt-2 md:mt-3">
-                                <span className="flex items-center gap-1 text-[10px] md:text-xs text-zinc-400">
-                                  <Phone size={10} /> {item.telefono || 'Sin tel.'}
-                                </span>
-                                <span className={`flex items-center gap-1 text-[10px] md:text-xs font-bold ${item.saldo_cta_cte > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                                  <AlertCircle size={10} /> Saldo: ${item.saldo_cta_cte.toFixed(2)}
-                                </span>
-                              </div>
-                              
-                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mt-3 md:mt-4">
-                                <div className="flex items-center gap-1">
-                                  <div className={`w-1.5 h-1.5 rounded-full ${item.visitado ? 'bg-emerald-500' : 'bg-zinc-200'}`} />
-                                  <span className="text-[8px] md:text-[10px] font-bold text-zinc-400 uppercase tracking-tighter">Visitado</span>
-                                </div>
-                                <div className="flex items-center gap-1">
-                                  <div className={`w-1.5 h-1.5 rounded-full ${item.venta_registrada ? 'bg-indigo-500' : 'bg-zinc-200'}`} />
-                                  <span className="text-[8px] md:text-[10px] font-bold text-zinc-400 uppercase tracking-tighter">Venta</span>
-                                </div>
-                                <div className="flex items-center gap-1">
-                                  <div className={`w-1.5 h-1.5 rounded-full ${item.pedido_generado ? 'bg-amber-500' : 'bg-zinc-200'}`} />
-                                  <span className="text-[8px] md:text-[10px] font-bold text-zinc-400 uppercase tracking-tighter">Pedido</span>
-                                </div>
-                                <div className="flex items-center gap-1">
-                                  <div className={`w-1.5 h-1.5 rounded-full ${item.cobranza_realizada ? 'bg-emerald-500' : 'bg-zinc-200'}`} />
-                                  <span className="text-[8px] md:text-[10px] font-bold text-zinc-400 uppercase tracking-tighter">Cobranza</span>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="flex flex-col items-stretch md:items-end gap-2 md:gap-3">
-                            {item.status === 'pendiente' ? (
-                              <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center justify-end gap-2">
-                                {hasPermission('routes', 'edit') && (
-                                  <div className="flex items-center gap-1 bg-zinc-50 p-1 rounded-lg border border-zinc-100 col-span-2 sm:col-auto justify-center">
-                                    <button
-                                      onClick={() => handleReorderItem(todayRoute.id, item.id, 'up')}
-                                      disabled={index === 0 || todayRoute.items?.[index-1].status !== 'pendiente'}
-                                      className="p-2 hover:bg-white rounded-md text-zinc-400 disabled:opacity-20 transition-colors"
-                                      title="Subir"
-                                    >
-                                      <ArrowUp size={16} />
-                                    </button>
-                                    <div className="w-px h-4 bg-zinc-200 mx-1" />
-                                    <button
-                                      onClick={() => handleReorderItem(todayRoute.id, item.id, 'down')}
-                                      disabled={index === (todayRoute.items?.length || 0) - 1}
-                                      className="p-2 hover:bg-white rounded-md text-zinc-400 disabled:opacity-20 transition-colors"
-                                      title="Bajar"
-                                    >
-                                      <ArrowDown size={16} />
-                                    </button>
-                                  </div>
-                                )}
-                                {hasPermission('routes', 'edit') && (
-                                  <button
-                                    onClick={() => handleVisitNext(todayRoute.id, item.id)}
-                                    className="px-3 md:px-4 py-2.5 md:py-3 bg-indigo-50 text-indigo-600 rounded-xl font-bold hover:bg-indigo-100 transition-all flex items-center justify-center gap-2 text-xs md:text-sm"
-                                  >
-                                    <ArrowRight size={16} />
-                                    <span className="whitespace-nowrap">Siguiente</span>
-                                  </button>
-                                )}
-                                {hasPermission('routes', 'edit') && (
-                                  <>
-                                    <button
-                                      onClick={() => handleUpdateItemStatus(item.id, 'omitido')}
-                                      className="p-2.5 md:p-3 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-all flex items-center justify-center"
-                                    >
-                                      <XCircle size={18} />
-                                    </button>
-                                    <button
-                                      onClick={() => handleUpdateItemStatus(item.id, 'visitado')}
-                                      className="px-3 md:px-4 py-2.5 md:py-3 bg-zinc-100 text-zinc-600 rounded-xl font-bold hover:bg-zinc-200 transition-all flex items-center justify-center gap-2 text-xs md:text-sm"
-                                    >
-                                      <Check size={16} />
-                                      Visitar
-                                    </button>
-                                  </>
-                                )}
-                                {hasPermission('suppliers', 'create') && (
-                                  <button
-                                    onClick={() => {
-                                      setSelectedItemForAction(item);
-                                      setQuickActionType('pedido');
-                                      setActionCart([]);
-                                      setShowQuickActionModal(true);
-                                    }}
-                                    className="px-3 md:px-4 py-2.5 md:py-3 bg-amber-500 text-white rounded-xl font-bold hover:bg-amber-600 transition-all flex items-center justify-center gap-2 text-xs md:text-sm shadow-sm"
-                                  >
-                                    <ClipboardList size={16} />
-                                    Pedido
-                                  </button>
-                                )}
-                                {hasPermission('sales', 'create') && (
-                                  <button
-                                    onClick={() => {
-                                      setSelectedItemForAction(item);
-                                      setQuickActionType('venta');
-                                      setActionCart([]);
-                                      setShowQuickActionModal(true);
-                                    }}
-                                    className="px-3 md:px-4 py-2.5 md:py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all flex items-center justify-center gap-2 text-xs md:text-sm shadow-sm"
-                                  >
-                                    <ShoppingCart size={16} />
-                                    Venta
-                                  </button>
-                                )}
-                              </div>
-                            ) : (
-                              <div className="flex items-center justify-between md:justify-end gap-3">
-                                <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-bold uppercase ${
-                                  item.status === 'visitado' ? 'bg-emerald-100 text-emerald-700' : 
-                                  item.status === 'venta realizada' ? 'bg-indigo-100 text-indigo-700' :
-                                  item.status === 'pedido tomado' ? 'bg-amber-100 text-amber-700' :
-                                  'bg-red-100 text-red-700'
-                                }`}>
-                                  {item.status === 'visitado' ? <CheckCircle2 size={14} /> : 
-                                   item.status === 'venta realizada' ? <ShoppingCart size={14} /> :
-                                   item.status === 'pedido tomado' ? <ClipboardList size={14} /> :
-                                   <XCircle size={14} />}
-                                  {item.status}
-                                </div>
-                                <button
-                                  onClick={() => handleUpdateItemStatus(item.id, 'pendiente')}
-                                  className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-all"
-                                  title="Deshacer"
-                                >
-                                  <Clock size={16} />
-                                </button>
-                              </div>
-                            )}
-                            <button
-                              onClick={() => setShowCustomerDetailId(item.cliente_id)}
-                              className="text-[10px] md:text-xs font-bold text-zinc-400 hover:text-zinc-900 flex items-center justify-center md:justify-end gap-1 transition-all py-1"
-                            >
-                              Ver Ficha <ArrowRight size={12} />
-                            </button>
-                          </div>
-                        </div>
-
-                        {item.notes && (
-                          <div className="mt-4 p-3 bg-zinc-50 rounded-xl border border-zinc-100 flex items-start gap-2">
-                            <MessageSquare size={14} className="text-zinc-400 mt-0.5" />
-                            <p className="text-xs text-zinc-600 italic">{item.notes}</p>
-                          </div>
+                      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                        <button type="button" onClick={() => setShowMap(value => !value)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-white/10 px-4 py-3 text-sm font-black text-white hover:bg-white/20"><Map size={17} />{showMap ? 'Ocultar mapa' : 'Ver mapa'}</button>
+                        {todayRoute.status === 'planificada' && hasPermission('routes', 'edit') && (
+                          <button type="button" onClick={async () => { try { const response = await apiFetch(`/api/clientes?endpoint=routes&id=${todayRoute.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'en curso' }) }); if (!response.ok) throw new Error(await readApiError(response, 'No se pudo iniciar la ruta.')); await response.json(); await fetchTodayRoute(); showNotification('success', 'Ruta iniciada.'); } catch (error: any) { showNotification('error', error?.message || 'No se pudo iniciar la ruta.'); } }} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-black text-white hover:bg-emerald-600"><ArrowRight size={17} />Iniciar</button>
+                        )}
+                        {hasPermission('routes', 'edit') && (
+                          <button type="button" onClick={() => setConfirmAction({ type: 'complete', routeId: todayRoute.id, routeName: todayRoute.name })} className="col-span-2 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-black text-indigo-900 sm:col-auto"><CheckCircle2 size={17} />Finalizar ruta</button>
                         )}
                       </div>
-                    ))}
+                    </div>
+                    <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                      <div className="rounded-2xl bg-white/10 p-3 text-center"><p className="text-[9px] font-bold uppercase text-indigo-200">Pendientes</p><p className="mt-1 text-xl font-black">{pendingToday}</p></div>
+                      <div className="rounded-2xl bg-white/10 p-3 text-center"><p className="text-[9px] font-bold uppercase text-indigo-200">Procesados</p><p className="mt-1 text-xl font-black">{completedToday}</p></div>
+                      <div className="rounded-2xl bg-white/10 p-3 text-center"><p className="text-[9px] font-bold uppercase text-indigo-200">Ventas</p><p className="mt-1 text-xl font-black">{salesToday}</p></div>
+                      <div className="rounded-2xl bg-white/10 p-3 text-center"><p className="text-[9px] font-bold uppercase text-indigo-200">Pedidos</p><p className="mt-1 text-xl font-black">{ordersToday}</p></div>
+                    </div>
+                  </section>
+
+                  {showMap && <RouteMap items={todayItems} userLocation={userLocation} onClientClick={clientId => setShowCustomerDetailId(clientId)} className="h-[320px] sm:h-[440px]" />}
+
+                  <div className="space-y-4">
+                    {todayItems.map((item, index) => {
+                      const processing = updatingItemId === item.id;
+                      const distance = userLocation && item.latitud && item.longitud ? calculateDistance(userLocation[0], userLocation[1], item.latitud, item.longitud) : null;
+                      return (
+                        <article key={item.id} className={`min-w-0 rounded-[26px] border p-4 shadow-sm sm:p-5 ${itemStatusClasses(item.status)}`}>
+                          <div className="flex min-w-0 items-start gap-3 sm:gap-4">
+                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-sm font-black text-white">{index + 1}</div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h3 className="break-words text-base font-black text-slate-950 sm:text-lg">{item.nombre_apellido}</h3>
+                                <span className="rounded-full bg-white/80 px-2 py-1 text-[9px] font-black uppercase">{item.tipo_cliente || 'cliente'}</span>
+                                <span className="rounded-full bg-white/80 px-2 py-1 text-[9px] font-black uppercase">{item.status}</span>
+                              </div>
+                              <p className="mt-2 flex items-start gap-2 break-words text-sm text-slate-600"><MapPin size={15} className="mt-0.5 shrink-0" />{item.direccion || 'Sin dirección'}, {item.localidad || 'Sin localidad'}</p>
+                              <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
+                                <span className="flex min-w-0 items-center gap-2 rounded-xl bg-white/70 px-3 py-2 text-slate-600"><Phone size={14} className="shrink-0" /><span className="break-all">{item.telefono || 'Sin teléfono'}</span></span>
+                                <span className={`flex min-w-0 items-center gap-2 rounded-xl bg-white/70 px-3 py-2 font-bold ${item.saldo_cta_cte > 0 ? 'text-rose-700' : 'text-emerald-700'}`}><WalletCards size={14} className="shrink-0" /><span className="break-words">{formatCurrency(item.saldo_cta_cte)}</span></span>
+                                <span className="flex items-center gap-2 rounded-xl bg-white/70 px-3 py-2 text-slate-600"><Navigation size={14} />{distance !== null ? `~${distance.toFixed(1)} km` : 'Sin coordenadas'}</span>
+                              </div>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {[['Visitado', item.visitado], ['Venta', item.venta_registrada], ['Pedido', item.pedido_generado], ['Cobranza', item.cobranza_realizada]].map(([label, done]) => <span key={String(label)} className={`rounded-full px-2.5 py-1 text-[9px] font-black uppercase ${done ? 'bg-emerald-600 text-white' : 'bg-white/70 text-slate-400'}`}>{String(label)}</span>)}
+                              </div>
+                              {item.notes && <div className="mt-3 flex items-start gap-2 rounded-xl bg-white/70 p-3 text-xs text-slate-600"><MessageSquare size={14} className="mt-0.5 shrink-0" /><p className="break-words italic">{item.notes}</p></div>}
+                            </div>
+                          </div>
+
+                          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+                            {item.status === 'pendiente' ? (
+                              <>
+                                {hasPermission('routes', 'edit') && <button type="button" onClick={() => handleVisitNext(todayRoute.id, item.id)} disabled={processing} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-indigo-200 bg-indigo-50 px-3 text-xs font-black text-indigo-700 disabled:opacity-50"><ArrowRight size={15} />Siguiente</button>}
+                                {hasPermission('routes', 'edit') && <button type="button" onClick={() => handleUpdateItemStatus(item.id, 'visitado')} disabled={processing} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 disabled:opacity-50">{processing ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}Visitar</button>}
+                                {hasPermission('routes', 'edit') && <button type="button" onClick={() => handleUpdateItemStatus(item.id, 'omitido')} disabled={processing} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3 text-xs font-black text-rose-700 disabled:opacity-50"><XCircle size={15} />Omitir</button>}
+                                {hasPermission('suppliers', 'create') && <button type="button" onClick={() => { setSelectedItemForAction(item); setQuickActionType('pedido'); setActionCart([]); setProductSearch(''); setShowQuickActionModal(true); }} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl bg-amber-500 px-3 text-xs font-black text-white"><ClipboardList size={15} />Pedido</button>}
+                                {hasPermission('sales', 'create') && <button type="button" onClick={() => { setSelectedItemForAction(item); setQuickActionType('venta'); setActionCart([]); setProductSearch(''); setShowQuickActionModal(true); }} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl bg-indigo-600 px-3 text-xs font-black text-white"><ShoppingCart size={15} />Venta</button>}
+                                {hasPermission('routes', 'edit') && <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => handleReorderItem(todayRoute.id, item.id, 'up')} disabled={index === 0} className="inline-flex min-h-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 disabled:opacity-30" aria-label="Subir visita"><ArrowUp size={16} /></button><button type="button" onClick={() => handleReorderItem(todayRoute.id, item.id, 'down')} disabled={index === todayItems.length - 1} className="inline-flex min-h-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 disabled:opacity-30" aria-label="Bajar visita"><ArrowDown size={16} /></button></div>}
+                              </>
+                            ) : (
+                              <>
+                                <button type="button" onClick={() => setShowCustomerDetailId(item.cliente_id)} className="col-span-1 inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700"><Eye size={15} />Ver ficha</button>
+                                {hasPermission('routes', 'edit') && <button type="button" onClick={() => handleUpdateItemStatus(item.id, 'pendiente')} disabled={processing} className="col-span-1 inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 disabled:opacity-50"><RotateCcw size={15} />Deshacer</button>}
+                              </>
+                            )}
+                          </div>
+                          {item.status === 'pendiente' && <button type="button" onClick={() => setShowCustomerDetailId(item.cliente_id)} className="mt-2 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white/80 text-xs font-black text-slate-700 sm:w-auto sm:px-4"><Eye size={15} />Ver ficha del cliente</button>}
+                        </article>
+                      );
+                    })}
                   </div>
-                </div>
+                </>
               )}
             </motion.div>
           )}
 
           {activeTab === 'historial' && (
-            <motion.div
-              key="historial"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="max-w-6xl mx-auto"
-            >
-              <div className="bg-white rounded-[40px] border border-zinc-200 shadow-sm overflow-hidden">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-zinc-50/50">
-                      <th className="px-8 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</th>
-                      <th className="px-8 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Nombre de Ruta</th>
-                      <th className="px-8 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Visitados</th>
-                      <th className="px-8 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Ventas</th>
-                      <th className="px-8 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Pedidos</th>
-                      <th className="px-8 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Estado</th>
-                      <th className="px-8 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-50">
-                    {routes.map(route => (
-                      <tr key={route.id} className="hover:bg-zinc-50/50 transition-colors group">
-                        <td className="px-8 py-6 text-sm font-medium text-zinc-600">
-                          {new Date(route.date).toLocaleDateString()}
-                        </td>
-                        <td className="px-8 py-6">
-                          <p className="text-sm font-bold text-zinc-900">{route.name}</p>
-                          <p className="text-[10px] text-zinc-400 font-medium">Creada el {new Date(route.created_at).toLocaleDateString()}</p>
-                        </td>
-                        <td className="px-8 py-6 text-center">
-                          <div className="inline-flex flex-col items-center">
-                            <p className="text-sm font-black text-zinc-900">{route.visited_customers} / {route.total_customers}</p>
-                            <div className="w-16 h-1 bg-zinc-100 rounded-full mt-1 overflow-hidden">
-                              <div 
-                                className="h-full bg-zinc-900 transition-all duration-500" 
-                                style={{ width: `${(route.visited_customers! / route.total_customers!) * 100}%` }}
-                              />
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-8 py-6 text-center">
-                          <span className="text-sm font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">
-                            {route.sales_count || 0}
-                          </span>
-                        </td>
-                        <td className="px-8 py-6 text-center">
-                          <span className="text-sm font-bold text-amber-600 bg-amber-50 px-3 py-1 rounded-full">
-                            {route.orders_count || 0}
-                          </span>
-                        </td>
-                        <td className="px-8 py-6 text-center">
-                          <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                            route.status === 'finalizada' ? 'bg-emerald-50 text-emerald-600' :
-                            route.status === 'en curso' ? 'bg-blue-50 text-blue-600' :
-                            route.status === 'cancelada' ? 'bg-red-50 text-red-600' :
-                            'bg-zinc-100 text-zinc-500'
-                          }`}>
-                            {route.status}
-                          </span>
-                        </td>
-                        <td className="px-8 py-6 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              onClick={() => {
-                                setSelectedRouteForDetail(route);
-                              }}
-                              className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-xl transition-all"
-                            >
-                              <Eye size={18} />
-                            </button>
-                            {hasPermission('routes', 'delete') && (
-                              <button
-                                onClick={() => handleDeleteRoute(route.id)}
-                                className="p-2 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
-                              >
-                                <Trash2 size={18} />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {routes.length === 0 && (
-                      <tr>
-                        <td colSpan={5} className="p-20 text-center text-zinc-400">
-                          <Map size={48} className="mx-auto mb-4 opacity-10" />
-                          <p className="text-sm font-medium">No hay rutas registradas en el historial</p>
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+            <motion.div key="historial" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-5">
+              <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Rutas registradas</p><p className="mt-2 text-2xl font-black text-slate-900">{routes.length}</p></div>
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Finalizadas</p><p className="mt-2 text-2xl font-black text-emerald-600">{routes.filter(route => route.status === 'finalizada').length}</p></div>
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Ventas</p><p className="mt-2 text-2xl font-black text-indigo-600">{routes.reduce((sum, route) => sum + Number(route.sales_count || 0), 0)}</p></div>
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Pedidos</p><p className="mt-2 text-2xl font-black text-amber-600">{routes.reduce((sum, route) => sum + Number(route.orders_count || 0), 0)}</p></div>
+              </section>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                {routes.map(route => {
+                  const total = Number(route.total_customers || 0);
+                  const visited = Number(route.visited_customers || 0);
+                  const percentage = total > 0 ? Math.round((visited / total) * 100) : 0;
+                  return (
+                    <article key={route.id} className="min-w-0 rounded-[26px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                      <div className="flex min-w-0 items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-[9px] font-black uppercase ${routeStatusClasses(route.status)}`}>{route.status}</span><span className="text-xs font-semibold text-slate-500">{formatDate(route.date)}</span></div>
+                          <h3 className="mt-2 break-words text-lg font-black text-slate-900">{route.name}</h3>
+                          <p className="mt-1 text-xs text-slate-500">Creada el {new Date(route.created_at).toLocaleDateString('es-AR')}</p>
+                        </div>
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-50 text-sm font-black text-indigo-700">{percentage}%</div>
+                      </div>
+                      <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-indigo-600" style={{ width: `${percentage}%` }} /></div>
+                      <div className="mt-4 grid grid-cols-3 gap-2">
+                        <div className="rounded-xl bg-slate-50 p-3 text-center"><p className="text-[9px] font-bold uppercase text-slate-400">Visitados</p><p className="mt-1 font-black text-slate-900">{visited}/{total}</p></div>
+                        <div className="rounded-xl bg-indigo-50 p-3 text-center"><p className="text-[9px] font-bold uppercase text-indigo-400">Ventas</p><p className="mt-1 font-black text-indigo-700">{route.sales_count || 0}</p></div>
+                        <div className="rounded-xl bg-amber-50 p-3 text-center"><p className="text-[9px] font-bold uppercase text-amber-500">Pedidos</p><p className="mt-1 font-black text-amber-700">{route.orders_count || 0}</p></div>
+                      </div>
+                      <div className="mt-4 grid grid-cols-2 gap-2">
+                        <button type="button" onClick={() => { setSelectedRouteForDetail(route); setDetailError(null); }} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:border-indigo-300"><Eye size={16} />Ver detalle</button>
+                        {hasPermission('routes', 'delete') && <button type="button" onClick={() => setConfirmAction({ type: 'delete', routeId: route.id, routeName: route.name })} disabled={routeActionId === route.id} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 text-sm font-black text-rose-700 disabled:opacity-50">{routeActionId === route.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}Eliminar</button>}
+                      </div>
+                    </article>
+                  );
+                })}
+                {routes.length === 0 && <div className="col-span-full rounded-[28px] border-2 border-dashed border-slate-200 bg-white p-10 text-center"><History size={38} className="mx-auto text-slate-300" /><h2 className="mt-4 text-lg font-black text-slate-900">Todavía no hay rutas registradas</h2><p className="mt-1 text-sm text-slate-500">Las rutas planificadas aparecerán en este historial.</p></div>}
               </div>
             </motion.div>
           )}
         </AnimatePresence>
-      </main>
+      </div>
 
-      {/* Customer Detail Modal Overlay */}
-      {showCustomerDetailId && (
-        <CustomerDetail 
-          clienteId={showCustomerDetailId} 
-          onClose={() => setShowCustomerDetailId(null)} 
-        />
-      )}
+      {showCustomerDetailId && <CustomerDetail clienteId={showCustomerDetailId} onClose={() => setShowCustomerDetailId(null)} />}
 
-      {/* Route Detail Modal */}
-      {selectedRouteForDetail && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-[40px] w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
-          >
-            <div className="p-8 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
-              <div>
-                <h2 className="text-2xl font-black text-zinc-900">{selectedRouteForDetail.name}</h2>
-                <p className="text-sm font-medium text-zinc-500">
-                  {new Date(selectedRouteForDetail.date).toLocaleDateString()} • {selectedRouteForDetail.status}
-                </p>
-              </div>
-              <button
-                onClick={() => setSelectedRouteForDetail(null)}
-                className="p-3 hover:bg-white rounded-2xl transition-all text-zinc-400 hover:text-zinc-900 shadow-sm"
-              >
-                <XCircle size={24} />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-8">
-              <div className="grid grid-cols-4 gap-4 mb-8">
-                <div className="p-6 bg-zinc-50 rounded-3xl border border-zinc-100">
-                  <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Clientes</p>
-                  <p className="text-2xl font-black text-zinc-900">{selectedRouteForDetail.total_customers}</p>
-                </div>
-                <div className="p-6 bg-emerald-50 rounded-3xl border border-emerald-100">
-                  <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest mb-1">Visitados</p>
-                  <p className="text-2xl font-black text-emerald-600">{selectedRouteForDetail.visited_customers}</p>
-                </div>
-                <div className="p-6 bg-indigo-50 rounded-3xl border border-indigo-100">
-                  <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-1">Ventas</p>
-                  <p className="text-2xl font-black text-indigo-600">{selectedRouteForDetail.sales_count || 0}</p>
-                </div>
-                <div className="p-6 bg-amber-50 rounded-3xl border border-amber-100">
-                  <p className="text-[10px] font-bold text-amber-400 uppercase tracking-widest mb-1">Pedidos</p>
-                  <p className="text-2xl font-black text-amber-600">{selectedRouteForDetail.orders_count || 0}</p>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <h3 className="text-lg font-black text-zinc-900">Listado de Clientes</h3>
-                <div className="bg-white rounded-3xl border border-zinc-100 overflow-hidden">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-zinc-50/50">
-                        <th className="px-6 py-3 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
-                        <th className="px-6 py-3 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Estado</th>
-                        <th className="px-6 py-3 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Notas</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-50">
-                      {selectedRouteForDetail.items?.map((item) => (
-                        <tr key={item.id} className="hover:bg-zinc-50/30 transition-colors">
-                          <td className="px-6 py-4">
-                            <p className="text-sm font-bold text-zinc-900">{item.nombre_apellido}</p>
-                            <p className="text-[10px] text-zinc-400">{item.localidad}</p>
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                              item.status === 'venta realizada' ? 'bg-emerald-50 text-emerald-600' :
-                              item.status === 'pedido tomado' ? 'bg-amber-50 text-amber-600' :
-                              item.status === 'visitado' ? 'bg-blue-50 text-blue-600' :
-                              item.status === 'omitido' ? 'bg-red-50 text-red-600' :
-                              'bg-zinc-100 text-zinc-500'
-                            }`}>
-                              {item.status}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-xs text-zinc-500 italic">
-                            {item.notes || '-'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        </div>
-      )}
-
-      {/* Proximity Alert Modal */}
       <AnimatePresence>
-        {showProximityAlert && nearbyClient && (
-          <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] w-full max-w-md px-4">
-            <motion.div
-              initial={{ opacity: 0, y: 50, scale: 0.9, x: '-50%' }}
-              animate={{ opacity: 1, y: 0, scale: 1, x: '-50%' }}
-              exit={{ opacity: 0, y: 50, scale: 0.9, x: '-50%' }}
-              className="bg-zinc-900/95 backdrop-blur-md text-white p-6 rounded-[32px] shadow-2xl border border-white/10 flex flex-col gap-4"
-              style={{ left: '50%', position: 'fixed' }}
-            >
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-indigo-500 rounded-2xl flex items-center justify-center shrink-0 animate-pulse shadow-lg shadow-indigo-500/20">
-                  <BellRing size={24} className="text-white" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-lg font-black tracking-tight leading-tight">¡Llegaste a destino!</h3>
-                  <p className="text-white/60 text-sm font-medium truncate">{nearbyClient.nombre_apellido}</p>
-                </div>
-                <button 
-                  onClick={() => setShowProximityAlert(false)}
-                  className="p-2 hover:bg-white/10 rounded-xl transition-colors"
-                >
-                  <XCircle size={20} className="text-white/40" />
-                </button>
+        {selectedRouteForDetail && (
+          <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+            <motion.section initial={{ opacity: 0, y: 35, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 35, scale: 0.98 }} className="flex max-h-[100dvh] w-full max-w-4xl flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:max-h-[92dvh] sm:rounded-[28px]">
+              <header className="flex items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 p-5 sm:p-6">
+                <div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-600">Detalle de ruta</p><h2 className="mt-1 break-words text-xl font-black text-slate-900 sm:text-2xl">{selectedRouteForDetail.name}</h2><p className="mt-1 text-sm text-slate-500">{formatDate(selectedRouteForDetail.date)} · {selectedRouteForDetail.status}</p></div>
+                <button type="button" onClick={() => setSelectedRouteForDetail(null)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600" aria-label="Cerrar detalle"><X size={20} /></button>
+              </header>
+              <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+                {detailLoading ? (
+                  <div className="flex min-h-64 flex-col items-center justify-center gap-3 text-slate-500"><Loader2 size={28} className="animate-spin text-indigo-600" /><p className="font-bold">Cargando detalle...</p></div>
+                ) : detailError ? (
+                  <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-rose-800"><p className="font-black">No se pudo cargar la ruta</p><p className="mt-1 text-sm">{detailError}</p><button type="button" onClick={() => { const route = { ...selectedRouteForDetail }; setSelectedRouteForDetail(null); window.setTimeout(() => setSelectedRouteForDetail(route), 0); }} className="mt-4 inline-flex min-h-11 items-center gap-2 rounded-xl bg-rose-700 px-4 text-sm font-bold text-white"><RefreshCw size={16} />Reintentar</button></div>
+                ) : (
+                  <div className="space-y-5">
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      <div className="rounded-2xl bg-slate-50 p-4 text-center"><p className="text-[9px] font-bold uppercase text-slate-400">Clientes</p><p className="mt-1 text-xl font-black text-slate-900">{selectedRouteForDetail.total_customers || selectedRouteForDetail.items?.length || 0}</p></div>
+                      <div className="rounded-2xl bg-emerald-50 p-4 text-center"><p className="text-[9px] font-bold uppercase text-emerald-500">Visitados</p><p className="mt-1 text-xl font-black text-emerald-700">{selectedRouteForDetail.visited_customers || selectedRouteForDetail.items?.filter(item => item.status !== 'pendiente').length || 0}</p></div>
+                      <div className="rounded-2xl bg-indigo-50 p-4 text-center"><p className="text-[9px] font-bold uppercase text-indigo-500">Ventas</p><p className="mt-1 text-xl font-black text-indigo-700">{selectedRouteForDetail.sales_count || 0}</p></div>
+                      <div className="rounded-2xl bg-amber-50 p-4 text-center"><p className="text-[9px] font-bold uppercase text-amber-500">Pedidos</p><p className="mt-1 text-xl font-black text-amber-700">{selectedRouteForDetail.orders_count || 0}</p></div>
+                    </div>
+                    <div className="space-y-3">
+                      {selectedRouteForDetail.items?.map((item, index) => (
+                        <article key={item.id} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                          <div className="flex min-w-0 items-start gap-3"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-sm font-black text-white">{index + 1}</div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="break-words text-sm font-black text-slate-900">{item.nombre_apellido}</p><span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${itemStatusClasses(item.status)}`}>{item.status}</span></div><p className="mt-1 flex items-start gap-1 break-words text-xs text-slate-500"><MapPin size={13} className="mt-0.5 shrink-0" />{item.direccion || 'Sin dirección'}, {item.localidad || 'Sin localidad'}</p>{item.notes && <p className="mt-2 break-words rounded-xl bg-slate-50 p-2 text-xs italic text-slate-600">{item.notes}</p>}</div></div>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-              
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => {
-                    setShowProximityAlert(false);
-                    handleUpdateItemStatus(nearbyClient.id, 'visitado');
-                  }}
-                  className="px-4 py-3 bg-white/10 hover:bg-white/20 rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-2 border border-white/5"
-                >
-                  <Check size={16} />
-                  Solo Visita
-                </button>
-                <button
-                  onClick={() => {
-                    setShowProximityAlert(false);
-                    setSelectedItemForAction(nearbyClient);
-                    setQuickActionType('venta');
-                    setActionCart([]);
-                    setShowQuickActionModal(true);
-                  }}
-                  className="px-4 py-3 bg-indigo-600 hover:bg-indigo-700 rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20"
-                >
-                  <ShoppingCart size={16} />
-                  Venta
-                </button>
-                <button
-                  onClick={() => {
-                    setShowProximityAlert(false);
-                    setSelectedItemForAction(nearbyClient);
-                    setQuickActionType('pedido');
-                    setActionCart([]);
-                    setShowQuickActionModal(true);
-                  }}
-                  className="px-4 py-3 bg-amber-500 hover:bg-amber-600 rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20"
-                >
-                  <ClipboardList size={16} />
-                  Pedido
-                </button>
-                <button
-                  onClick={() => {
-                    setShowProximityAlert(false);
-                    setSelectedItemForAction(nearbyClient);
-                    setQuickActionType('pago');
-                    setPaymentAmount(0);
-                    setShowQuickActionModal(true);
-                  }}
-                  className="px-4 py-3 bg-emerald-500 hover:bg-emerald-600 rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20"
-                >
-                  <AlertCircle size={16} />
-                  Pago
-                </button>
-                <button
-                  onClick={() => {
-                    setShowMap(true);
-                    // The map will automatically center on user/items if we trigger a re-render or if we had a panTo function
-                    // For now, just showing the map is a good start.
-                    setShowProximityAlert(false);
-                  }}
-                  className="col-span-2 px-4 py-2 text-[10px] font-bold text-white/40 hover:text-white transition-colors uppercase tracking-widest"
-                >
-                  Ver en el mapa
-                </button>
-              </div>
-            </motion.div>
+            </motion.section>
           </div>
         )}
       </AnimatePresence>
 
-      {/* Quick Action Modal */}
-      {showQuickActionModal && selectedItemForAction && (
-        <div className="fixed inset-0 bg-zinc-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            className="bg-white rounded-[32px] shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
-          >
-            <div className={`p-6 flex items-center justify-between text-white ${
-              quickActionType === 'venta' ? 'bg-indigo-600' : 
-              quickActionType === 'pedido' ? 'bg-amber-500' : 'bg-emerald-500'
-            }`}>
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
-                  {quickActionType === 'venta' ? <ShoppingCart size={20} /> : 
-                   quickActionType === 'pedido' ? <ClipboardList size={20} /> : <AlertCircle size={20} />}
-                </div>
-                <div>
-                  <h3 className="text-xl font-black uppercase tracking-tight">
-                    Registrar {quickActionType === 'venta' ? 'Venta' : quickActionType === 'pedido' ? 'Pedido' : 'Pago'}
-                  </h3>
-                  <p className="text-white/80 text-xs font-bold">Cliente: {selectedItemForAction.nombre_apellido}</p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setShowQuickActionModal(false)}
-                className="p-2 hover:bg-white/20 rounded-xl transition-all"
-              >
-                <XCircle size={24} />
-              </button>
+      <AnimatePresence>
+        {showProximityAlert && nearbyClient && (
+          <motion.div initial={{ opacity: 0, y: 35 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 35 }} className="fixed inset-x-3 bottom-3 z-[90] mx-auto max-w-lg rounded-[24px] bg-slate-950 p-4 text-white shadow-2xl ring-1 ring-white/10 sm:bottom-6 sm:p-5">
+            <div className="flex items-start gap-3"><div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-indigo-500"><BellRing size={22} /></div><div className="min-w-0 flex-1"><h3 className="font-black">Llegaste cerca de un cliente</h3><p className="mt-1 break-words text-sm text-slate-300">{nearbyClient.nombre_apellido}</p></div><button type="button" onClick={() => setShowProximityAlert(false)} className="rounded-xl p-2 text-slate-400 hover:bg-white/10" aria-label="Cerrar aviso"><X size={18} /></button></div>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => { setShowProximityAlert(false); handleUpdateItemStatus(nearbyClient.id, 'visitado'); }} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl bg-white/10 text-xs font-black"><Check size={15} />Visita</button>
+              <button type="button" onClick={() => { setShowProximityAlert(false); setSelectedItemForAction(nearbyClient); setQuickActionType('venta'); setActionCart([]); setProductSearch(''); setShowQuickActionModal(true); }} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl bg-indigo-600 text-xs font-black"><ShoppingCart size={15} />Venta</button>
+              <button type="button" onClick={() => { setShowProximityAlert(false); setSelectedItemForAction(nearbyClient); setQuickActionType('pedido'); setActionCart([]); setProductSearch(''); setShowQuickActionModal(true); }} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl bg-amber-500 text-xs font-black"><ClipboardList size={15} />Pedido</button>
+              <button type="button" onClick={() => { setShowProximityAlert(false); setSelectedItemForAction(nearbyClient); setQuickActionType('pago'); setPaymentAmount(0); setShowQuickActionModal(true); }} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl bg-emerald-500 text-xs font-black"><DollarSign size={15} />Cobro</button>
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-            <div className="flex-1 flex overflow-hidden">
+      <AnimatePresence>
+        {showQuickActionModal && selectedItemForAction && (
+          <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+            <motion.section initial={{ opacity: 0, y: 35, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 35, scale: 0.98 }} className="flex max-h-[100dvh] w-full max-w-5xl flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:max-h-[92dvh] sm:rounded-[28px]">
+              <header className={`flex items-start justify-between gap-4 p-5 text-white sm:p-6 ${quickActionType === 'venta' ? 'bg-indigo-700' : quickActionType === 'pedido' ? 'bg-amber-500' : 'bg-emerald-600'}`}>
+                <div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/70">Acción rápida</p><h2 className="mt-1 break-words text-xl font-black sm:text-2xl">Registrar {quickActionType === 'venta' ? 'venta' : quickActionType === 'pedido' ? 'pedido' : 'cobro'}</h2><p className="mt-1 break-words text-sm text-white/80">{selectedItemForAction.nombre_apellido}</p></div>
+                <button type="button" onClick={() => setShowQuickActionModal(false)} disabled={quickActionSaving} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/10" aria-label="Cerrar acción"><X size={20} /></button>
+              </header>
+
               {quickActionType === 'pago' ? (
-                <div className="flex-1 p-8 flex flex-col items-center justify-center space-y-6">
-                  <div className="w-full max-w-sm space-y-4">
-                    <div>
-                      <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2">Monto del Pago</label>
-                      <div className="relative">
-                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl font-black text-zinc-300">$</span>
-                        <input 
-                          type="number"
-                          value={paymentAmount || ''}
-                          onChange={(e) => setPaymentAmount(Number(e.target.value))}
-                          placeholder="0.00"
-                          className="w-full pl-10 pr-4 py-6 bg-zinc-50 border-2 border-zinc-100 rounded-[24px] focus:border-emerald-500 outline-none text-4xl font-black text-zinc-900 font-mono"
-                          autoFocus
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2">Método de Pago</label>
-                      <div className="grid grid-cols-2 gap-2">
-                        {['efectivo', 'transferencia', 'cheque', 'otro'].map(method => (
-                          <button
-                            key={method}
-                            onClick={() => setPaymentMethod(method)}
-                            className={`py-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all border-2 ${
-                              paymentMethod === method 
-                                ? 'bg-emerald-50 border-emerald-500 text-emerald-700' 
-                                : 'bg-white border-zinc-100 text-zinc-400 hover:border-zinc-200'
-                            }`}
-                          >
-                            {method}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="w-full max-w-sm pt-6">
-                    <button
-                      onClick={handleConfirmQuickAction}
-                      disabled={paymentAmount <= 0}
-                      className="w-full py-4 bg-emerald-500 text-white rounded-2xl font-bold hover:bg-emerald-600 transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      <Check size={20} />
-                      Confirmar Pago
-                    </button>
+                <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+                  <div className="mx-auto max-w-md space-y-5">
+                    <label className="block"><span className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Monto del cobro</span><div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-black text-slate-300">$</span><input type="number" min="0" value={paymentAmount || ''} onChange={event => setPaymentAmount(Number(event.target.value))} placeholder="0" className="min-h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-3xl font-black text-slate-900 outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100" /></div></label>
+                    <div><p className="mb-2 text-[10px] font-black uppercase tracking-wider text-slate-500">Medio de pago</p><div className="grid grid-cols-2 gap-2">{['efectivo', 'transferencia', 'cheque', 'otro'].map(method => <button key={method} type="button" onClick={() => setPaymentMethod(method)} className={`min-h-11 rounded-xl border px-3 text-xs font-black capitalize ${paymentMethod === method ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-200 bg-white text-slate-600'}`}>{method}</button>)}</div></div>
+                    <button type="button" onClick={handleConfirmQuickAction} disabled={paymentAmount <= 0 || quickActionSaving} className="inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 text-sm font-black text-white disabled:opacity-50">{quickActionSaving ? <Loader2 size={19} className="animate-spin" /> : <DollarSign size={19} />}{quickActionSaving ? 'Registrando...' : 'Confirmar cobro'}</button>
                   </div>
                 </div>
               ) : (
-                <>
-                  {/* Product Selection */}
-                  <div className="flex-1 p-6 border-r border-zinc-100 flex flex-col overflow-hidden">
-                    <div className="relative mb-6">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
-                      <input 
-                        type="text"
-                        placeholder="Buscar productos..."
-                        className="w-full pl-10 pr-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm"
-                        onChange={(e) => {
-                          const term = e.target.value.toLowerCase();
-                          // Local filtering would go here if needed
-                        }}
-                      />
-                    </div>
-
-                    <div className="flex-1 overflow-y-auto pr-2 space-y-2 custom-scrollbar">
-                      {products.filter(p => p.estado === 'activo').map(product => (
-                        <button
-                          key={product.id}
-                          onClick={() => {
-                            setActionCart(prev => {
-                              const existing = prev.find(item => item.productId === product.id);
-                              if (existing) {
-                                return prev.map(item => 
-                                  item.productId === product.id 
-                                    ? { ...item, quantity: item.quantity + 1 } 
-                                    : item
-                                );
-                              }
-                              return [...prev, { productId: product.id, quantity: 1 }];
-                            });
-                          }}
-                          className="w-full flex items-center justify-between p-3 bg-white border border-zinc-100 rounded-2xl hover:border-zinc-900 transition-all group"
-                        >
-                          <div className="text-left">
-                            <p className="text-sm font-bold text-zinc-900">{product.name}</p>
-                            <p className="text-[10px] text-zinc-400 font-mono">${product.sale_price.toFixed(2)}</p>
-                          </div>
-                          <Plus size={16} className="text-zinc-300 group-hover:text-zinc-900" />
-                        </button>
-                      ))}
+                <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.72fr)]">
+                  <div className="min-h-0 overflow-y-auto border-b border-slate-200 p-4 sm:p-6 lg:border-b-0 lg:border-r">
+                    <label className="relative block"><Search size={18} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" /><input type="search" value={productSearch} onChange={event => setProductSearch(event.target.value)} placeholder="Buscar producto por nombre, código o familia" className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 pl-11 pr-4 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100" /></label>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      {activeProducts.map(product => <button key={product.id} type="button" onClick={() => setActionCart(previous => { const existing = previous.find(item => item.productId === product.id); return existing ? previous.map(item => item.productId === product.id ? { ...item, quantity: item.quantity + 1 } : item) : [...previous, { productId: product.id, quantity: 1 }]; })} className="min-h-20 min-w-0 rounded-2xl border border-slate-200 bg-white p-4 text-left hover:border-indigo-300 hover:bg-indigo-50/40"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-words text-sm font-black text-slate-900">{product.name}</p><p className="mt-1 break-words text-xs text-slate-500">{product.code || 'Sin código'} · {product.family_name || 'Sin familia'}</p><p className="mt-2 text-sm font-black text-indigo-700">{formatCurrency(product.sale_price)}</p></div><Plus size={19} className="shrink-0 text-indigo-600" /></div></button>)}
+                      {activeProducts.length === 0 && <div className="col-span-full rounded-2xl border-2 border-dashed border-slate-200 p-8 text-center"><PackageCheck size={34} className="mx-auto text-slate-300" /><p className="mt-3 font-black text-slate-800">No hay productos que coincidan</p></div>}
                     </div>
                   </div>
 
-                  {/* Cart Summary */}
-                  <div className="w-80 p-6 bg-zinc-50 flex flex-col">
-                    <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-4">Productos Seleccionados</h4>
-                    <div className="flex-1 overflow-y-auto space-y-3 mb-6 pr-2 custom-scrollbar">
-                      {actionCart.map(item => {
-                        const product = products.find(p => p.id === item.productId);
-                        return (
-                          <div key={item.productId} className="flex items-center gap-3 bg-white p-3 rounded-xl border border-zinc-200 shadow-sm">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-bold text-zinc-900 truncate">{product?.name}</p>
-                              <p className="text-[10px] text-zinc-400">${((product?.sale_price || 0) * item.quantity).toFixed(2)}</p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <button 
-                                onClick={() => {
-                                  setActionCart(prev => prev.map(i => 
-                                    i.productId === item.productId 
-                                      ? { ...i, quantity: Math.max(1, i.quantity - 1) } 
-                                      : i
-                                  ));
-                                }}
-                                className="p-1 hover:bg-zinc-100 rounded-md"
-                              >
-                                <Minus size={12} />
-                              </button>
-                              <span className="text-xs font-bold w-4 text-center">{item.quantity}</span>
-                              <button 
-                                onClick={() => {
-                                  setActionCart(prev => prev.map(i => 
-                                    i.productId === item.productId 
-                                      ? { ...i, quantity: i.quantity + 1 } 
-                                      : i
-                                  ));
-                                }}
-                                className="p-1 hover:bg-zinc-100 rounded-md"
-                              >
-                                <Plus size={12} />
-                              </button>
-                              <button 
-                                onClick={() => setActionCart(prev => prev.filter(i => i.productId !== item.productId))}
-                                className="p-1 text-red-400 hover:text-red-600 ml-1"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {actionCart.length === 0 && (
-                        <div className="flex flex-col items-center justify-center py-12 text-zinc-300">
-                          <ShoppingCart size={32} className="mb-2 opacity-10" />
-                          <p className="text-[10px] font-bold uppercase">Sin productos</p>
-                        </div>
-                      )}
+                  <div className="min-h-0 overflow-y-auto bg-slate-50 p-4 sm:p-6">
+                    <div className="flex items-center justify-between gap-3"><div><h3 className="font-black text-slate-900">Productos seleccionados</h3><p className="text-xs text-slate-500">{actionCart.reduce((sum, item) => sum + item.quantity, 0)} unidades</p></div><span className="rounded-full bg-white px-3 py-1 text-xs font-black text-slate-600 shadow-sm">{actionCart.length}</span></div>
+                    <div className="mt-4 space-y-3">
+                      {actionCart.map(item => { const product = products.find(productItem => productItem.id === item.productId); return <article key={item.productId} className="rounded-2xl border border-slate-200 bg-white p-3"><p className="break-words text-sm font-black text-slate-900">{product?.name}</p><p className="mt-1 text-xs text-slate-500">{formatCurrency((product?.sale_price || 0) * item.quantity)}</p><div className="mt-3 grid grid-cols-[44px_1fr_44px_44px] gap-2"><button type="button" onClick={() => setActionCart(previous => previous.map(cartItem => cartItem.productId === item.productId ? { ...cartItem, quantity: Math.max(1, cartItem.quantity - 1) } : cartItem))} className="flex min-h-11 items-center justify-center rounded-xl border border-slate-200 bg-white"><Minus size={16} /></button><span className="flex min-h-11 items-center justify-center rounded-xl bg-slate-100 text-sm font-black">{item.quantity}</span><button type="button" onClick={() => setActionCart(previous => previous.map(cartItem => cartItem.productId === item.productId ? { ...cartItem, quantity: cartItem.quantity + 1 } : cartItem))} className="flex min-h-11 items-center justify-center rounded-xl border border-slate-200 bg-white"><Plus size={16} /></button><button type="button" onClick={() => setActionCart(previous => previous.filter(cartItem => cartItem.productId !== item.productId))} className="flex min-h-11 items-center justify-center rounded-xl border border-rose-200 bg-rose-50 text-rose-700" aria-label="Quitar producto"><Trash2 size={16} /></button></div></article>; })}
+                      {actionCart.length === 0 && <div className="rounded-2xl border-2 border-dashed border-slate-200 p-7 text-center"><ShoppingCart size={32} className="mx-auto text-slate-300" /><p className="mt-3 text-sm font-black text-slate-700">Sin productos seleccionados</p></div>}
                     </div>
-
-                    <div className="mb-4">
-                      <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2">Observaciones</label>
-                      <textarea
-                        value={actionNotes}
-                        onChange={(e) => setActionNotes(e.target.value)}
-                        placeholder="Notas adicionales..."
-                        className="w-full px-4 py-2 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-xs font-medium resize-none h-20"
-                      />
-                    </div>
-
-                    <div className="pt-4 border-t border-zinc-200 mt-auto">
-                      {quickActionType === 'venta' && (
-                        <div className="flex justify-between items-center mb-4">
-                          <span className="text-xs font-bold text-zinc-500 uppercase">Total</span>
-                          <span className="text-2xl font-black text-zinc-900 font-mono">
-                            ${actionCart.reduce((sum, item) => {
-                              const product = products.find(p => p.id === item.productId);
-                              return sum + (product?.sale_price || 0) * item.quantity;
-                            }, 0).toFixed(2)}
-                          </span>
-                        </div>
-                      )}
-                      <button
-                        disabled={actionCart.length === 0}
-                        onClick={handleConfirmQuickAction}
-                        className={`w-full py-4 rounded-2xl text-white font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg ${
-                          quickActionType === 'venta' ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-amber-500 hover:bg-amber-600'
-                        }`}
-                      >
-                        <CheckCircle2 size={18} />
-                        Confirmar {quickActionType === 'venta' ? 'Venta' : 'Pedido'}
-                      </button>
-                    </div>
+                    <label className="mt-4 block"><span className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Observaciones</span><textarea value={actionNotes} onChange={event => setActionNotes(event.target.value)} placeholder="Notas adicionales" className="min-h-24 w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100" /></label>
+                    {quickActionType === 'venta' && <div className="mt-4 flex items-center justify-between rounded-2xl bg-slate-950 p-4 text-white"><span className="text-xs font-bold uppercase text-slate-400">Total</span><span className="break-words text-xl font-black">{formatCurrency(actionCart.reduce((sum, item) => { const product = products.find(productItem => productItem.id === item.productId); return sum + Number(product?.sale_price || 0) * item.quantity; }, 0))}</span></div>}
+                    <button type="button" onClick={handleConfirmQuickAction} disabled={actionCart.length === 0 || quickActionSaving} className={`mt-4 inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl px-5 text-sm font-black text-white disabled:opacity-50 ${quickActionType === 'venta' ? 'bg-indigo-600' : 'bg-amber-500'}`}>{quickActionSaving ? <Loader2 size={19} className="animate-spin" /> : <CheckCircle2 size={19} />}{quickActionSaving ? 'Procesando...' : `Confirmar ${quickActionType}`}</button>
                   </div>
-                </>
+                </div>
               )}
-            </div>
-          </motion.div>
-        </div>
-      )}
+            </motion.section>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {confirmAction && (
+          <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+            <motion.section initial={{ opacity: 0, y: 30, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 30, scale: 0.98 }} className="w-full max-w-md rounded-t-[28px] bg-white p-5 shadow-2xl sm:rounded-[28px] sm:p-6">
+              <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${confirmAction.type === 'delete' ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>{confirmAction.type === 'delete' ? <Trash2 size={22} /> : <CheckCircle2 size={22} />}</div>
+              <h2 className="mt-4 text-xl font-black text-slate-900">{confirmAction.type === 'delete' ? 'Eliminar ruta' : 'Finalizar ruta'}</h2>
+              <p className="mt-2 break-words text-sm leading-6 text-slate-500">{confirmAction.type === 'delete' ? `Se eliminará “${confirmAction.routeName}”. Esta acción no se puede deshacer.` : `La ruta “${confirmAction.routeName}” quedará marcada como finalizada.`}</p>
+              <div className="mt-5 grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => setConfirmAction(null)} disabled={routeActionId !== null} className="min-h-12 rounded-xl border border-slate-200 bg-white text-sm font-black text-slate-700">Cancelar</button>
+                <button type="button" onClick={() => confirmAction.type === 'delete' ? handleDeleteRoute(confirmAction.routeId) : handleCompleteRoute(confirmAction.routeId)} disabled={routeActionId !== null} className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-xl text-sm font-black text-white disabled:opacity-60 ${confirmAction.type === 'delete' ? 'bg-rose-600' : 'bg-emerald-600'}`}>{routeActionId !== null && <Loader2 size={17} className="animate-spin" />}{confirmAction.type === 'delete' ? 'Eliminar' : 'Finalizar'}</button>
+              </div>
+            </motion.section>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
