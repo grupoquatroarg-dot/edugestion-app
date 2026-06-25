@@ -47,7 +47,16 @@ export default function ChecklistModule() {
     pendingSupplierOrders: number;
   } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [editingTemplateLoading, setEditingTemplateLoading] = useState(false);
+  const [finishingChecklistId, setFinishingChecklistId] = useState<number | null>(null);
+  const [deletingTemplateId, setDeletingTemplateId] = useState<number | null>(null);
+  const [templateStatusId, setTemplateStatusId] = useState<number | null>(null);
+  const [updatingRouteKeys, setUpdatingRouteKeys] = useState<string[]>([]);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [startingTemplateId, setStartingTemplateId] = useState<number | null>(null);
   const [updatingItemIds, setUpdatingItemIds] = useState<number[]>([]);
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -80,21 +89,44 @@ export default function ChecklistModule() {
   };
 
   useEffect(() => {
-    if (selectedChecklistForDetail && !selectedChecklistForDetail.items) {
-      apiFetch(`/api/clientes?endpoint=checklist&id=${selectedChecklistForDetail.id}`)
-        .then(res => res.json())
-        .then(body => {
-          const data = unwrapResponse(body);
-          setSelectedChecklistForDetail(data);
-        })
-        .catch(err => console.error("Error fetching checklist detail:", err));
-    }
-  }, [selectedChecklistForDetail]);
+    if (!selectedChecklistForDetail || selectedChecklistForDetail.items) return;
+
+    let cancelled = false;
+    setDetailLoading(true);
+    setDetailError(null);
+
+    apiFetch(`/api/clientes?endpoint=checklist&id=${selectedChecklistForDetail.id}`)
+      .then(async response => {
+        if (!response.ok) {
+          throw new Error(await readApiError(response, 'No se pudo cargar el detalle del checklist.'));
+        }
+        return response.json();
+      })
+      .then(body => {
+        if (cancelled) return;
+        const data = unwrapResponse<Checklist>(body);
+        setSelectedChecklistForDetail(data);
+      })
+      .catch(error => {
+        if (cancelled) return;
+        console.error('Error fetching checklist detail:', error);
+        setDetailError(error?.message || 'No se pudo cargar el detalle del checklist.');
+      })
+      .finally(() => {
+        if (!cancelled) setDetailLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedChecklistForDetail?.id]);
 
   const fetchInitialData = async (showFullLoader: boolean = true) => {
     if (showFullLoader) {
       setLoading(true);
       setLoadError(null);
+    } else {
+      setRefreshing(true);
     }
 
     try {
@@ -149,35 +181,44 @@ export default function ChecklistModule() {
       }
     } finally {
       if (showFullLoader) setLoading(false);
+      else setRefreshing(false);
     }
   };
 
   const handleCreateTemplate = async () => {
-    if (!newTemplateName || newTemplateTasks.filter(t => t.trim()).length === 0) return;
+    const validTasks = newTemplateTasks.map(task => task.trim()).filter(Boolean);
+    if (!newTemplateName.trim() || validTasks.length === 0 || savingTemplate) return;
 
     const payload = {
-      name: newTemplateName,
-      description: newTemplateDesc,
+      name: newTemplateName.trim(),
+      description: newTemplateDesc.trim(),
       type: newTemplateType,
-      items: newTemplateTasks.filter(t => t.trim())
+      items: validTasks
     };
 
+    setSavingTemplate(true);
     try {
-      const url = editingTemplateId 
+      const url = editingTemplateId
         ? `/api/clientes?endpoint=checklist-template&id=${editingTemplateId}`
         : '/api/clientes?endpoint=checklist-templates';
-      
+
       const res = await apiFetch(url, {
         method: editingTemplateId ? 'PUT' : 'POST',
         body: JSON.stringify(payload)
       });
 
-      if (res.ok) {
-        resetTemplateForm();
-        fetchInitialData();
+      if (!res.ok) {
+        throw new Error(await readApiError(res, 'No se pudo guardar la plantilla.'));
       }
-    } catch (error) {
-      console.error("Error saving template:", error);
+
+      resetTemplateForm();
+      showNotification('success', editingTemplateId ? 'Plantilla actualizada correctamente.' : 'Plantilla creada correctamente.');
+      await fetchInitialData(false);
+    } catch (error: any) {
+      console.error('Error saving template:', error);
+      showNotification('error', error?.message || 'No se pudo guardar la plantilla.');
+    } finally {
+      setSavingTemplate(false);
     }
   };
 
@@ -191,33 +232,47 @@ export default function ChecklistModule() {
   };
 
   const handleEditTemplate = async (template: Template) => {
-    setLoading(true);
+    if (editingTemplateLoading) return;
+    setEditingTemplateLoading(true);
     try {
       const res = await apiFetch(`/api/clientes?endpoint=checklist-template&id=${template.id}`);
+      if (!res.ok) {
+        throw new Error(await readApiError(res, 'No se pudo cargar la plantilla.'));
+      }
       const body = await res.json();
-      const data = unwrapResponse(body);
+      const data = unwrapResponse<Template>(body);
       setEditingTemplateId(template.id);
       setNewTemplateName(data.name);
       setNewTemplateDesc(data.description || '');
       setNewTemplateType(data.type || 'General');
-      setNewTemplateTasks(data.items?.map((i: any) => i.task_name) || ['']);
+      setNewTemplateTasks(data.items?.map(item => item.task_name) || ['']);
       setShowNewTemplateModal(true);
-    } catch (error) {
-      console.error("Error fetching template for edit:", error);
+    } catch (error: any) {
+      console.error('Error fetching template for edit:', error);
+      showNotification('error', error?.message || 'No se pudo cargar la plantilla.');
     } finally {
-      setLoading(false);
+      setEditingTemplateLoading(false);
     }
   };
 
   const handleToggleTemplateStatus = async (id: number, currentActive: number) => {
+    if (templateStatusId !== null) return;
+    setTemplateStatusId(id);
     try {
       const res = await apiFetch(`/api/clientes?endpoint=checklist-template-status&id=${id}`, {
         method: 'PATCH',
         body: JSON.stringify({ active: currentActive === 1 ? 0 : 1 })
       });
-      if (res.ok) fetchInitialData();
-    } catch (error) {
-      console.error("Error toggling template status:", error);
+      if (!res.ok) {
+        throw new Error(await readApiError(res, 'No se pudo cambiar el estado de la plantilla.'));
+      }
+      showNotification('success', currentActive === 1 ? 'Plantilla desactivada.' : 'Plantilla activada.');
+      await fetchInitialData(false);
+    } catch (error: any) {
+      console.error('Error toggling template status:', error);
+      showNotification('error', error?.message || 'No se pudo cambiar el estado de la plantilla.');
+    } finally {
+      setTemplateStatusId(null);
     }
   };
 
@@ -363,29 +418,40 @@ export default function ChecklistModule() {
   };
 
   const handleToggleRouteItem = async (itemId: number, field: string, currentValue: number) => {
+    const key = `${itemId}-${field}`;
+    if (updatingRouteKeys.includes(key)) return;
+    setUpdatingRouteKeys(previous => [...previous, key]);
+
     try {
       const res = await apiFetch(`/api/clientes?endpoint=route-item&id=${itemId}`, {
         method: 'PATCH',
         body: JSON.stringify({ [field]: currentValue === 0 ? 1 : 0 })
       });
 
-      if (res.ok) {
-        setTodayRoute((prev: any) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            items: prev.items.map((item: any) => 
-              item.id === itemId ? { ...item, [field]: currentValue === 0 ? 1 : 0 } : item
-            )
-          };
-        });
+      if (!res.ok) {
+        throw new Error(await readApiError(res, 'No se pudo actualizar la ruta.'));
       }
-    } catch (error) {
-      console.error("Error toggling route item field:", error);
+
+      setTodayRoute((previous: any) => {
+        if (!previous) return previous;
+        return {
+          ...previous,
+          items: previous.items.map((item: any) =>
+            item.id === itemId ? { ...item, [field]: currentValue === 0 ? 1 : 0 } : item
+          )
+        };
+      });
+    } catch (error: any) {
+      console.error('Error toggling route item field:', error);
+      showNotification('error', error?.message || 'No se pudo actualizar la ruta.');
+    } finally {
+      setUpdatingRouteKeys(previous => previous.filter(item => item !== key));
     }
   };
 
   const handleFinishChecklist = async (id: number) => {
+    if (finishingChecklistId !== null) return;
+    setFinishingChecklistId(id);
     try {
       const res = await apiFetch(`/api/clientes?endpoint=checklist&id=${id}`, {
         method: 'PATCH',
@@ -401,73 +467,93 @@ export default function ChecklistModule() {
       showNotification('success', 'Checklist finalizado correctamente.');
       void fetchInitialData(false);
     } catch (error: any) {
-      console.error("Error finishing checklist:", error);
+      console.error('Error finishing checklist:', error);
       showNotification('error', error?.message || 'No se pudo finalizar el checklist.');
+    } finally {
+      setFinishingChecklistId(null);
     }
   };
 
-  const handleDeleteTemplate = async (id: number) => {
-    if (!confirm("¿Estás seguro de eliminar esta plantilla?")) return;
+  const handleDeleteTemplate = async () => {
+    if (deletingTemplateId === null) return;
+    const id = deletingTemplateId;
     try {
       const res = await apiFetch(`/api/clientes?endpoint=checklist-template&id=${id}`, { method: 'DELETE' });
-      if (res.ok) fetchInitialData();
-    } catch (error) {
-      console.error("Error deleting template:", error);
+      if (!res.ok) {
+        throw new Error(await readApiError(res, 'No se pudo eliminar la plantilla.'));
+      }
+      setDeletingTemplateId(null);
+      showNotification('success', 'Plantilla eliminada correctamente.');
+      await fetchInitialData(false);
+    } catch (error: any) {
+      console.error('Error deleting template:', error);
+      showNotification('error', error?.message || 'No se pudo eliminar la plantilla.');
     }
   };
+
+  const activeChecklist = todayChecklists.find(checklist => checklist.id === selectedActiveChecklistId) || null;
+  const activeTemplates = templates.filter(template => Number(template.active) === 1);
+  const completedToday = todayChecklists.reduce(
+    (total, checklist) => total + (checklist.items || []).filter(item => Number(item.completed) === 1).length,
+    0
+  );
+  const totalTodayTasks = todayChecklists.reduce(
+    (total, checklist) => total + (checklist.items || []).length,
+    0
+  );
+
+  const tabItems = [
+    { id: 'hoy' as const, label: 'Checklist del día', icon: ClipboardCheck },
+    { id: 'ruta' as const, label: 'Ruta del día', icon: Map },
+    { id: 'plantillas' as const, label: 'Plantillas', icon: Layout },
+    { id: 'historial' as const, label: 'Historial', icon: History }
+  ];
+
+  const routeActions = [
+    { field: 'visitado', label: 'Visitado', icon: CheckCircle2, activeClass: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+    { field: 'venta_registrada', label: 'Venta', icon: ShoppingCart, activeClass: 'bg-indigo-100 text-indigo-700 border-indigo-200' },
+    { field: 'pedido_generado', label: 'Pedido', icon: ClipboardList, activeClass: 'bg-amber-100 text-amber-700 border-amber-200' },
+    { field: 'cobranza_realizada', label: 'Cobranza', icon: DollarSign, activeClass: 'bg-cyan-100 text-cyan-700 border-cyan-200' }
+  ];
 
   if (loading) {
     return (
-      <div className="h-full min-h-[520px] flex flex-col bg-zinc-50" aria-busy="true" aria-live="polite">
-        <header className="bg-white border-b border-zinc-200 px-4 sm:px-6 lg:px-8 py-5 sm:py-6">
-          <div className="flex items-center gap-3">
-            <ClipboardCheck className="text-zinc-300" size={32} />
-            <div>
-              <h2 className="text-2xl sm:text-3xl font-black text-zinc-900 tracking-tight">CHECK LIST</h2>
-              <p className="text-zinc-500 text-sm font-medium mt-1">Cargando controles y tareas...</p>
+      <div className="min-h-full bg-slate-50 p-4 sm:p-6 lg:p-8" aria-busy="true" aria-live="polite">
+        <div className="mx-auto max-w-7xl space-y-6 animate-pulse">
+          <div className="rounded-[28px] bg-slate-900 p-6 sm:p-8">
+            <div className="h-8 w-48 rounded-lg bg-white/15" />
+            <div className="mt-3 h-4 w-72 max-w-full rounded bg-white/10" />
+          </div>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {[0, 1, 2, 3].map(item => <div key={item} className="h-20 rounded-2xl bg-white shadow-sm" />)}
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {[0, 1, 2, 3].map(item => <div key={item} className="h-32 rounded-3xl bg-white shadow-sm" />)}
+          </div>
+          <div className="rounded-3xl bg-white p-6 shadow-sm">
+            <div className="flex items-center gap-3 text-slate-600">
+              <Loader2 className="animate-spin" size={20} />
+              <span className="font-bold">Cargando controles y tareas...</span>
             </div>
           </div>
-        </header>
-        <main className="flex-1 overflow-hidden p-4 sm:p-6 lg:p-8">
-          <div className="max-w-5xl mx-auto space-y-6 animate-pulse">
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-              {[0, 1, 2, 3].map(item => (
-                <div key={item} className="h-32 bg-white border border-zinc-100 rounded-3xl shadow-sm p-5">
-                  <div className="h-3 w-24 bg-zinc-200 rounded mb-5" />
-                  <div className="h-8 w-16 bg-zinc-200 rounded mb-3" />
-                  <div className="h-2 w-32 bg-zinc-100 rounded" />
-                </div>
-              ))}
-            </div>
-            <div className="bg-white border border-zinc-100 rounded-[32px] p-6 sm:p-8 shadow-sm">
-              <div className="flex items-center gap-3 mb-6">
-                <Loader2 className="animate-spin text-zinc-400" size={22} />
-                <span className="font-bold text-zinc-700">Cargando datos del checklist...</span>
-              </div>
-              <div className="space-y-3">
-                {[0, 1, 2].map(item => (
-                  <div key={item} className="h-16 bg-zinc-100 rounded-2xl" />
-                ))}
-              </div>
-            </div>
-          </div>
-        </main>
+        </div>
       </div>
     );
   }
 
   if (loadError) {
     return (
-      <div className="h-full min-h-[520px] flex items-center justify-center bg-zinc-50 p-4">
-        <div className="max-w-md w-full bg-white border border-red-100 rounded-[32px] p-8 text-center shadow-sm">
-          <div className="w-16 h-16 rounded-2xl bg-red-50 text-red-500 flex items-center justify-center mx-auto mb-5">
-            <AlertCircle size={32} />
+      <div className="min-h-full bg-slate-50 p-4 sm:p-6 lg:p-8 flex items-center justify-center">
+        <div className="w-full max-w-md rounded-[28px] border border-red-100 bg-white p-7 text-center shadow-sm">
+          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-red-50 text-red-600">
+            <AlertCircle size={30} />
           </div>
-          <h2 className="text-xl font-black text-zinc-900 mb-2">No se pudo cargar el Checklist</h2>
-          <p className="text-sm text-zinc-500 mb-6">{loadError}</p>
+          <h2 className="text-xl font-black text-slate-900">No se pudo cargar Checklist</h2>
+          <p className="mt-2 text-sm text-slate-500">{loadError}</p>
           <button
+            type="button"
             onClick={() => fetchInitialData()}
-            className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-zinc-900 text-white rounded-2xl font-bold text-sm hover:bg-zinc-800 transition-all"
+            className="mt-6 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-900 px-6 py-3 text-sm font-bold text-white hover:bg-slate-800"
           >
             <RefreshCw size={18} />
             Reintentar
@@ -478,733 +564,545 @@ export default function ChecklistModule() {
   }
 
   return (
-    <div className="h-full flex flex-col bg-zinc-50 overflow-hidden">
+    <div className="min-h-full bg-slate-50 text-slate-900">
       {notification && (
         <div
           role="status"
           aria-live="polite"
-          className={`fixed top-4 right-4 left-4 sm:left-auto z-[70] p-4 rounded-2xl shadow-2xl border flex items-center gap-3 ${
+          className={`fixed inset-x-4 top-4 z-[80] mx-auto flex max-w-lg items-center gap-3 rounded-2xl border p-4 shadow-2xl sm:left-auto sm:right-5 sm:mx-0 ${
             notification.type === 'success'
-              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-              : 'bg-red-50 border-red-200 text-red-800'
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+              : 'border-red-200 bg-red-50 text-red-800'
           }`}
         >
           {notification.type === 'success' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
-          <span className="font-bold text-sm">{notification.message}</span>
+          <span className="min-w-0 flex-1 text-sm font-bold">{notification.message}</span>
         </div>
       )}
-      {/* Header */}
-      <header className="bg-white border-b border-zinc-200 px-4 sm:px-6 lg:px-8 py-4 sm:py-6 shrink-0">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4 sm:mb-6">
-          <div>
-            <h2 className="text-2xl sm:text-3xl font-black text-zinc-900 tracking-tight flex items-center gap-3">
-              <ClipboardCheck className="text-zinc-400" size={32} />
-              CHECK LIST
-            </h2>
-            <p className="text-zinc-500 text-sm font-medium mt-1">Control de tareas diarias y procesos.</p>
-          </div>
-          <div className="flex items-center gap-3 bg-zinc-100 p-2 rounded-2xl px-4 w-fit">
-            <Users size={18} className="text-zinc-400" />
-            <span className="text-sm font-bold text-zinc-900">
-              {user?.name || 'Admin'}
-            </span>
-          </div>
-        </div>
 
-        <div className="flex gap-1 bg-zinc-100 p-1 rounded-xl w-full sm:w-fit overflow-x-auto no-scrollbar">
-          <button
-            onClick={() => setActiveTab('hoy')}
-            className={`px-3 sm:px-6 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap ${
-              activeTab === 'hoy' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
-            }`}
-          >
-            Check List del Día
-          </button>
-          <button
-            onClick={() => setActiveTab('ruta')}
-            className={`px-3 sm:px-6 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap ${
-              activeTab === 'ruta' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
-            }`}
-          >
-            Ruta del Día
-          </button>
-          <button
-            onClick={() => setActiveTab('plantillas')}
-            className={`px-3 sm:px-6 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap ${
-              activeTab === 'plantillas' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
-            }`}
-          >
-            Plantillas
-          </button>
-          <button
-            onClick={() => setActiveTab('historial')}
-            className={`px-3 sm:px-6 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap ${
-              activeTab === 'historial' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
-            }`}
-          >
-            Historial
-          </button>
-        </div>
-      </header>
+      <div className="mx-auto max-w-7xl p-3 sm:p-5 lg:p-8">
+        <section className="overflow-hidden rounded-[28px] bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 p-5 text-white shadow-xl sm:p-7 lg:p-8">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-indigo-100">
+                <ClipboardCheck size={14} />
+                Control operativo
+              </div>
+              <h1 className="text-2xl font-black tracking-tight sm:text-3xl lg:text-4xl">Checklist</h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">
+                Organiza tareas diarias, controles de ruta y plantillas desde cualquier dispositivo.
+              </p>
+            </div>
+            <div className="flex flex-col gap-3 sm:flex-row lg:justify-end">
+              <div className="flex min-h-11 items-center gap-3 rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
+                <Users size={18} className="text-indigo-200" />
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Responsable</p>
+                  <p className="truncate text-sm font-bold text-white">{user?.name || 'Administrador'}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => void fetchInitialData(false)}
+                disabled={refreshing}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/15 disabled:opacity-60"
+              >
+                <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
+                {refreshing ? 'Actualizando...' : 'Actualizar'}
+              </button>
+            </div>
+          </div>
 
-      <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
-        <AnimatePresence mode="wait">
-          {activeTab === 'hoy' && (
-            <motion.div
-              key="hoy"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="max-w-5xl w-full mx-auto space-y-6 sm:space-y-8"
-            >
-              {/* Resumen del día Section */}
-              {summary && (
-                <section>
-                  <div className="flex items-center gap-2 mb-6">
-                    <Layout size={20} className="text-zinc-400" />
-                    <h3 className="text-sm font-bold text-zinc-500 uppercase tracking-widest">Resumen del día</h3>
+          <div className="mt-6 grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Controles activos</p>
+              <p className="mt-1 text-2xl font-black">{todayChecklists.length}</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Tareas completadas</p>
+              <p className="mt-1 text-2xl font-black">{completedToday}/{totalTodayTasks}</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Plantillas activas</p>
+              <p className="mt-1 text-2xl font-black">{activeTemplates.length}</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Ruta de hoy</p>
+              <p className="mt-1 text-lg font-black">{todayRoute ? `${todayRoute.items?.length || 0} clientes` : 'Sin ruta'}</p>
+            </div>
+          </div>
+        </section>
+
+        <nav className="mt-4 grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm lg:grid-cols-4" aria-label="Secciones de Checklist">
+          {tabItems.map(tab => {
+            const Icon = tab.icon;
+            const selected = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex min-h-12 items-center justify-center gap-2 rounded-xl px-3 py-3 text-xs font-bold transition sm:text-sm ${
+                  selected
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+                aria-current={selected ? 'page' : undefined}
+              >
+                <Icon size={17} />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        <main className="mt-5 pb-8">
+          <AnimatePresence mode="wait">
+            {activeTab === 'hoy' && (
+              <motion.div key="hoy" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-6">
+                {summary && (
+                  <section>
+                    <div className="mb-3 flex items-center gap-2">
+                      <Layout size={18} className="text-indigo-600" />
+                      <h2 className="text-sm font-black uppercase tracking-[0.14em] text-slate-500">Resumen del día</h2>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 xl:grid-cols-4">
+                      {[
+                        { label: 'Clientes en ruta', value: summary.routeClients, detail: 'Programados para hoy', icon: Users, tone: 'text-indigo-700 bg-indigo-50' },
+                        { label: 'Dinero pendiente', value: `$${(summary.pendingMoney ?? 0).toLocaleString()}`, detail: 'Cuentas por cobrar', icon: DollarSign, tone: 'text-emerald-700 bg-emerald-50' },
+                        { label: 'Stock crítico', value: summary.criticalStock, detail: 'Productos bajo mínimo', icon: AlertCircle, tone: summary.criticalStock > 0 ? 'text-red-700 bg-red-50' : 'text-slate-700 bg-slate-100' },
+                        { label: 'Pedidos pendientes', value: summary.pendingSupplierOrders, detail: 'A proveedores', icon: ShoppingCart, tone: 'text-amber-700 bg-amber-50' }
+                      ].map(card => {
+                        const Icon = card.icon;
+                        return (
+                          <article key={card.label} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                            <div className={`mb-3 flex h-10 w-10 items-center justify-center rounded-xl ${card.tone}`}><Icon size={19} /></div>
+                            <p className="break-words text-[10px] font-bold uppercase tracking-wider text-slate-500">{card.label}</p>
+                            <p className="mt-1 break-words text-xl font-black text-slate-900 sm:text-2xl">{card.value}</p>
+                            <p className="mt-1 text-xs text-slate-500">{card.detail}</p>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </section>
+                )}
+
+                <section className="rounded-[26px] border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h2 className="text-lg font-black text-slate-900 sm:text-xl">Iniciar un nuevo control</h2>
+                      <p className="mt-1 text-sm text-slate-500">Elegí una plantilla activa para usarla hoy.</p>
+                    </div>
+                    <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700">{activeTemplates.length} disponibles</span>
                   </div>
-                  
-                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-                    <div className="p-4 sm:p-6 bg-white border border-zinc-100 rounded-2xl sm:rounded-[32px] shadow-sm flex flex-col gap-2">
-                      <div className="flex items-center gap-2 text-zinc-400 mb-1">
-                        <Users size={16} />
-                        <span className="text-[10px] font-bold uppercase tracking-widest">Clientes en Ruta</span>
-                      </div>
-                      <p className="text-2xl sm:text-3xl font-black text-zinc-900">{summary.routeClients}</p>
-                      <p className="text-[10px] text-zinc-400">Programados para hoy</p>
-                    </div>
 
-                    <div className="p-4 sm:p-6 bg-white border border-zinc-100 rounded-2xl sm:rounded-[32px] shadow-sm flex flex-col gap-2">
-                      <div className="flex items-center gap-2 text-zinc-400 mb-1">
-                        <DollarSign size={16} />
-                        <span className="text-[10px] font-bold uppercase tracking-widest">Dinero Pendiente</span>
+                  <div className="mt-5 space-y-6">
+                    {['Apertura', 'Cierre', 'Ruta', 'General'].map(type => {
+                      const filteredTemplates = activeTemplates.filter(template => template.type === type);
+                      if (filteredTemplates.length === 0) return null;
+                      return (
+                        <div key={type}>
+                          <h3 className="mb-3 flex items-center gap-2 text-xs font-black uppercase tracking-wider text-slate-500">
+                            <span className={`h-2 w-2 rounded-full ${type === 'Apertura' ? 'bg-emerald-500' : type === 'Cierre' ? 'bg-amber-500' : type === 'Ruta' ? 'bg-blue-500' : 'bg-slate-400'}`} />
+                            {type === 'Apertura' ? 'Inicio del día' : type === 'Cierre' ? 'Cierre del día' : type === 'General' ? 'Control general' : 'Ruta'}
+                          </h3>
+                          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                            {filteredTemplates.map(template => (
+                              <button
+                                key={template.id}
+                                type="button"
+                                onClick={() => hasPermission('checklist', 'create') && handleStartTodayChecklist(template.id)}
+                                disabled={!hasPermission('checklist', 'create') || startingTemplateId !== null}
+                                className="group min-h-28 min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left transition hover:border-indigo-300 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                aria-label={`Usar hoy la plantilla ${template.name}`}
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <p className="break-words text-sm font-black text-slate-900">{template.name}</p>
+                                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{template.description || 'Sin descripción'}</p>
+                                  </div>
+                                  {startingTemplateId === template.id ? <Loader2 size={18} className="shrink-0 animate-spin text-indigo-600" /> : <ChevronRight size={18} className="shrink-0 text-slate-300 group-hover:text-indigo-600" />}
+                                </div>
+                                <span className="mt-4 inline-flex items-center rounded-lg bg-white px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">{startingTemplateId === template.id ? 'Iniciando...' : 'Usar hoy'}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {activeTemplates.length === 0 && (
+                      <div className="rounded-2xl border-2 border-dashed border-slate-200 p-8 text-center">
+                        <Layout className="mx-auto text-slate-300" size={30} />
+                        <p className="mt-3 font-bold text-slate-700">No hay plantillas activas</p>
+                        <p className="mt-1 text-sm text-slate-500">Creá o activá una plantilla desde la pestaña Plantillas.</p>
                       </div>
-                      <p className="text-2xl sm:text-3xl font-black text-zinc-900">${(summary.pendingMoney ?? 0).toLocaleString()}</p>
-                      <p className="text-[10px] text-zinc-400">Cuentas por cobrar</p>
-                    </div>
-
-                    <div className="p-4 sm:p-6 bg-white border border-zinc-100 rounded-2xl sm:rounded-[32px] shadow-sm flex flex-col gap-2">
-                      <div className="flex items-center gap-2 text-zinc-400 mb-1">
-                        <AlertCircle size={16} />
-                        <span className="text-[10px] font-bold uppercase tracking-widest">Stock Crítico</span>
-                      </div>
-                      <p className={`text-2xl sm:text-3xl font-black ${summary.criticalStock > 0 ? 'text-red-600' : 'text-zinc-900'}`}>{summary.criticalStock}</p>
-                      <p className="text-[10px] text-zinc-400">Productos bajo el mínimo</p>
-                    </div>
-
-                    <div className="p-4 sm:p-6 bg-white border border-zinc-100 rounded-2xl sm:rounded-[32px] shadow-sm flex flex-col gap-2">
-                      <div className="flex items-center gap-2 text-zinc-400 mb-1">
-                        <ShoppingCart size={16} />
-                        <span className="text-[10px] font-bold uppercase tracking-widest">Pedidos Pendientes</span>
-                      </div>
-                      <p className="text-2xl sm:text-3xl font-black text-zinc-900">{summary.pendingSupplierOrders}</p>
-                      <p className="text-[10px] text-zinc-400">A proveedores</p>
-                    </div>
+                    )}
                   </div>
                 </section>
-              )}
 
-              {/* Iniciar Nuevo Control Section */}
-              <section>
-                <div className="flex items-center gap-2 mb-6">
-                  <Plus size={20} className="text-zinc-400" />
-                  <h3 className="text-sm font-bold text-zinc-500 uppercase tracking-widest">Iniciar Nuevo Control</h3>
-                </div>
-                
-                <div className="space-y-8">
-                  {['Apertura', 'Cierre', 'Ruta', 'General'].map(type => {
-                    const filteredTemplates = templates.filter(t => t.active === 1 && t.type === type);
-                    if (filteredTemplates.length === 0) return null;
-                    
-                    return (
-                      <div key={type} className="space-y-4">
-                        <h4 className="text-xs font-black text-zinc-400 uppercase tracking-tighter flex items-center gap-2">
-                          <span className={`w-1.5 h-1.5 rounded-full ${
-                            type === 'Apertura' ? 'bg-emerald-500' :
-                            type === 'Cierre' ? 'bg-amber-500' :
-                            type === 'Ruta' ? 'bg-blue-500' :
-                            'bg-zinc-300'
-                          }`}></span>
-                          {type === 'Apertura' ? 'Inicio del día' : type === 'Cierre' ? 'Cierre del día' : type === 'General' ? 'Control comercial' : type}
-                        </h4>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-                          {filteredTemplates.map(template => (
+                <section>
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-lg font-black text-slate-900 sm:text-xl">Controles en curso</h2>
+                      <p className="mt-1 text-sm text-slate-500">Marcá cada tarea y seguí el progreso en tiempo real.</p>
+                    </div>
+                    <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">{todayChecklists.length} activos</span>
+                  </div>
+
+                  {todayChecklists.length === 0 ? (
+                    <div className="rounded-[26px] border-2 border-dashed border-slate-200 bg-white p-8 text-center">
+                      <CheckCircle2 className="mx-auto text-slate-300" size={36} />
+                      <p className="mt-3 font-black text-slate-800">No hay controles activos</p>
+                      <p className="mt-1 text-sm text-slate-500">Iniciá una plantilla para comenzar el control del día.</p>
+                    </div>
+                  ) : (
+                    <div className="grid gap-4 xl:grid-cols-[minmax(260px,0.75fr)_minmax(0,2fr)]">
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                        {todayChecklists.map(checklist => {
+                          const completed = (checklist.items || []).filter(item => Number(item.completed) === 1).length;
+                          const total = (checklist.items || []).length;
+                          const selected = selectedActiveChecklistId === checklist.id;
+                          const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+                          return (
                             <button
-                              key={template.id}
-                              onClick={() => hasPermission('checklist', 'create') && handleStartTodayChecklist(template.id)}
-                              disabled={!hasPermission('checklist', 'create') || startingTemplateId !== null}
-                              aria-label={`Usar hoy la plantilla ${template.name}`}
-                              className={`p-4 sm:p-5 bg-white border border-zinc-100 rounded-2xl sm:rounded-3xl hover:border-zinc-900 transition-all group shadow-sm text-left ${
-                                !hasPermission('checklist', 'create') || startingTemplateId !== null
-                                  ? 'opacity-60 cursor-not-allowed'
-                                  : ''
-                              }`}
+                              key={checklist.id}
+                              type="button"
+                              onClick={() => setSelectedActiveChecklistId(checklist.id)}
+                              className={`min-w-0 rounded-2xl border p-4 text-left transition ${selected ? 'border-indigo-600 bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'border-slate-200 bg-white hover:border-indigo-300'}`}
                             >
-                              <div className="flex items-center justify-between mb-2">
-                                {startingTemplateId === template.id ? (
-                                  <Loader2 size={16} className="animate-spin text-zinc-500 ml-auto" />
-                                ) : (
-                                  <ChevronRight size={14} className="text-zinc-300 group-hover:text-zinc-900 ml-auto" />
-                                )}
+                              <div className="flex items-start justify-between gap-3">
+                                <p className="min-w-0 break-words text-sm font-black">{checklist.template_name}</p>
+                                <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold ${selected ? 'bg-white/15 text-white' : 'bg-slate-100 text-slate-600'}`}>{completed}/{total}</span>
                               </div>
-                              <h4 className="font-bold text-zinc-900 text-sm line-clamp-1">{template.name}</h4>
-                              <p className="text-[10px] text-zinc-400 mt-1 line-clamp-1">
-                                {startingTemplateId === template.id ? 'Iniciando checklist...' : template.description}
-                              </p>
+                              <div className={`mt-3 h-2 overflow-hidden rounded-full ${selected ? 'bg-white/15' : 'bg-slate-100'}`}>
+                                <div className={`h-full rounded-full ${selected ? 'bg-white' : 'bg-indigo-500'}`} style={{ width: `${percentage}%` }} />
+                              </div>
+                              <p className={`mt-2 text-xs ${selected ? 'text-indigo-100' : 'text-slate-500'}`}>{percentage}% completado</p>
                             </button>
-                          ))}
-                        </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
-                  
-                  {templates.filter(t => t.active === 1).length === 0 && (
-                    <div className="p-8 border-2 border-dashed border-zinc-200 rounded-3xl flex flex-col items-center justify-center text-zinc-400">
-                      <Layout size={24} className="mb-2 opacity-20" />
-                      <p className="text-xs font-bold">No hay plantillas activas</p>
+
+                      {activeChecklist && (
+                        <article className="min-w-0 overflow-hidden rounded-[26px] border border-slate-200 bg-white shadow-sm">
+                          <div className="border-b border-slate-200 bg-slate-50 p-4 sm:p-6">
+                            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                              <div className="min-w-0">
+                                <h3 className="break-words text-lg font-black text-slate-900 sm:text-xl">{activeChecklist.template_name}</h3>
+                                <p className="mt-1 text-sm text-slate-500">
+                                  {(activeChecklist.items || []).filter(item => Number(item.completed) === 1).length}/{(activeChecklist.items || []).length} tareas completadas
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleFinishChecklist(activeChecklist.id)}
+                                disabled={finishingChecklistId !== null}
+                                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60 lg:w-auto"
+                              >
+                                {finishingChecklistId === activeChecklist.id && <Loader2 size={17} className="animate-spin" />}
+                                {finishingChecklistId === activeChecklist.id ? 'Finalizando...' : 'Finalizar control'}
+                              </button>
+                            </div>
+                          </div>
+                          <div className="space-y-3 p-4 sm:p-6">
+                            {(activeChecklist.items || []).map(item => {
+                              const complete = Number(item.completed) === 1;
+                              const updating = updatingItemIds.includes(item.id);
+                              return (
+                                <button
+                                  key={item.id}
+                                  type="button"
+                                  onClick={() => handleToggleItem(activeChecklist.id, item.id, item.completed)}
+                                  disabled={updatingItemIds.length > 0 || !hasPermission('checklist', 'edit')}
+                                  className={`flex min-h-14 w-full min-w-0 items-start gap-3 rounded-2xl border p-4 text-left transition disabled:cursor-not-allowed ${complete ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-slate-200 bg-white hover:border-indigo-300'} ${updating ? 'opacity-70' : ''}`}
+                                  aria-label={`${complete ? 'Desmarcar' : 'Marcar'} tarea: ${item.task_name}`}
+                                >
+                                  {updating ? <Loader2 size={22} className="mt-0.5 shrink-0 animate-spin text-indigo-600" /> : complete ? <CheckCircle2 size={22} className="mt-0.5 shrink-0 text-emerald-600" /> : <Circle size={22} className="mt-0.5 shrink-0 text-slate-300" />}
+                                  <div className="min-w-0 flex-1">
+                                    <p className={`break-words text-sm font-bold ${complete ? 'line-through opacity-60' : ''}`}>{item.task_name}</p>
+                                    {complete && (
+                                      <p className="mt-1 break-words text-xs text-emerald-700">
+                                        {item.completed_at ? new Date(item.completed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                                        {item.completed_by ? ` · ${item.completed_by}` : ''}
+                                      </p>
+                                    )}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </article>
+                      )}
                     </div>
                   )}
-                </div>
-              </section>
+                </section>
+              </motion.div>
+            )}
 
-              {/* Controles en Curso Section */}
-              {todayChecklists.length > 0 && (
-                <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
-                  <div className="lg:col-span-1 space-y-4">
-                    <div className="flex items-center gap-2 mb-4">
-                      <AlertCircle size={20} className="text-amber-400" />
-                      <h3 className="text-sm font-bold text-zinc-500 uppercase tracking-widest">Controles en Curso</h3>
-                    </div>
-                    <div className="space-y-3">
-                      {todayChecklists.map(cl => (
-                        <button
-                          key={cl.id}
-                          onClick={() => setSelectedActiveChecklistId(cl.id)}
-                          className={`w-full p-5 rounded-3xl border transition-all text-left flex flex-col gap-2 ${
-                            selectedActiveChecklistId === cl.id 
-                              ? 'bg-zinc-900 border-zinc-900 text-white shadow-xl shadow-zinc-200' 
-                              : 'bg-white border-zinc-100 text-zinc-900 hover:border-zinc-300'
-                          }`}
-                        >
-                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                            <h4 className="font-black text-sm">{cl.template_name}</h4>
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                              selectedActiveChecklistId === cl.id ? 'bg-white/20 text-white' : 'bg-zinc-100 text-zinc-500'
-                            }`}>
-                              {cl.items?.filter(i => Number(i.completed) === 1).length}/{cl.items?.length || 0}
-                            </span>
+            {activeTab === 'ruta' && (
+              <motion.div key="ruta" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }}>
+                {!todayRoute ? (
+                  <div className="rounded-[28px] border-2 border-dashed border-slate-200 bg-white p-8 text-center sm:p-12">
+                    <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-slate-100 text-slate-400"><Map size={38} /></div>
+                    <h2 className="mt-5 text-xl font-black text-slate-900">No hay ruta activa para hoy</h2>
+                    <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">Planificá una ruta desde el módulo Rutas. Cuando exista, vas a poder registrar visitas, ventas, pedidos y cobranzas desde aquí.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <section className="rounded-[26px] bg-gradient-to-r from-indigo-700 to-indigo-900 p-5 text-white shadow-lg sm:p-6">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-indigo-200">Ruta del día</p>
+                          <h2 className="mt-1 break-words text-xl font-black sm:text-2xl">{todayRoute.name}</h2>
+                          <p className="mt-1 text-sm text-indigo-100">{new Date(todayRoute.date).toLocaleDateString()}</p>
+                        </div>
+                        <span className="w-fit rounded-full bg-white/10 px-3 py-1 text-xs font-bold">{todayRoute.items?.length || 0} clientes</span>
+                      </div>
+                    </section>
+
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      {(todayRoute.items || []).map((item: any) => (
+                        <article key={item.id} className="min-w-0 rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                          <div className="flex items-start gap-3">
+                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700"><Users size={20} /></div>
+                            <div className="min-w-0 flex-1">
+                              <h3 className="break-words text-base font-black text-slate-900">{item.nombre_apellido}</h3>
+                              <p className="mt-1 break-words text-sm text-slate-500">{item.localidad || 'Sin localidad'}</p>
+                            </div>
                           </div>
-                          <p className={`text-[10px] font-medium ${selectedActiveChecklistId === cl.id ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                            Iniciado {new Date(cl.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </p>
-                        </button>
+                          <div className="mt-4 grid grid-cols-2 gap-2">
+                            {routeActions.map(action => {
+                              const Icon = action.icon;
+                              const active = Number(item[action.field]) === 1;
+                              const key = `${item.id}-${action.field}`;
+                              const updating = updatingRouteKeys.includes(key);
+                              return (
+                                <button
+                                  key={action.field}
+                                  type="button"
+                                  onClick={() => handleToggleRouteItem(item.id, action.field, Number(item[action.field]))}
+                                  disabled={updating}
+                                  className={`flex min-h-12 items-center justify-center gap-2 rounded-xl border px-3 py-3 text-xs font-bold transition disabled:opacity-60 ${active ? action.activeClass : 'border-slate-200 bg-slate-50 text-slate-500 hover:border-indigo-300 hover:text-indigo-700'}`}
+                                >
+                                  {updating ? <Loader2 size={17} className="animate-spin" /> : <Icon size={17} />}
+                                  {action.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </article>
                       ))}
                     </div>
                   </div>
-
-                  <div className="lg:col-span-2">
-                    {selectedActiveChecklistId && todayChecklists.find(cl => cl.id === selectedActiveChecklistId) && (
-                      <div className="bg-white rounded-3xl sm:rounded-[40px] shadow-sm border border-zinc-100 overflow-hidden">
-                        {(() => {
-                          const cl = todayChecklists.find(c => c.id === selectedActiveChecklistId)!;
-                          return (
-                            <>
-                              <div className="p-4 sm:p-6 lg:p-8 border-b border-zinc-100 bg-zinc-50/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                                <div>
-                                  <h3 className="text-xl font-black text-zinc-900">{cl.template_name}</h3>
-                                  <p className="text-sm text-zinc-500 font-medium">
-                                    Control activo del día • {cl.items?.filter(item => Number(item.completed) === 1).length || 0}/{cl.items?.length || 0} tareas completadas
-                                  </p>
-                                </div>
-                                <button
-                                  onClick={() => handleFinishChecklist(cl.id)}
-                                  className="w-full sm:w-auto px-6 py-3 bg-zinc-900 text-white rounded-2xl font-bold text-sm hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200"
-                                >
-                                  Finalizar Control
-                                </button>
-                              </div>
-                              <div className="p-4 sm:p-6 lg:p-8 space-y-3">
-                                {cl.items?.map((item) => (
-                                  <button
-                                    key={item.id}
-                                    onClick={() => handleToggleItem(cl.id, item.id, item.completed)}
-                                    disabled={updatingItemIds.length > 0 || !hasPermission('checklist', 'edit')}
-                                    aria-label={`${Number(item.completed) === 1 ? 'Desmarcar' : 'Marcar'} tarea: ${item.task_name}`}
-                                    title={!hasPermission('checklist', 'edit') ? 'No tenés permiso para modificar tareas' : undefined}
-                                    className={`w-full flex items-start sm:items-center gap-3 sm:gap-4 p-4 sm:p-5 rounded-2xl sm:rounded-3xl border transition-all text-left disabled:cursor-not-allowed ${
-                                      Number(item.completed) === 1
-                                        ? 'bg-emerald-50 border-emerald-100 text-emerald-900'
-                                        : 'bg-white border-zinc-100 hover:border-zinc-300 text-zinc-900'
-                                    } ${updatingItemIds.includes(item.id) ? 'opacity-70' : ''}`}
-                                  >
-                                    {updatingItemIds.includes(item.id) ? (
-                                      <Loader2 size={24} className="animate-spin text-zinc-400 shrink-0" />
-                                    ) : Number(item.completed) === 1 ? (
-                                      <CheckCircle2 size={24} className="text-emerald-500 shrink-0" />
-                                    ) : (
-                                      <Circle size={24} className="text-zinc-200 shrink-0" />
-                                    )}
-                                    <span className={`font-bold ${Number(item.completed) === 1 ? 'line-through opacity-50' : ''}`}>
-                                      {item.task_name}
-                                    </span>
-                                    {Number(item.completed) === 1 && (
-                                      <div className="ml-auto flex flex-col items-end">
-                                        <span className="text-[10px] font-bold text-emerald-400 uppercase">
-                                          {new Date(item.completed_at!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                        </span>
-                                        <span className="text-[8px] font-black text-zinc-400 uppercase tracking-tighter">
-                                          {item.completed_by || 'Admin'}
-                                        </span>
-                                      </div>
-                                    )}
-                                  </button>
-                                ))}
-                              </div>
-                            </>
-                          );
-                        })()}
-                      </div>
-                    )}
-                  </div>
-                </section>
-              )}
-
-              {todayChecklists.length === 0 && (
-                <div className="text-center py-12 sm:py-20 px-4 bg-white rounded-3xl sm:rounded-[40px] border border-zinc-100 border-dashed">
-                  <div className="w-24 h-24 bg-zinc-50 rounded-[40px] flex items-center justify-center mx-auto mb-6">
-                    <ClipboardCheck size={48} className="text-zinc-200" />
-                  </div>
-                  <h3 className="text-xl sm:text-2xl font-black text-zinc-900 mb-2">No hay controles activos</h3>
-                  <p className="text-zinc-500 mb-8 max-w-sm mx-auto">Selecciona una plantilla arriba para iniciar el control de tareas de hoy.</p>
-                </div>
-              )}
-            </motion.div>
-          )}
-
-          {activeTab === 'ruta' && (
-            <motion.div
-              key="ruta"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="max-w-5xl w-full mx-auto space-y-6 sm:space-y-8"
-            >
-              {!todayRoute ? (
-                <div className="text-center py-12 sm:py-20 px-4 bg-white rounded-3xl sm:rounded-[40px] border border-zinc-100 border-dashed">
-                  <div className="w-24 h-24 bg-zinc-50 rounded-[40px] flex items-center justify-center mx-auto mb-6 text-zinc-200">
-                    <Map size={48} />
-                  </div>
-                  <h3 className="text-xl sm:text-2xl font-black text-zinc-900 mb-2">No hay ruta activa para hoy</h3>
-                  <p className="text-zinc-500 mb-8 max-w-sm mx-auto">Planifica una ruta en el módulo de Rutas para ver el checklist aquí.</p>
-                </div>
-              ) : (
-                <div className="space-y-6">
-                  <div className="bg-zinc-900 p-8 rounded-[40px] text-white shadow-xl flex items-center justify-between">
-                    <div>
-                      <div className="flex items-center gap-3 mb-2">
-                        <span className="px-3 py-1 bg-white/10 rounded-full text-[10px] font-bold uppercase tracking-wider">Checklist de Ruta</span>
-                        <span className="text-white/60 text-xs font-medium">{new Date(todayRoute.date).toLocaleDateString()}</span>
-                      </div>
-                      <h3 className="text-3xl font-black tracking-tight">{todayRoute.name}</h3>
-                    </div>
-                  </div>
-
-                  <div className="bg-white rounded-[40px] border border-zinc-100 shadow-sm overflow-hidden">
-                    <div className="overflow-x-auto -mx-2 px-2">
-                      <table className="w-full min-w-[720px] text-left border-collapse">
-                        <thead>
-                          <tr className="bg-zinc-50/50">
-                            <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
-                            <th className="px-4 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Visitado</th>
-                            <th className="px-4 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Venta</th>
-                            <th className="px-4 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Pedido</th>
-                            <th className="px-4 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Cobranza</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-zinc-50">
-                          {todayRoute.items?.map((item: any) => (
-                            <tr key={item.id} className="hover:bg-zinc-50/50 transition-colors">
-                              <td className="px-8 py-5">
-                                <p className="text-sm font-bold text-zinc-900">{item.nombre_apellido}</p>
-                                <p className="text-[10px] text-zinc-500">{item.localidad}</p>
-                              </td>
-                              <td className="px-4 py-5 text-center">
-                                <button 
-                                  onClick={() => handleToggleRouteItem(item.id, 'visitado', item.visitado)}
-                                  className={`p-2 rounded-xl transition-all ${item.visitado ? 'bg-emerald-100 text-emerald-600' : 'bg-zinc-100 text-zinc-300 hover:text-zinc-400'}`}
-                                >
-                                  <CheckCircle2 size={20} />
-                                </button>
-                              </td>
-                              <td className="px-4 py-5 text-center">
-                                <button 
-                                  onClick={() => handleToggleRouteItem(item.id, 'venta_registrada', item.venta_registrada)}
-                                  className={`p-2 rounded-xl transition-all ${item.venta_registrada ? 'bg-indigo-100 text-indigo-600' : 'bg-zinc-100 text-zinc-300 hover:text-zinc-400'}`}
-                                >
-                                  <ShoppingCart size={20} />
-                                </button>
-                              </td>
-                              <td className="px-4 py-5 text-center">
-                                <button 
-                                  onClick={() => handleToggleRouteItem(item.id, 'pedido_generado', item.pedido_generado)}
-                                  className={`p-2 rounded-xl transition-all ${item.pedido_generado ? 'bg-amber-100 text-amber-600' : 'bg-zinc-100 text-zinc-300 hover:text-zinc-400'}`}
-                                >
-                                  <ClipboardList size={20} />
-                                </button>
-                              </td>
-                              <td className="px-4 py-5 text-center">
-                                <button 
-                                  onClick={() => handleToggleRouteItem(item.id, 'cobranza_realizada', item.cobranza_realizada)}
-                                  className={`p-2 rounded-xl transition-all ${item.cobranza_realizada ? 'bg-emerald-100 text-emerald-600' : 'bg-zinc-100 text-zinc-300 hover:text-zinc-400'}`}
-                                >
-                                  <DollarSign size={20} />
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </motion.div>
-          )}
-
-          {activeTab === 'plantillas' && (
-            <motion.div
-              key="plantillas"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-            >
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
-                <h3 className="text-xl sm:text-2xl font-black text-zinc-900">Plantillas de Tareas</h3>
-                {hasPermission('checklist', 'create') && (
-                  <button
-                    onClick={() => setShowNewTemplateModal(true)}
-                    className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-zinc-900 text-white rounded-2xl font-bold text-sm hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200"
-                  >
-                    <Plus size={18} />
-                    Nueva Plantilla
-                  </button>
                 )}
-              </div>
+              </motion.div>
+            )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6">
-                {templates.map(template => (
-                  <div key={template.id} className={`bg-white border rounded-3xl sm:rounded-[40px] p-5 sm:p-8 shadow-sm flex flex-col transition-all ${template.active ? 'border-zinc-100' : 'border-zinc-200 opacity-60 grayscale'}`}>
-                    <div className="flex items-start justify-between mb-4">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${template.active ? 'bg-zinc-50 text-zinc-400' : 'bg-zinc-200 text-zinc-500'}`}>
-                          <Layout size={24} />
-                        </div>
-                        <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${
-                          template.type === 'Apertura' ? 'bg-emerald-50 text-emerald-600' :
-                          template.type === 'Cierre' ? 'bg-amber-50 text-amber-600' :
-                          template.type === 'Ruta' ? 'bg-blue-50 text-blue-600' :
-                          'bg-zinc-100 text-zinc-600'
-                        }`}>
-                          {template.type}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        {hasPermission('checklist', 'edit') && (
-                          <button 
-                            onClick={() => handleEditTemplate(template)}
-                            className="p-2 text-zinc-300 hover:text-zinc-900 transition-colors"
-                          >
-                            <Edit3 size={18} />
-                          </button>
-                        )}
-                        {hasPermission('checklist', 'delete') && (
-                          <button 
-                            onClick={() => handleDeleteTemplate(template.id)}
-                            className="p-2 text-zinc-300 hover:text-red-500 transition-colors"
-                          >
-                            <Trash2 size={18} />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    <h4 className="text-lg font-black text-zinc-900 mb-2">{template.name}</h4>
-                    <p className="text-sm text-zinc-500 mb-6 flex-1">{template.description || 'Sin descripción'}</p>
-                    <div className="pt-6 border-t border-zinc-50 flex items-center justify-between">
-                      <button
-                        onClick={() => hasPermission('checklist', 'edit') && handleToggleTemplateStatus(template.id, template.active)}
-                        disabled={!hasPermission('checklist', 'edit')}
-                        className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full transition-all ${
-                          template.active ? 'bg-emerald-50 text-emerald-600' : 'bg-zinc-100 text-zinc-400'
-                        } ${!hasPermission('checklist', 'edit') ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        {template.active ? 'Activa' : 'Inactiva'}
-                      </button>
-                      {hasPermission('checklist', 'create') && (
-                        <button
-                          onClick={() => handleStartTodayChecklist(template.id)}
-                          disabled={!template.active || startingTemplateId !== null}
-                          className="inline-flex items-center gap-2 text-sm font-bold text-zinc-900 hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          {startingTemplateId === template.id && <Loader2 size={16} className="animate-spin" />}
-                          {startingTemplateId === template.id ? 'Iniciando...' : 'Usar hoy'}
-                        </button>
-                      )}
-                    </div>
+            {activeTab === 'plantillas' && (
+              <motion.div key="plantillas" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }}>
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-xl font-black text-slate-900 sm:text-2xl">Plantillas de tareas</h2>
+                    <p className="mt-1 text-sm text-slate-500">Definí controles reutilizables para apertura, cierre, ruta o tareas generales.</p>
                   </div>
-                ))}
-              </div>
-            </motion.div>
-          )}
-
-          {activeTab === 'historial' && (
-            <motion.div
-              key="historial"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-            >
-              <div className="bg-white rounded-3xl sm:rounded-[40px] border border-zinc-100 overflow-hidden shadow-sm">
-                <div className="p-4 sm:p-6 lg:p-8 border-b border-zinc-50">
-                  <h3 className="text-xl sm:text-2xl font-black text-zinc-900">Historial de Check Lists</h3>
-                  <p className="text-zinc-500 text-sm font-medium mt-1">Registro de todas las listas ejecutadas.</p>
+                  {hasPermission('checklist', 'create') && (
+                    <button type="button" onClick={() => setShowNewTemplateModal(true)} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white hover:bg-indigo-700 sm:w-auto">
+                      <Plus size={18} /> Nueva plantilla
+                    </button>
+                  )}
                 </div>
-                <table className="w-full min-w-[720px] text-left border-collapse">
-                  <thead>
-                    <tr className="bg-zinc-50/50">
-                      <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</th>
-                      <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Checklist</th>
-                      <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Tareas</th>
-                      <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Completadas</th>
-                      <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Estado</th>
-                      <th className="px-8 py-5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Detalle</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-50">
-                    {history.map(item => (
-                      <tr key={item.id} className="group hover:bg-zinc-50/30 transition-colors">
-                        <td className="px-8 py-6">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-zinc-50 rounded-xl flex items-center justify-center text-zinc-400">
-                              <Calendar size={18} />
-                            </div>
-                            <span className="font-bold text-zinc-900">{new Date(item.date).toLocaleDateString()}</span>
-                          </div>
-                        </td>
-                        <td className="px-8 py-6">
-                          <span className="text-sm font-bold text-zinc-900">{item.template_name}</span>
-                        </td>
-                        <td className="px-8 py-6 text-center">
-                          <span className="text-sm font-black text-zinc-400">{item.total_tasks || 0}</span>
-                        </td>
-                        <td className="px-8 py-6 text-center">
-                          <span className={`text-sm font-black ${item.completed_tasks === item.total_tasks ? 'text-emerald-500' : 'text-zinc-900'}`}>
-                            {item.completed_tasks || 0}
-                          </span>
-                        </td>
-                        <td className="px-8 py-6">
-                          <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                            item.status === 'completado' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
-                          }`}>
-                            {item.status === 'completado' ? 'Completo' : 'Incompleto'}
-                          </span>
-                        </td>
-                        <td className="px-8 py-6 text-right">
-                          <button 
-                            onClick={() => setSelectedChecklistForDetail(item)}
-                            className="p-3 bg-zinc-50 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-xl transition-all"
-                          >
-                            <ChevronRight size={18} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </main>
 
-      {/* Checklist Detail Modal */}
-      {selectedChecklistForDetail && (
-        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 bg-zinc-900/60 backdrop-blur-sm">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-2xl sm:rounded-[40px] w-full max-w-2xl max-h-[95dvh] sm:max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
-          >
-            <div className="p-4 sm:p-6 lg:p-8 pr-16 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50 relative">
-              <div>
-                <h2 className="text-lg sm:text-2xl font-black text-zinc-900">{selectedChecklistForDetail.template_name}</h2>
-                <p className="text-sm font-medium text-zinc-500">
-                  {new Date(selectedChecklistForDetail.date).toLocaleDateString()} • {selectedChecklistForDetail.status}
-                </p>
-              </div>
-              <button
-                onClick={() => setSelectedChecklistForDetail(null)}
-                className="absolute top-3 right-3 sm:top-5 sm:right-5 p-3 bg-white hover:bg-zinc-100 rounded-2xl transition-all text-zinc-500 hover:text-zinc-900 shadow-sm border border-zinc-100"
-              >
-                <X size={24} />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
-              <div className="space-y-3">
-                {selectedChecklistForDetail.items?.map((item) => (
-                  <div
-                    key={item.id}
-                    className={`flex items-center gap-4 p-5 rounded-3xl border transition-all ${
-                      item.completed 
-                        ? 'bg-emerald-50 border-emerald-100 text-emerald-900' 
-                        : 'bg-zinc-50 border-zinc-100 text-zinc-400'
-                    }`}
-                  >
-                    {item.completed ? (
-                      <CheckCircle2 size={24} className="text-emerald-500 shrink-0" />
-                    ) : (
-                      <Circle size={24} className="text-zinc-200 shrink-0" />
-                    )}
-                    <span className="font-bold">
-                      {item.task_name}
-                    </span>
-                    {item.completed && (
-                      <div className="ml-auto flex flex-col items-end">
-                        <span className="text-[10px] font-bold text-emerald-400 uppercase">
-                          {new Date(item.completed_at!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                        <span className="text-[8px] font-black text-zinc-400 uppercase tracking-tighter">
-                          {item.completed_by || 'Admin'}
-                        </span>
-                      </div>
-                    )}
+                {templates.length === 0 ? (
+                  <div className="rounded-[26px] border-2 border-dashed border-slate-200 bg-white p-8 text-center">
+                    <Layout className="mx-auto text-slate-300" size={36} />
+                    <p className="mt-3 font-black text-slate-800">Todavía no hay plantillas</p>
+                    <p className="mt-1 text-sm text-slate-500">Creá la primera plantilla para comenzar.</p>
                   </div>
-                ))}
-              </div>
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+                    {templates.map(template => {
+                      const active = Number(template.active) === 1;
+                      return (
+                        <article key={template.id} className={`min-w-0 rounded-[24px] border bg-white p-5 shadow-sm transition ${active ? 'border-slate-200' : 'border-slate-200 opacity-70'}`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${template.type === 'Apertura' ? 'bg-emerald-50 text-emerald-700' : template.type === 'Cierre' ? 'bg-amber-50 text-amber-700' : template.type === 'Ruta' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>{template.type}</span>
+                              <h3 className="mt-3 break-words text-lg font-black text-slate-900">{template.name}</h3>
+                              <p className="mt-2 line-clamp-3 break-words text-sm leading-6 text-slate-500">{template.description || 'Sin descripción'}</p>
+                            </div>
+                            <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${active ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-100 text-slate-400'}`}><Layout size={21} /></div>
+                          </div>
+
+                          <div className="mt-5 grid grid-cols-2 gap-2">
+                            {hasPermission('checklist', 'edit') && (
+                              <button type="button" onClick={() => handleEditTemplate(template)} disabled={editingTemplateLoading} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-60">
+                                {editingTemplateLoading ? <Loader2 size={16} className="animate-spin" /> : <Edit3 size={16} />} Editar
+                              </button>
+                            )}
+                            {hasPermission('checklist', 'delete') && (
+                              <button type="button" onClick={() => setDeletingTemplateId(template.id)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100">
+                                <Trash2 size={16} /> Eliminar
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                            <button
+                              type="button"
+                              onClick={() => hasPermission('checklist', 'edit') && handleToggleTemplateStatus(template.id, template.active)}
+                              disabled={!hasPermission('checklist', 'edit') || templateStatusId !== null}
+                              className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold disabled:opacity-60 ${active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}
+                            >
+                              {templateStatusId === template.id && <Loader2 size={15} className="animate-spin" />}
+                              {active ? 'Plantilla activa' : 'Plantilla inactiva'}
+                            </button>
+                            {hasPermission('checklist', 'create') && (
+                              <button type="button" onClick={() => handleStartTodayChecklist(template.id)} disabled={!active || startingTemplateId !== null} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800 disabled:opacity-50">
+                                {startingTemplateId === template.id ? <Loader2 size={15} className="animate-spin" /> : <ChevronRight size={15} />}
+                                {startingTemplateId === template.id ? 'Iniciando...' : 'Usar hoy'}
+                              </button>
+                            )}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+              </motion.div>
+            )}
+
+            {activeTab === 'historial' && (
+              <motion.div key="historial" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }}>
+                <div className="mb-4">
+                  <h2 className="text-xl font-black text-slate-900 sm:text-2xl">Historial de controles</h2>
+                  <p className="mt-1 text-sm text-slate-500">Consultá los checklists ejecutados y el detalle de sus tareas.</p>
+                </div>
+
+                {history.length === 0 ? (
+                  <div className="rounded-[26px] border-2 border-dashed border-slate-200 bg-white p-8 text-center">
+                    <History className="mx-auto text-slate-300" size={36} />
+                    <p className="mt-3 font-black text-slate-800">No hay controles en el historial</p>
+                    <p className="mt-1 text-sm text-slate-500">Los controles finalizados aparecerán aquí.</p>
+                  </div>
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+                    {history.map(item => {
+                      const total = item.total_tasks || 0;
+                      const completed = item.completed_tasks || 0;
+                      const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+                      const complete = item.status === 'completado';
+                      return (
+                        <article key={item.id} className="min-w-0 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="flex items-center gap-2 text-xs font-bold text-slate-500"><Calendar size={15} /> {new Date(item.date).toLocaleDateString()}</p>
+                              <h3 className="mt-2 break-words text-lg font-black text-slate-900">{item.template_name}</h3>
+                            </div>
+                            <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${complete ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{complete ? 'Completo' : 'Incompleto'}</span>
+                          </div>
+                          <div className="mt-4 grid grid-cols-2 gap-3 rounded-2xl bg-slate-50 p-3">
+                            <div><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Tareas</p><p className="mt-1 text-lg font-black text-slate-900">{total}</p></div>
+                            <div><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Completadas</p><p className="mt-1 text-lg font-black text-indigo-700">{completed}</p></div>
+                          </div>
+                          <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${complete ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${percentage}%` }} /></div>
+                          <div className="mt-4 flex items-center justify-between gap-3">
+                            <span className="text-xs font-bold text-slate-500">{percentage}% completado</span>
+                            <button type="button" onClick={() => { setDetailError(null); setSelectedChecklistForDetail(item); }} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-50 px-4 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100">
+                              Ver detalle <ChevronRight size={15} />
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </main>
+      </div>
+
+      {selectedChecklistForDetail && (
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+          <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} className="flex max-h-[94dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:max-h-[90dvh] sm:rounded-[28px]">
+            <div className="border-b border-slate-200 bg-slate-50 p-5 pr-16 sm:p-6 sm:pr-16">
+              <h2 className="break-words text-xl font-black text-slate-900">{selectedChecklistForDetail.template_name}</h2>
+              <p className="mt-1 text-sm text-slate-500">{new Date(selectedChecklistForDetail.date).toLocaleDateString()} · {selectedChecklistForDetail.status}</p>
+              <button type="button" onClick={() => { setSelectedChecklistForDetail(null); setDetailError(null); }} className="absolute right-4 top-4 flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 hover:bg-slate-100" aria-label="Cerrar detalle"><X size={21} /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+              {detailLoading ? (
+                <div className="flex min-h-48 flex-col items-center justify-center gap-3 text-slate-500"><Loader2 className="animate-spin" size={28} /><p className="text-sm font-bold">Cargando detalle...</p></div>
+              ) : detailError ? (
+                <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-center"><AlertCircle className="mx-auto text-red-600" size={28} /><p className="mt-3 text-sm font-bold text-red-800">{detailError}</p><button type="button" onClick={() => { const current = selectedChecklistForDetail; setSelectedChecklistForDetail(null); window.setTimeout(() => setSelectedChecklistForDetail(current), 0); }} className="mt-4 inline-flex min-h-11 items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white"><RefreshCw size={17} /> Reintentar</button></div>
+              ) : (
+                <div className="space-y-3">
+                  {(selectedChecklistForDetail.items || []).map(item => {
+                    const complete = Number(item.completed) === 1;
+                    return (
+                      <div key={item.id} className={`flex min-w-0 items-start gap-3 rounded-2xl border p-4 ${complete ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}>
+                        {complete ? <CheckCircle2 size={21} className="mt-0.5 shrink-0 text-emerald-600" /> : <Circle size={21} className="mt-0.5 shrink-0 text-slate-300" />}
+                        <div className="min-w-0 flex-1"><p className="break-words text-sm font-bold text-slate-900">{item.task_name}</p>{complete && <p className="mt-1 break-words text-xs text-emerald-700">{item.completed_at ? new Date(item.completed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}{item.completed_by ? ` · ${item.completed_by}` : ''}</p>}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </motion.div>
         </div>
       )}
 
-      {/* New Template Modal */}
       {showNewTemplateModal && (
-        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 bg-zinc-900/60 backdrop-blur-sm">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-2xl sm:rounded-[40px] w-full max-w-2xl max-h-[95dvh] sm:max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
-          >
-            <div className="p-4 sm:p-6 lg:p-8 pr-16 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50 relative">
-              <div>
-                <h2 className="text-lg sm:text-2xl font-black text-zinc-900">{editingTemplateId ? 'Editar Plantilla' : 'Nueva Plantilla'}</h2>
-                <p className="text-sm font-medium text-zinc-500">Define las tareas que se realizarán.</p>
-              </div>
-              <button
-                onClick={resetTemplateForm}
-                className="absolute top-3 right-3 sm:top-5 sm:right-5 p-3 bg-white hover:bg-zinc-100 rounded-2xl transition-all text-zinc-500 hover:text-zinc-900 shadow-sm border border-zinc-100"
-              >
-                <X size={24} />
-              </button>
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+          <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} className="flex max-h-[96dvh] w-full max-w-3xl flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:max-h-[92dvh] sm:rounded-[28px]">
+            <div className="relative border-b border-slate-200 bg-slate-50 p-5 pr-16 sm:p-6 sm:pr-16">
+              <h2 className="text-xl font-black text-slate-900">{editingTemplateId ? 'Editar plantilla' : 'Nueva plantilla'}</h2>
+              <p className="mt-1 text-sm text-slate-500">Definí el nombre, tipo y las tareas que se deben realizar.</p>
+              <button type="button" onClick={resetTemplateForm} disabled={savingTemplate} className="absolute right-4 top-4 flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 hover:bg-slate-100 disabled:opacity-50" aria-label="Cerrar formulario"><X size={21} /></button>
             </div>
-
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-5 sm:space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-                <div className="space-y-4">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+              <div className="grid gap-5 lg:grid-cols-2">
+                <div className="space-y-5">
+                  <div><label className="mb-2 block text-xs font-bold text-slate-600">Nombre de la plantilla</label><input type="text" value={newTemplateName} onChange={event => setNewTemplateName(event.target.value)} placeholder="Ej.: Apertura de local" className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" /></div>
                   <div>
-                    <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2 block">Nombre de la Plantilla</label>
-                    <input
-                      type="text"
-                      value={newTemplateName}
-                      onChange={(e) => setNewTemplateName(e.target.value)}
-                      placeholder="Ej: Apertura de Local"
-                      className="w-full px-4 sm:px-5 py-3 sm:py-4 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-zinc-900 outline-none font-bold text-zinc-900"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2 block">Tipo de Plantilla</label>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-2 gap-2">
-                      {['Apertura', 'Cierre', 'Ruta', 'General'].map((type) => (
-                        <button
-                          key={type}
-                          onClick={() => setNewTemplateType(type as any)}
-                          className={`px-4 py-3 rounded-xl text-xs font-bold transition-all border ${
-                            newTemplateType === type 
-                              ? 'bg-zinc-900 text-white border-zinc-900' 
-                              : 'bg-white text-zinc-500 border-zinc-200 hover:border-zinc-300'
-                          }`}
-                        >
-                          {type}
-                        </button>
-                      ))}
+                    <label className="mb-2 block text-xs font-bold text-slate-600">Tipo</label>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2">
+                      {['Apertura', 'Cierre', 'Ruta', 'General'].map(type => <button key={type} type="button" onClick={() => setNewTemplateType(type as any)} className={`min-h-11 rounded-xl border px-3 py-2 text-xs font-bold ${newTemplateType === type ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-300'}`}>{type}</button>)}
                     </div>
                   </div>
                 </div>
-                <div>
-                  <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2 block">Descripción (Opcional)</label>
-                  <textarea
-                    value={newTemplateDesc}
-                    onChange={(e) => setNewTemplateDesc(e.target.value)}
-                    placeholder="Describe brevemente el propósito de esta lista..."
-                    className="w-full px-4 sm:px-5 py-3 sm:py-4 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm text-zinc-600 h-[120px] sm:h-[148px] resize-none"
-                  />
-                </div>
+                <div><label className="mb-2 block text-xs font-bold text-slate-600">Descripción</label><textarea value={newTemplateDesc} onChange={event => setNewTemplateDesc(event.target.value)} placeholder="Describe brevemente el objetivo del control..." className="min-h-36 w-full resize-none rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" /></div>
               </div>
 
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Tareas a realizar</label>
-                  <button
-                    onClick={() => setNewTemplateTasks([...newTemplateTasks, ''])}
-                    className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest hover:underline"
-                  >
-                    + Agregar Tarea
-                  </button>
-                </div>
-                <div className="space-y-2">
+              <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:p-5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="font-black text-slate-900">Tareas</h3><p className="text-xs text-slate-500">Agregá al menos una tarea.</p></div><button type="button" onClick={() => setNewTemplateTasks(previous => [...previous, ''])} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 py-2 text-xs font-bold text-indigo-700 shadow-sm ring-1 ring-slate-200"><Plus size={16} /> Agregar tarea</button></div>
+                <div className="mt-4 space-y-3">
                   {newTemplateTasks.map((task, index) => (
-                    <div key={index} className="flex gap-2">
-                      <input
-                        type="text"
-                        value={task}
-                        onChange={(e) => {
-                          const updated = [...newTemplateTasks];
-                          updated[index] = e.target.value;
-                          setNewTemplateTasks(updated);
-                        }}
-                        placeholder={`Tarea #${index + 1}`}
-                        className="min-w-0 flex-1 px-4 sm:px-5 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-sm font-medium"
-                      />
-                      <button
-                        onClick={() => {
-                          const updated = newTemplateTasks.filter((_, i) => i !== index);
-                          setNewTemplateTasks(updated.length ? updated : ['']);
-                        }}
-                        className="p-3 text-zinc-300 hover:text-red-500 transition-colors"
-                      >
-                        <Trash2 size={18} />
-                      </button>
+                    <div key={index} className="flex min-w-0 items-center gap-2">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-xs font-black text-indigo-700">{index + 1}</span>
+                      <input type="text" value={task} onChange={event => { const updated = [...newTemplateTasks]; updated[index] = event.target.value; setNewTemplateTasks(updated); }} placeholder={`Tarea ${index + 1}`} className="min-h-11 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" />
+                      <button type="button" onClick={() => { const updated = newTemplateTasks.filter((_, itemIndex) => itemIndex !== index); setNewTemplateTasks(updated.length ? updated : ['']); }} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-red-200 bg-red-50 text-red-700 hover:bg-red-100" aria-label={`Eliminar tarea ${index + 1}`}><Trash2 size={17} /></button>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
-
-            <div className="p-4 sm:p-6 lg:p-8 bg-zinc-50 border-t border-zinc-100 flex flex-col sm:flex-row gap-3 sm:gap-4">
-              <button
-                onClick={resetTemplateForm}
-                className="flex-1 py-4 bg-white border border-zinc-200 text-zinc-600 rounded-2xl font-bold text-sm hover:bg-zinc-100 transition-all"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleCreateTemplate}
-                disabled={!newTemplateName || newTemplateTasks.filter(t => t.trim()).length === 0}
-                className="flex-1 py-4 bg-zinc-900 text-white rounded-2xl font-bold text-sm hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200 disabled:opacity-50"
-              >
-                {editingTemplateId ? 'Actualizar Plantilla' : 'Guardar Plantilla'}
-              </button>
+            <div className="grid gap-3 border-t border-slate-200 bg-slate-50 p-4 sm:grid-cols-2 sm:p-5">
+              <button type="button" onClick={resetTemplateForm} disabled={savingTemplate} className="min-h-12 rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50">Cancelar</button>
+              <button type="button" onClick={handleCreateTemplate} disabled={!newTemplateName.trim() || newTemplateTasks.every(task => !task.trim()) || savingTemplate} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50">{savingTemplate && <Loader2 size={17} className="animate-spin" />}{savingTemplate ? 'Guardando...' : editingTemplateId ? 'Actualizar plantilla' : 'Guardar plantilla'}</button>
             </div>
+          </motion.div>
+        </div>
+      )}
+
+      {deletingTemplateId !== null && (
+        <div className="fixed inset-0 z-[75] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+          <motion.div initial={{ opacity: 0, y: 25 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md rounded-t-[28px] bg-white p-5 shadow-2xl sm:rounded-[28px] sm:p-6">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-red-50 text-red-700"><Trash2 size={25} /></div>
+            <h2 className="mt-4 text-xl font-black text-slate-900">Eliminar plantilla</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-500">La plantilla dejará de estar disponible para iniciar nuevos controles. Esta acción no afecta los controles históricos.</p>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => setDeletingTemplateId(null)} className="min-h-12 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700">Cancelar</button><button type="button" onClick={handleDeleteTemplate} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-3 text-sm font-bold text-white hover:bg-red-700"><Trash2 size={17} /> Eliminar</button></div>
           </motion.div>
         </div>
       )}
