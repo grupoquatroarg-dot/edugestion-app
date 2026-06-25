@@ -1,25 +1,25 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  DollarSign, 
-  TrendingUp, 
-  Package, 
-  Activity, 
-  Users, 
-  ShoppingCart, 
-  AlertTriangle, 
-  Clock, 
-  Map, 
-  ChevronRight, 
-  ArrowUpRight, 
+import React, { useEffect, useState } from 'react';
+import {
+  Activity,
+  AlertTriangle,
   ArrowDownRight,
-  Filter,
-  X,
-  Settings,
+  ArrowUpRight,
+  BarChart3,
+  ChevronRight,
+  CircleDollarSign,
+  Clock,
+  DollarSign,
   Loader2,
-  RefreshCw
+  Map,
+  Package,
+  RefreshCw,
+  ShoppingCart,
+  TrendingUp,
+  Users,
+  X,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
-import { unwrapResponse, apiFetch } from '../utils/api';
+import { AnimatePresence, motion } from 'motion/react';
+import { apiFetch, unwrapResponse } from '../utils/api';
 
 interface DashboardSummary {
   finanzas: {
@@ -38,7 +38,13 @@ interface DashboardSummary {
     dia: number;
     topClientes: { nombre_cliente: string; total: number }[];
     topProductos: { name: string; total_qty: number }[];
-    topProductosRentables: { producto: string; ventas: number; costo: number; ganancia: number; margen: number }[];
+    topProductosRentables: {
+      producto: string;
+      ventas: number;
+      costo: number;
+      ganancia: number;
+      margen: number;
+    }[];
     pedidosClientesPendientes: number;
     pedidosClientesEsperandoStock: number;
     pedidosClientesListosEntrega: number;
@@ -58,74 +64,131 @@ interface DashboardSummary {
   };
 }
 
+type DetailModal = {
+  type: string;
+  title: string;
+  data: any[];
+};
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat('es-AR', {
+    style: 'currency',
+    currency: 'ARS',
+    maximumFractionDigits: 2,
+  }).format(Number(value) || 0);
+
+const formatDate = (value: string | null | undefined) => {
+  if (!value) return 'Sin fecha';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Sin fecha' : date.toLocaleDateString('es-AR');
+};
+
+const formatDateTime = (value: string | null | undefined) => {
+  if (!value) return 'Sin fecha';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Sin fecha' : date.toLocaleString('es-AR');
+};
+
 export default function Dashboard() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [detailModal, setDetailModal] = useState<{ type: string; title: string; data: any[] } | null>(null);
+  const [detailModal, setDetailModal] = useState<DetailModal | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState('');
+  const [updatingMinStockId, setUpdatingMinStockId] = useState<number | null>(null);
   const [cobrarFilter, setCobrarFilter] = useState<number | 'all'>(30);
 
   useEffect(() => {
-    fetchSummary();
+    void fetchSummary(true);
   }, []);
 
-  const fetchSummary = async () => {
-    setLoading(true);
+  const fetchSummary = async (initial = false) => {
+    if (initial || !summary) setLoading(true);
+    else setRefreshing(true);
     setError(null);
 
     try {
-      const res = await apiFetch('/api/dashboard/summary');
-      const body = await res.json();
+      const response = await apiFetch('/api/dashboard/summary');
+      const body = await response.json();
       const data = unwrapResponse<DashboardSummary>(body);
 
       if (!data || typeof data !== 'object') {
-        throw new Error('La respuesta del dashboard no contiene datos válidos');
+        throw new Error('La respuesta del Dashboard no contiene datos válidos.');
       }
 
       setSummary(data);
-    } catch (error) {
-      console.error("Error fetching dashboard summary:", error);
-      setError("Error al cargar el resumen del dashboard");
+    } catch (fetchError: any) {
+      console.error('Error fetching dashboard summary:', fetchError);
+      setError(fetchError?.message || 'No se pudo cargar el resumen del Dashboard.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  const openDetail = async (type: string, title: string, params: any = {}) => {
+  const openDetail = async (type: string, title: string, params: Record<string, string | number> = {}) => {
+    setDetailModal({ type, title, data: [] });
+    setDetailLoading(true);
+    setDetailError('');
+
     try {
       let url = `/api/dashboard/${type}`;
       if (Object.keys(params).length > 0) {
-        const query = new URLSearchParams(params).toString();
-        url += `?${query}`;
+        url += `?${new URLSearchParams(
+          Object.entries(params).reduce<Record<string, string>>((acc, [key, value]) => {
+            acc[key] = String(value);
+            return acc;
+          }, {})
+        ).toString()}`;
       }
-      const res = await apiFetch(url);
-      const body = await res.json();
-      const data = unwrapResponse(body);
-      setDetailModal({ type, title, data });
-    } catch (error) {
-      console.error(`Error fetching detail for ${type}:`, error);
+
+      const response = await apiFetch(url);
+      const body = await response.json();
+      const data = unwrapResponse<any[]>(body);
+      setDetailModal({ type, title, data: Array.isArray(data) ? data : [] });
+    } catch (detailFetchError: any) {
+      console.error(`Error fetching detail for ${type}:`, detailFetchError);
+      setDetailError(detailFetchError?.message || 'No se pudo cargar este detalle.');
+    } finally {
+      setDetailLoading(false);
     }
   };
 
   const handleUpdateMinStock = async (productId: number, newMin: number) => {
+    if (!Number.isFinite(newMin) || newMin < 0) {
+      setDetailError('El stock mínimo debe ser un número igual o mayor que cero.');
+      return;
+    }
+
+    setUpdatingMinStockId(productId);
+    setDetailError('');
+
     try {
-      const res = await apiFetch(`/api/products/${productId}/min-stock`, {
+      const response = await apiFetch(`/api/products/${productId}/min-stock`, {
         method: 'POST',
-        body: JSON.stringify({ stock_minimo: newMin })
+        body: JSON.stringify({ stock_minimo: newMin }),
       });
-      const body = await res.json();
+      const body = await response.json();
       unwrapResponse(body);
 
-      // Refresh critical stock list if modal is open
       if (detailModal?.type === 'stock-critico') {
-        const resDetail = await apiFetch('/api/dashboard/stock-critico');
-        const bodyDetail = await resDetail.json();
-        const data = unwrapResponse(bodyDetail);
-        setDetailModal({ ...detailModal, data });
+        const detailResponse = await apiFetch('/api/dashboard/stock-critico');
+        const detailBody = await detailResponse.json();
+        const data = unwrapResponse<any[]>(detailBody);
+        setDetailModal({
+          ...detailModal,
+          data: Array.isArray(data) ? data : [],
+        });
       }
-      fetchSummary();
-    } catch (error) {
-      console.error("Error updating min stock:", error);
+
+      await fetchSummary();
+    } catch (updateError: any) {
+      console.error('Error updating min stock:', updateError);
+      setDetailError(updateError?.message || 'No se pudo actualizar el stock mínimo.');
+    } finally {
+      setUpdatingMinStockId(null);
     }
   };
 
@@ -135,32 +198,25 @@ export default function Dashboard() {
 
   if (error || !summary) {
     return (
-      <div className="min-h-full bg-zinc-50 p-4 sm:p-6 lg:p-8">
-        <div className="max-w-7xl mx-auto">
-          <header>
-            <h1 className="text-2xl sm:text-3xl md:text-4xl font-black text-zinc-900 tracking-tight">DASHBOARD</h1>
-            <p className="text-sm md:text-base text-zinc-500 font-medium">Indicadores clave del negocio en tiempo real</p>
-          </header>
-
+      <div className="h-full overflow-y-auto bg-slate-50 p-3 sm:p-5 lg:p-7 custom-scrollbar">
+        <div className="mx-auto flex min-h-full max-w-7xl items-center justify-center">
           <div
             role="alert"
-            className="mt-8 min-h-[360px] bg-white border border-zinc-200 rounded-3xl sm:rounded-[40px] shadow-sm flex flex-col items-center justify-center text-center gap-4 p-6"
+            className="w-full max-w-2xl rounded-[2rem] border border-amber-200 bg-white p-6 text-center shadow-xl shadow-slate-200/50 sm:p-10"
           >
-            <div className="w-16 h-16 rounded-2xl bg-amber-50 flex items-center justify-center">
-              <AlertTriangle size={32} className="text-amber-500" />
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-50 text-amber-600">
+              <AlertTriangle size={32} />
             </div>
-            <div className="space-y-1">
-              <h2 className="text-lg sm:text-xl font-black text-zinc-900">No pudimos cargar el Dashboard</h2>
-              <p className="text-sm text-zinc-500 font-medium max-w-md">
-                {error || 'No se pudo cargar el resumen. Revisá la conexión e intentá nuevamente.'}
-              </p>
-            </div>
+            <h1 className="mt-5 text-xl font-black text-slate-950 sm:text-2xl">No pudimos cargar el Dashboard</h1>
+            <p className="mx-auto mt-2 max-w-lg text-sm font-medium leading-6 text-slate-500">
+              {error || 'Revisá la conexión e intentá nuevamente.'}
+            </p>
             <button
               type="button"
-              onClick={fetchSummary}
-              className="inline-flex items-center gap-2 px-5 py-3 bg-zinc-900 text-white rounded-xl font-bold uppercase tracking-widest text-xs hover:bg-zinc-800 transition-colors"
+              onClick={() => void fetchSummary(true)}
+              className="mt-6 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-950 px-5 py-3 text-xs font-black uppercase tracking-wider text-white transition hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-200"
             >
-              <RefreshCw size={16} />
+              <RefreshCw size={17} />
               Reintentar
             </button>
           </div>
@@ -169,655 +225,381 @@ export default function Dashboard() {
     );
   }
 
-  const formatCurrency = (val: number) => 
-    new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(val);
+  const activeCustomerOrders =
+    (summary.ventas.pedidosClientesPendientes || 0) +
+    (summary.ventas.pedidosClientesEsperandoStock || 0) +
+    (summary.ventas.pedidosClientesListosEntrega || 0);
+
+  const currentMonth = summary.ventas.mes.total || 0;
+  const previousMonth = summary.ventas.mes.prevTotal || 0;
+  const monthlyDifference = previousMonth === 0 ? (currentMonth > 0 ? 100 : 0) : ((currentMonth - previousMonth) / previousMonth) * 100;
 
   return (
-    <div className="h-full overflow-y-auto bg-zinc-50 p-4 sm:p-6 lg:p-8 custom-scrollbar">
-      <div className="max-w-7xl mx-auto space-y-6 sm:space-y-8 lg:space-y-12">
-        <header>
-          <h1 className="text-2xl sm:text-3xl md:text-4xl font-black text-zinc-900 tracking-tight">DASHBOARD</h1>
-          <p className="text-sm md:text-base text-zinc-500 font-medium">Indicadores clave del negocio en tiempo real</p>
+    <div className="h-full overflow-y-auto bg-slate-50 p-3 sm:p-5 lg:p-7 custom-scrollbar">
+      <div className="mx-auto max-w-[1500px] space-y-5 sm:space-y-7">
+        <header className="overflow-hidden rounded-[1.75rem] bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 p-5 text-white shadow-2xl shadow-slate-300/40 sm:p-7 lg:p-8">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-indigo-100">
+                <BarChart3 size={14} />
+                Vista ejecutiva
+              </div>
+              <h1 className="text-2xl font-black tracking-tight sm:text-3xl lg:text-4xl">Dashboard general</h1>
+              <p className="mt-2 max-w-2xl text-sm font-medium leading-6 text-slate-300 sm:text-base">
+                Ventas, finanzas, stock y operaciones reunidas en una vista clara para tomar decisiones rápidas.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => void fetchSummary()}
+              disabled={refreshing}
+              className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-xs font-black uppercase tracking-wider text-white transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+              aria-label="Actualizar indicadores del Dashboard"
+            >
+              {refreshing ? <Loader2 size={17} className="animate-spin" /> : <RefreshCw size={17} />}
+              {refreshing ? 'Actualizando…' : 'Actualizar datos'}
+            </button>
+          </div>
+
+          <div className="mt-6 grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 xl:grid-cols-4">
+            <HeroStat label="Ventas del mes" value={formatCurrency(summary.ventas.mes.total)} />
+            <HeroStat label="Ganancia del mes" value={formatCurrency(summary.finanzas.gananciaMes)} />
+            <HeroStat label="Stock valorizado" value={formatCurrency(summary.stock.valorizado)} />
+            <HeroStat label="Pedidos activos" value={String(activeCustomerOrders + summary.stock.pedidosPendientes)} />
+          </div>
         </header>
 
-        {/* FINANZAS */}
-        <section className="space-y-6">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-zinc-900 rounded-xl flex items-center justify-center text-white">
-              <DollarSign size={20} />
-            </div>
-            <h2 className="text-xl font-black text-zinc-900 uppercase tracking-widest">Finanzas</h2>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6">
-            <DashboardCard 
-              title="Cuentas a Cobrar"
-              value={formatCurrency(summary?.finanzas?.cuentasCobrar ?? 0)}
+        <DashboardSection
+          icon={<CircleDollarSign size={20} />}
+          title="Finanzas"
+          description="Saldos pendientes y resultado económico del mes."
+          iconClass="bg-indigo-600 text-white"
+        >
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
+            <DashboardCard
+              title="Cuentas a cobrar"
+              value={formatCurrency(summary.finanzas.cuentasCobrar)}
               subtitle="Deuda total de clientes"
-              icon={<Users className="text-blue-600" />}
-              onClick={() => openDetail('cuentas-cobrar', 'Cuentas a Cobrar', { days: cobrarFilter })}
+              icon={<Users className="text-indigo-600" />}
+              onClick={() => void openDetail('cuentas-cobrar', 'Cuentas a cobrar', { days: cobrarFilter })}
               footer={
-                <div className="flex gap-2 mt-4" onClick={(e) => e.stopPropagation()}>
-                  {[7, 15, 30, 'all'].map(d => (
-                    <button 
-                      key={d}
-                      onClick={() => setCobrarFilter(d as any)}
-                      className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase transition-all ${cobrarFilter === d ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-400 hover:bg-zinc-200'}`}
+                <div className="mt-4 grid grid-cols-4 gap-2" onClick={(event) => event.stopPropagation()}>
+                  {[7, 15, 30, 'all'].map((days) => (
+                    <button
+                      type="button"
+                      key={days}
+                      onClick={() => setCobrarFilter(days as number | 'all')}
+                      className={`min-h-9 rounded-lg px-2 text-[10px] font-black uppercase transition ${
+                        cobrarFilter === days
+                          ? 'bg-slate-950 text-white'
+                          : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                      }`}
                     >
-                      {d === 'all' ? 'Todas' : `${d}d`}
+                      {days === 'all' ? 'Todas' : `${days}d`}
                     </button>
                   ))}
                 </div>
               }
             />
-            <DashboardCard 
+            <DashboardCard
               title="Cuentas a pagar"
-              value={formatCurrency(summary?.finanzas?.cuentasPagar ?? 0)}
+              value={formatCurrency(summary.finanzas.cuentasPagar)}
               subtitle="Deuda total a proveedores"
               icon={<ShoppingCart className="text-amber-600" />}
-              onClick={() => openDetail('cuentas-pagar', 'Cuentas a Pagar Proveedores')}
+              onClick={() => void openDetail('cuentas-pagar', 'Cuentas a pagar a proveedores')}
             />
-            <DashboardCard 
+            <DashboardCard
               title="Ganancia del mes"
-              value={formatCurrency(summary?.finanzas?.gananciaMes ?? 0)}
-              subtitle="Ventas - Costos (Mes actual)"
+              value={formatCurrency(summary.finanzas.gananciaMes)}
+              subtitle="Ventas menos costos del mes actual"
               icon={<TrendingUp className="text-emerald-600" />}
-              onClick={() => openDetail('ganancia-mes-detalle', 'Ganancia del Mes')}
+              onClick={() => void openDetail('ganancia-mes-detalle', 'Ganancia del mes')}
               trend={{
-                value: (summary?.finanzas?.gananciaPrevMes ?? 0) > 0 
-                  ? (((summary?.finanzas?.gananciaMes ?? 0) - (summary?.finanzas?.gananciaPrevMes ?? 0)) / (summary?.finanzas?.gananciaPrevMes ?? 1) * 100).toFixed(1) + '%'
-                  : 'N/A',
-                isUp: (summary?.finanzas?.gananciaMes ?? 0) >= (summary?.finanzas?.gananciaPrevMes ?? 0)
+                value:
+                  summary.finanzas.gananciaPrevMes > 0
+                    ? `${(
+                        ((summary.finanzas.gananciaMes - summary.finanzas.gananciaPrevMes) /
+                          summary.finanzas.gananciaPrevMes) *
+                        100
+                      ).toFixed(1)}%`
+                    : 'N/A',
+                isUp: summary.finanzas.gananciaMes >= summary.finanzas.gananciaPrevMes,
               }}
             />
           </div>
-        </section>
+        </DashboardSection>
 
-        {/* VENTAS */}
-        <section className="space-y-6">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-zinc-900 rounded-xl flex items-center justify-center text-white">
-              <ShoppingCart size={20} />
-            </div>
-            <h2 className="text-xl font-black text-zinc-900 uppercase tracking-widest">Ventas</h2>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-6">
-            <DashboardCard 
-              title="Ventas del Mes"
-              value={formatCurrency(summary?.ventas?.mes?.total ?? 0)}
-              subtitle={`${summary?.ventas?.mes?.cantidad ?? 0} ventas realizadas`}
+        <DashboardSection
+          icon={<ShoppingCart size={20} />}
+          title="Ventas"
+          description="Actividad comercial y seguimiento de pedidos del portal."
+          iconClass="bg-emerald-600 text-white"
+        >
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-4">
+            <DashboardCard
+              title="Ventas del mes"
+              value={formatCurrency(summary.ventas.mes.total)}
+              subtitle={`${summary.ventas.mes.cantidad} ventas realizadas`}
               icon={<Activity className="text-indigo-600" />}
-              onClick={() => openDetail('ventas-mes-detalle', 'Ventas del Mes')}
+              onClick={() => void openDetail('ventas-mes-detalle', 'Ventas del mes')}
               footer={
-                <p className="text-[10px] font-bold text-zinc-400 uppercase mt-4">
-                  Ticket Promedio: {formatCurrency(summary?.ventas?.mes?.ticketPromedio ?? 0)}
+                <p className="mt-4 break-words text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  Ticket promedio: {formatCurrency(summary.ventas.mes.ticketPromedio)}
                 </p>
               }
             />
-            <DashboardCard 
-              title="Ventas del Día"
-              value={formatCurrency(summary?.ventas?.dia ?? 0)}
+            <DashboardCard
+              title="Ventas del día"
+              value={formatCurrency(summary.ventas.dia)}
               subtitle="Total facturado hoy"
-              icon={<Clock className="text-zinc-600" />}
+              icon={<Clock className="text-slate-600" />}
             />
-            <DashboardCard 
-              title="Pedidos de Clientes"
-              value={(
-                (summary?.ventas?.pedidosClientesPendientes ?? 0) +
-                (summary?.ventas?.pedidosClientesEsperandoStock ?? 0) +
-                (summary?.ventas?.pedidosClientesListosEntrega ?? 0)
-              ).toString()}
+            <DashboardCard
+              title="Pedidos de clientes"
+              value={String(activeCustomerOrders)}
               subtitle="Pedidos activos del portal"
               icon={<ShoppingCart className="text-emerald-600" />}
-              onClick={() => openDetail('pedidos-clientes', 'Seguimiento de Pedidos de Clientes')}
-              highlight={
-                (summary?.ventas?.pedidosClientesPendientes ?? 0) +
-                (summary?.ventas?.pedidosClientesEsperandoStock ?? 0) +
-                (summary?.ventas?.pedidosClientesListosEntrega ?? 0) > 0
-              }
+              onClick={() => void openDetail('pedidos-clientes', 'Seguimiento de pedidos de clientes')}
+              highlight={activeCustomerOrders > 0}
               footer={
-                <div className="grid grid-cols-3 gap-2 mt-4 text-center">
-                  <div>
-                    <p className="text-[9px] font-black text-zinc-400 uppercase">Aprobar</p>
-                    <p className="text-sm font-black text-amber-600">{summary?.ventas?.pedidosClientesPendientes ?? 0}</p>
-                  </div>
-                  <div>
-                    <p className="text-[9px] font-black text-zinc-400 uppercase">Stock</p>
-                    <p className="text-sm font-black text-orange-600">{summary?.ventas?.pedidosClientesEsperandoStock ?? 0}</p>
-                  </div>
-                  <div>
-                    <p className="text-[9px] font-black text-zinc-400 uppercase">Entregar</p>
-                    <p className="text-sm font-black text-blue-600">{summary?.ventas?.pedidosClientesListosEntrega ?? 0}</p>
-                  </div>
+                <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                  <MiniStatus label="Aprobar" value={summary.ventas.pedidosClientesPendientes} className="text-amber-700" />
+                  <MiniStatus label="Stock" value={summary.ventas.pedidosClientesEsperandoStock} className="text-orange-700" />
+                  <MiniStatus label="Entregar" value={summary.ventas.pedidosClientesListosEntrega} className="text-blue-700" />
                 </div>
               }
             />
-            <DashboardCard 
-              title="Comparativo Mensual"
-              value={(() => {
-                const current = summary?.ventas?.mes?.total ?? 0;
-                const prev = summary?.ventas?.mes?.prevTotal ?? 0;
-                if (prev === 0) return current > 0 ? '+100%' : '0%';
-                const diff = ((current - prev) / prev) * 100;
-                return `${diff > 0 ? '+' : ''}${diff.toFixed(1)}%`;
-              })()}
-              subtitle="vs. Mes Anterior"
-              icon={(() => {
-                const diff = (summary?.ventas?.mes?.total ?? 0) - (summary?.ventas?.mes?.prevTotal ?? 0);
-                return diff >= 0 ? <TrendingUp className="text-emerald-600" /> : <TrendingUp className="text-red-600 rotate-180" />;
-              })()}
+            <DashboardCard
+              title="Comparativo mensual"
+              value={`${monthlyDifference > 0 ? '+' : ''}${monthlyDifference.toFixed(1)}%`}
+              subtitle="Respecto del mes anterior"
+              icon={
+                monthlyDifference >= 0 ? (
+                  <TrendingUp className="text-emerald-600" />
+                ) : (
+                  <TrendingUp className="rotate-180 text-red-600" />
+                )
+              }
               footer={
-                <div className="flex flex-col gap-1 mt-4">
-                  <p className="text-[10px] font-bold text-zinc-400 uppercase">
-                    Mes Actual: {formatCurrency(summary?.ventas?.mes?.total ?? 0)}
-                  </p>
-                  <p className="text-[10px] font-bold text-zinc-400 uppercase">
-                    Mes Anterior: {formatCurrency(summary?.ventas?.mes?.prevTotal ?? 0)}
-                  </p>
+                <div className="mt-4 space-y-1 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  <p className="break-words">Actual: {formatCurrency(currentMonth)}</p>
+                  <p className="break-words">Anterior: {formatCurrency(previousMonth)}</p>
                 </div>
               }
             />
-            <div className="bg-white p-4 sm:p-6 md:p-8 rounded-3xl md:rounded-[40px] border border-zinc-200 shadow-sm col-span-1 sm:col-span-2">
-              <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-6">Top Clientes del Mes</h3>
-              <div className="space-y-4">
-                {(summary?.ventas?.topClientes ?? []).map((c, i) => (
-                  <div key={i} className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs font-black text-zinc-300">0{i+1}</span>
-                      <span className="text-sm font-bold text-zinc-900 break-words">{c.nombre_cliente}</span>
-                    </div>
-                    <span className="text-sm font-black text-zinc-900 font-mono">{formatCurrency(c.total)}</span>
-                  </div>
-                ))}
-                {(summary?.ventas?.topClientes ?? []).length === 0 && <p className="text-sm text-zinc-400 italic">Sin datos este mes</p>}
-              </div>
-            </div>
           </div>
-        </section>
 
-        {/* STOCK */}
-        <section className="space-y-6">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-zinc-900 rounded-xl flex items-center justify-center text-white">
-              <Package size={20} />
-            </div>
-            <h2 className="text-xl font-black text-zinc-900 uppercase tracking-widest">Stock</h2>
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <RankingCard
+              title="Top clientes del mes"
+              icon={<Users size={18} />}
+              emptyMessage="Todavía no hay ventas de clientes este mes."
+              items={summary.ventas.topClientes.map((client, index) => ({
+                label: client.nombre_cliente,
+                value: formatCurrency(client.total),
+                position: index + 1,
+              }))}
+            />
+            <RankingCard
+              title="Productos más vendidos"
+              icon={<Package size={18} />}
+              emptyMessage="Todavía no hay productos vendidos este mes."
+              items={summary.ventas.topProductos.map((product, index) => ({
+                label: product.name,
+                value: `${product.total_qty} un.`,
+                position: index + 1,
+              }))}
+            />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6">
-            <DashboardCard 
+        </DashboardSection>
+
+        <DashboardSection
+          icon={<Package size={20} />}
+          title="Stock"
+          description="Valorización, faltantes y pedidos a proveedor."
+          iconClass="bg-amber-500 text-white"
+        >
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
+            <DashboardCard
               title="Valor del stock"
-              value={formatCurrency(summary?.stock?.valorizado ?? 0)}
-              subtitle="Costo total de mercadería"
+              value={formatCurrency(summary.stock.valorizado)}
+              subtitle="Costo total de la mercadería"
               icon={<DollarSign className="text-emerald-600" />}
-              onClick={() => openDetail('stock-valorizado-detalle', 'Valor del Stock')}
+              onClick={() => void openDetail('stock-valorizado-detalle', 'Valor del stock')}
             />
-            <DashboardCard 
+            <DashboardCard
               title="Stock crítico"
-              value={(summary?.stock?.critico ?? 0).toString()}
-              subtitle="Productos bajo stock mínimo"
+              value={String(summary.stock.critico)}
+              subtitle="Productos en o debajo del mínimo"
               icon={<AlertTriangle className="text-red-600" />}
-              onClick={() => openDetail('stock-critico', 'Productos con Stock Crítico')}
-              highlight={(summary?.stock?.critico ?? 0) > 0}
+              onClick={() => void openDetail('stock-critico', 'Productos con stock crítico')}
+              highlight={summary.stock.critico > 0}
             />
-            <DashboardCard 
+            <DashboardCard
               title="Pedidos pendientes"
-              value={(summary?.stock?.pedidosPendientes ?? 0).toString()}
+              value={String(summary.stock.pedidosPendientes)}
               subtitle="Pedidos a proveedor sin recibir"
               icon={<Clock className="text-amber-600" />}
-              onClick={() => openDetail('pedidos-pendientes', 'Pedidos Pendientes')}
-              highlight={(summary?.stock?.pedidosPendientes ?? 0) > 0}
+              onClick={() => void openDetail('pedidos-pendientes', 'Pedidos pendientes a proveedor')}
+              highlight={summary.stock.pedidosPendientes > 0}
             />
-            <div className="bg-white p-4 sm:p-6 md:p-8 rounded-3xl md:rounded-[40px] border border-zinc-200 shadow-sm">
-              <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-6">Productos Más Vendidos</h3>
-              <div className="space-y-4">
-                {(summary?.ventas?.topProductos ?? []).map((p, i) => (
-                  <div key={i} className="flex items-center justify-between">
-                    <span className="text-sm font-bold text-zinc-900 truncate pr-4">{p.name}</span>
-                    <span className="text-sm font-black text-zinc-400 shrink-0">{p.total_qty} un.</span>
-                  </div>
-                ))}
-                {(summary?.ventas?.topProductos ?? []).length === 0 && (
-                  <div className="py-4 text-center">
-                    <Package size={28} className="mx-auto text-zinc-200 mb-2" />
-                    <p className="text-sm font-medium text-zinc-400">No hay productos vendidos este mes.</p>
-                  </div>
-                )}
-              </div>
-            </div>
           </div>
-        </section>
+        </DashboardSection>
 
-        {/* OPERACIONES */}
-        <section className="space-y-6">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-zinc-900 rounded-xl flex items-center justify-center text-white">
-              <Activity size={20} />
-            </div>
-            <h2 className="text-xl font-black text-zinc-900 uppercase tracking-widest">Operaciones</h2>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6">
-            <DashboardCard 
-              title="Pedidos Pendientes"
-              value={(summary?.stock?.pedidosPendientes ?? 0).toString()}
-              subtitle="Órdenes a proveedor activas"
+        <DashboardSection
+          icon={<Activity size={20} />}
+          title="Operaciones"
+          description="Seguimiento de visitas, pedidos y alertas comerciales."
+          iconClass="bg-blue-600 text-white"
+        >
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
+            <DashboardCard
+              title="Pedidos a proveedor"
+              value={String(summary.stock.pedidosPendientes)}
+              subtitle="Órdenes activas pendientes"
               icon={<ShoppingCart className="text-amber-600" />}
-              onClick={() => openDetail('pedidos-pendientes', 'Pedidos Pendientes a Proveedor')}
+              onClick={() => void openDetail('pedidos-pendientes', 'Pedidos pendientes a proveedor')}
             />
-            <DashboardCard 
-              title="Ruta del Día"
-              value={`${summary?.operaciones?.rutaDia?.visitados ?? 0}/${summary?.operaciones?.rutaDia?.planificados ?? 0}`}
+            <DashboardCard
+              title="Ruta del día"
+              value={`${summary.operaciones.rutaDia.visitados}/${summary.operaciones.rutaDia.planificados}`}
               subtitle="Clientes visitados hoy"
               icon={<Map className="text-blue-600" />}
               footer={
-                <p className="text-[10px] font-bold text-zinc-400 uppercase mt-4">
-                  Ventas realizadas: {summary?.operaciones?.rutaDia?.ventas ?? 0}
+                <p className="mt-4 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  Ventas realizadas: {summary.operaciones.rutaDia.ventas}
                 </p>
               }
             />
-            <DashboardCard 
-              title="Alertas de Deuda"
-              value={(summary?.operaciones?.alertasDeuda ?? 0).toString()}
-              subtitle="Clientes con deuda > 7 días"
+            <DashboardCard
+              title="Alertas de deuda"
+              value={String(summary.operaciones.alertasDeuda)}
+              subtitle="Clientes con deuda mayor a 7 días"
               icon={<AlertTriangle className="text-red-600" />}
-              onClick={() => openDetail('deuda-vencida', 'Clientes con Deuda Vencida')}
-              highlight={(summary?.operaciones?.alertasDeuda ?? 0) > 0}
+              onClick={() => void openDetail('deuda-vencida', 'Clientes con deuda vencida')}
+              highlight={summary.operaciones.alertasDeuda > 0}
             />
           </div>
-        </section>
+        </DashboardSection>
 
-        {/* RENTABILIDAD */}
-        <section className="space-y-6">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white">
-              <TrendingUp size={20} />
-            </div>
-            <h2 className="text-xl font-black text-zinc-900 uppercase tracking-widest">Rentabilidad</h2>
-          </div>
-          <div className="bg-white p-4 sm:p-6 md:p-8 rounded-3xl md:rounded-[40px] border border-zinc-200 shadow-xl">
-            <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
-              <div>
-                <h3 className="text-xl font-black tracking-tight text-zinc-900">Productos más rentables del mes</h3>
-                <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mt-1">Basado en costo real PEPS</p>
+        <DashboardSection
+          icon={<TrendingUp size={20} />}
+          title="Rentabilidad"
+          description="Productos con mejor resultado según costo real PEPS."
+          iconClass="bg-emerald-600 text-white"
+        >
+          <div className="rounded-[1.75rem] border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+            {summary.ventas.topProductosRentables.length > 0 ? (
+              <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                {summary.ventas.topProductosRentables.map((product, index) => (
+                  <article
+                    key={`${product.producto}-${index}`}
+                    className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 transition hover:border-emerald-200 hover:bg-emerald-50/30"
+                  >
+                    <div className="flex min-w-0 items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Producto #{index + 1}</p>
+                        <h3 className="mt-1 break-words text-base font-black text-slate-950">{product.producto}</h3>
+                      </div>
+                      <span
+                        className={`shrink-0 rounded-lg px-2.5 py-1 text-xs font-black ${
+                          product.margen >= 30
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : product.margen >= 15
+                            ? 'bg-amber-100 text-amber-700'
+                            : 'bg-red-100 text-red-700'
+                        }`}
+                      >
+                        {product.margen.toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="mt-4 grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
+                      <DataTile label="Ventas" value={formatCurrency(product.ventas)} />
+                      <DataTile label="Costo" value={formatCurrency(product.costo)} />
+                      <DataTile label="Ganancia" value={formatCurrency(product.ganancia)} valueClass="text-emerald-700" />
+                    </div>
+                  </article>
+                ))}
               </div>
-            </div>
-            <div className="overflow-x-auto -mx-2 px-2">
-              <table className="w-full min-w-[640px] text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-zinc-50">
-                    <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Producto</th>
-                    <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Ventas</th>
-                    <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right text-zinc-400">Costo</th>
-                    <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Ganancia</th>
-                    <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Margen %</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-50">
-                  {(summary?.ventas?.topProductosRentables ?? []).map((p, i) => (
-                    <tr key={i} className="group">
-                      <td className="py-4">
-                        <span className="text-sm font-bold text-zinc-900 group-hover:text-emerald-600 transition-colors">{p.producto}</span>
-                      </td>
-                      <td className="py-4 text-right text-sm font-bold text-zinc-500 font-mono">${(p.ventas ?? 0).toFixed(2)}</td>
-                      <td className="py-4 text-right text-sm font-bold text-zinc-400 font-mono">${(p.costo ?? 0).toFixed(2)}</td>
-                      <td className="py-4 text-right text-sm font-black text-emerald-600 font-mono">${(p.ganancia ?? 0).toFixed(2)}</td>
-                      <td className="py-4 text-right">
-                        <span className={`text-xs font-black px-2 py-1 rounded-lg ${
-                          (p.margen ?? 0) >= 30 ? 'bg-emerald-50 text-emerald-600' : 
-                          (p.margen ?? 0) >= 15 ? 'bg-amber-50 text-amber-600' : 
-                          'bg-red-50 text-red-600'
-                        }`}>
-                          {(p.margen ?? 0).toFixed(1)}%
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                  {(summary?.ventas?.topProductosRentables ?? []).length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="py-8 text-center text-xs font-bold text-zinc-400 uppercase tracking-widest">
-                        No hay datos suficientes este mes
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            ) : (
+              <EmptyState
+                icon={<TrendingUp size={25} />}
+                title="Sin datos de rentabilidad"
+                description="Todavía no hay ventas suficientes para calcular productos rentables este mes."
+              />
+            )}
           </div>
-        </section>
+        </DashboardSection>
       </div>
 
-      {/* Detail Modal */}
       <AnimatePresence>
         {detailModal && (
-          <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 bg-zinc-900/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/65 p-0 backdrop-blur-sm sm:items-center sm:p-4">
             <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white rounded-2xl sm:rounded-[40px] w-full max-w-4xl max-h-[95dvh] sm:max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
+              initial={{ opacity: 0, y: 30, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 30, scale: 0.98 }}
+              className="flex max-h-[94dvh] w-full max-w-5xl flex-col overflow-hidden rounded-t-[2rem] bg-white shadow-2xl sm:max-h-[90dvh] sm:rounded-[2rem]"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="dashboard-detail-title"
             >
-              <div className="relative p-4 sm:p-6 md:p-8 pr-16 border-b border-zinc-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-zinc-50/50">
-                <div className="min-w-0">
-                  <h2 className="text-lg sm:text-2xl font-black text-zinc-900 leading-tight pr-2">{detailModal.title}</h2>
-                  <p className="text-xs sm:text-sm font-medium text-zinc-500">Desglose detallado de indicadores.</p>
-                </div>
+              <div className="relative border-b border-slate-200 bg-slate-50 px-4 py-5 pr-16 sm:px-6 sm:py-6">
+                <h2 id="dashboard-detail-title" className="break-words text-lg font-black text-slate-950 sm:text-2xl">
+                  {detailModal.title}
+                </h2>
+                <p className="mt-1 text-xs font-medium text-slate-500 sm:text-sm">Detalle actualizado del indicador seleccionado.</p>
+
                 {detailModal.type === 'cuentas-cobrar' && (
-                  <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-                    {[7, 15, 30, 'all'].map(d => (
-                      <button 
-                        key={d}
+                  <div className="mt-4 grid grid-cols-4 gap-2 sm:max-w-md">
+                    {[7, 15, 30, 'all'].map((days) => (
+                      <button
+                        type="button"
+                        key={days}
                         onClick={() => {
-                          setCobrarFilter(d as any);
-                          openDetail('cuentas-cobrar', 'Cuentas a Cobrar', { days: d });
+                          setCobrarFilter(days as number | 'all');
+                          void openDetail('cuentas-cobrar', 'Cuentas a cobrar', { days: days as string | number });
                         }}
-                        className={`flex-1 sm:flex-none px-3 sm:px-4 py-2 rounded-xl text-[10px] sm:text-xs font-bold uppercase transition-all shadow-sm border ${cobrarFilter === d ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-white text-zinc-400 border-zinc-100 hover:border-zinc-300'}`}
+                        className={`min-h-10 rounded-xl px-2 text-[10px] font-black uppercase transition sm:text-xs ${
+                          cobrarFilter === days
+                            ? 'bg-slate-950 text-white'
+                            : 'border border-slate-200 bg-white text-slate-500 hover:border-indigo-300'
+                        }`}
                       >
-                        {d === 'all' ? 'Todas' : `${d}d`}
+                        {days === 'all' ? 'Todas' : `${days}d`}
                       </button>
                     ))}
                   </div>
                 )}
+
                 <button
+                  type="button"
                   onClick={() => setDetailModal(null)}
                   aria-label="Cerrar detalle"
-                  className="absolute top-3 right-3 sm:top-5 sm:right-5 p-3 bg-white hover:bg-zinc-100 rounded-2xl transition-all text-zinc-500 hover:text-zinc-900 shadow-sm border border-zinc-100 z-10"
+                  title="Cerrar detalle"
+                  className="absolute right-3 top-3 flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:bg-slate-100 hover:text-slate-950 sm:right-5 sm:top-5"
                 >
-                  <X size={22} />
+                  <X size={21} />
                 </button>
               </div>
 
-              <div className="flex-1 overflow-auto p-4 sm:p-6 md:p-8 custom-scrollbar">
-                {detailModal.type === 'stock-valorizado-detalle' && (
-                  <table className="w-full min-w-[640px] text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-zinc-100">
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Producto</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">Stock</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Costo Unit.</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Valor Total</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-50">
-                      {detailModal.data.map((item, i) => (
-                        <tr key={i} className="hover:bg-zinc-50/50 transition-colors">
-                          <td className="py-4 font-bold text-zinc-900">{item.producto}</td>
-                          <td className="py-4 text-center font-mono text-zinc-600">{item.stock}</td>
-                          <td className="py-4 text-right font-mono text-zinc-400">{formatCurrency(item.costo)}</td>
-                          <td className="py-4 text-right font-black text-emerald-600 font-mono">
-                            {formatCurrency(item.valor_total)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-
-                {detailModal.type === 'ganancia-mes-detalle' && (
-                  <table className="w-full min-w-[640px] text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-zinc-100">
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Venta</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Costo</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Ganancia</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-50">
-                      {detailModal.data.map((item, i) => (
-                        <tr key={i} className="hover:bg-zinc-50/50 transition-colors">
-                          <td className="py-4 text-sm text-zinc-500">{new Date(item.fecha).toLocaleDateString()}</td>
-                          <td className="py-4 font-bold text-zinc-900">{item.cliente}</td>
-                          <td className="py-4 text-right font-mono text-zinc-600">{formatCurrency(item.venta)}</td>
-                          <td className="py-4 text-right font-mono text-zinc-400">{formatCurrency(item.costo)}</td>
-                          <td className="py-4 text-right font-black text-emerald-600 font-mono">
-                            {formatCurrency(item.ganancia)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-
-                {detailModal.type === 'pedidos-clientes' && (
-                  <div className="space-y-3">
-                    {detailModal.data.map((item, i) => {
-                      const statusLabel =
-                        item.estado === 'pendiente_aprobacion'
-                          ? 'Pendiente de aprobación'
-                          : item.stock_status === 'esperando_stock'
-                          ? 'Esperando reposición'
-                          : 'Listo para entregar';
-
-                      const statusClass =
-                        item.estado === 'pendiente_aprobacion'
-                          ? 'text-amber-600'
-                          : item.stock_status === 'esperando_stock'
-                          ? 'text-orange-600'
-                          : 'text-blue-600';
-
-                      return (
-                        <div key={i} className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-black text-zinc-900">Pedido #{item.numero_pedido} · {item.cliente}</p>
-                            <p className="text-xs text-zinc-400 font-bold">{new Date(item.fecha).toLocaleString('es-AR')} · {item.items} productos</p>
-                          </div>
-                          <div className="text-left sm:text-right">
-                            <p className="text-lg font-black text-zinc-900 font-mono">{formatCurrency(item.total_final)}</p>
-                            <p className={`text-[10px] font-black uppercase ${statusClass}`}>{statusLabel}</p>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {detailModal.data.length === 0 && (
-                      <p className="text-sm text-zinc-400 text-center py-8">No hay pedidos activos.</p>
-                    )}
+              <div className="flex-1 overflow-y-auto p-3 sm:p-5 lg:p-6 custom-scrollbar">
+                {detailLoading ? (
+                  <DetailLoadingState />
+                ) : detailError ? (
+                  <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-center">
+                    <AlertTriangle className="mx-auto text-red-600" size={28} />
+                    <p className="mt-3 text-sm font-black text-red-800">No se pudo cargar el detalle</p>
+                    <p className="mt-1 text-sm text-red-700">{detailError}</p>
                   </div>
-                )}
-
-                {detailModal.type === 'ventas-mes-detalle' && (
-                  <table className="w-full min-w-[640px] text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-zinc-100">
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Productos</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Forma de Pago</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Total</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-50">
-                      {detailModal.data.map((item, i) => (
-                        <tr key={i} className="hover:bg-zinc-50/50 transition-colors">
-                          <td className="py-4 text-sm text-zinc-500">{new Date(item.fecha).toLocaleDateString()}</td>
-                          <td className="py-4 font-bold text-zinc-900">{item.cliente}</td>
-                          <td className="py-4 text-xs text-zinc-500 max-w-xs truncate" title={item.productos}>
-                            {item.productos}
-                          </td>
-                          <td className="py-4 text-right text-xs font-bold uppercase text-zinc-400">
-                            {item.forma_pago}
-                          </td>
-                          <td className="py-4 text-right font-black text-zinc-900 font-mono">
-                            {formatCurrency(item.total)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-
-                {detailModal.type === 'cuentas-cobrar' && (
-                  <>
-                    <div className="sm:hidden space-y-3">
-                      {detailModal.data.length === 0 && (
-                        <div className="p-6 text-center text-sm text-zinc-400 bg-zinc-50 rounded-2xl border border-zinc-100">
-                          No hay cuentas a cobrar para el filtro seleccionado.
-                        </div>
-                      )}
-                      {detailModal.data.map((item, i) => (
-                        <div key={i} className="bg-white border border-zinc-100 rounded-2xl p-4 shadow-sm">
-                          <div className="flex items-start justify-between gap-3 mb-3">
-                            <div className="min-w-0">
-                              <p className="text-sm font-black text-zinc-900 break-words">{item.cliente}</p>
-                              <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 mt-1">
-                                {item.fecha_venta ? new Date(item.fecha_venta).toLocaleDateString() : 'Sin fecha'}
-                              </p>
-                            </div>
-                            <span className={`shrink-0 px-2 py-1 rounded-lg text-[10px] font-bold uppercase ${item.dias_atraso > 7 ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'}`}>
-                              {item.dias_atraso} días
-                            </span>
-                          </div>
-                          <div className="pt-3 border-t border-zinc-50 flex items-center justify-between">
-                            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Monto deuda</span>
-                            <span className="text-lg font-black text-red-600 font-mono">{formatCurrency(item.deuda)}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    <table className="hidden sm:table w-full min-w-[640px] text-left border-collapse">
-                      <thead>
-                        <tr className="border-b border-zinc-100">
-                          <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
-                          <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Monto Deuda</th>
-                          <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Fecha de Venta</th>
-                          <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Días Vencido</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-zinc-50">
-                        {detailModal.data.map((item, i) => (
-                          <tr key={i} className="hover:bg-zinc-50/50 transition-colors">
-                            <td className="py-4 font-bold text-zinc-900">{item.cliente}</td>
-                            <td className="py-4 text-right font-black text-red-600 font-mono">{formatCurrency(item.deuda)}</td>
-                            <td className="py-4 text-right text-sm text-zinc-500">
-                              {item.fecha_venta ? new Date(item.fecha_venta).toLocaleDateString() : 'N/A'}
-                            </td>
-                            <td className="py-4 text-right">
-                              <span className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase ${item.dias_atraso > 7 ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'}`}>
-                                {item.dias_atraso} días
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </>
-                )}
-
-                {detailModal.type === 'cuentas-pagar' && (
-                  <table className="w-full min-w-[640px] text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-zinc-100">
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Proveedor</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Monto</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Fecha</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Estado</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-50">
-                      {detailModal.data.map((item, i) => (
-                        <tr key={i} className="hover:bg-zinc-50/50 transition-colors">
-                          <td className="py-4 font-bold text-zinc-900">{item.proveedor}</td>
-                          <td className="py-4 text-right font-black text-amber-600 font-mono">{formatCurrency(item.monto)}</td>
-                          <td className="py-4 text-right text-sm text-zinc-500">{new Date(item.fecha).toLocaleDateString()}</td>
-                          <td className="py-4 text-right">
-                            <span className="px-2 py-1 rounded-full text-[10px] font-bold uppercase bg-amber-100 text-amber-700">
-                              {item.estado}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-
-                {detailModal.type === 'stock-critico' && (
-                  <table className="w-full min-w-[640px] text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-zinc-100">
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">producto</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">stock_actual</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-center">stock_minimo</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Acción</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-50">
-                      {detailModal.data.map((item, i) => (
-                        <tr key={i} className="hover:bg-zinc-50/50 transition-colors">
-                          <td className="py-4">
-                            <p className="font-bold text-zinc-900">{item.name}</p>
-                            <p className="text-[10px] text-zinc-400 font-mono">{item.codigo_unico}</p>
-                          </td>
-                          <td className="py-4 text-center">
-                            <span className="px-3 py-1 bg-red-50 text-red-600 rounded-full font-black font-mono">
-                              {item.stock}
-                            </span>
-                          </td>
-                          <td className="py-4 text-center">
-                            <input 
-                              type="number"
-                              defaultValue={item.stock_minimo}
-                              onBlur={(e) => handleUpdateMinStock(item.id, parseInt(e.target.value))}
-                              className="w-20 px-2 py-1 bg-zinc-100 border border-zinc-200 rounded-lg text-center font-bold outline-none focus:ring-2 focus:ring-zinc-900"
-                            />
-                          </td>
-                          <td className="py-4 text-right">
-                            <button className="p-2 text-zinc-400 hover:text-zinc-900 transition-colors">
-                              <Settings size={18} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-
-                {detailModal.type === 'pedidos-pendientes' && (
-                  <table className="w-full min-w-[640px] text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-zinc-100">
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Fecha</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Estado</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-50">
-                      {detailModal.data.map((item, i) => (
-                        <tr key={i} className="hover:bg-zinc-50/50 transition-colors">
-                          <td className="py-4 font-bold text-zinc-900">{item.cliente}</td>
-                          <td className="py-4 text-right text-sm text-zinc-500">{new Date(item.fecha).toLocaleDateString()}</td>
-                          <td className="py-4 text-right">
-                            <span className="px-2 py-1 bg-amber-50 text-amber-600 rounded-lg text-[10px] font-bold uppercase">
-                              {item.estado}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-
-                {detailModal.type === 'deuda-vencida' && (
-                  <table className="w-full min-w-[640px] text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-zinc-100">
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cliente</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Deuda</th>
-                        <th className="pb-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Días Atraso</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-50">
-                      {detailModal.data.map((item, i) => (
-                        <tr key={i} className="hover:bg-zinc-50/50 transition-colors">
-                          <td className="py-4 font-bold text-zinc-900">{item.cliente}</td>
-                          <td className="py-4 text-right font-black text-red-600 font-mono">{formatCurrency(item.deuda)}</td>
-                          <td className="py-4 text-right">
-                            <span className="px-2 py-1 bg-red-600 text-white rounded-lg text-[10px] font-bold uppercase">
-                              {item.dias_atraso} días
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                ) : (
+                  <DashboardDetailContent
+                    type={detailModal.type}
+                    data={detailModal.data}
+                    updatingMinStockId={updatingMinStockId}
+                    onUpdateMinStock={handleUpdateMinStock}
+                  />
                 )}
               </div>
             </motion.div>
@@ -828,49 +610,456 @@ export default function Dashboard() {
   );
 }
 
-function DashboardLoadingState() {
-  const cardGroups = [3, 4, 3, 3];
+function DashboardSection({
+  icon,
+  title,
+  description,
+  iconClass,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  iconClass: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-4">
+      <div className="flex min-w-0 items-start gap-3 px-1">
+        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl shadow-sm ${iconClass}`}>{icon}</div>
+        <div className="min-w-0">
+          <h2 className="text-lg font-black tracking-tight text-slate-950 sm:text-xl">{title}</h2>
+          <p className="mt-0.5 text-xs font-medium leading-5 text-slate-500 sm:text-sm">{description}</p>
+        </div>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function HeroStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur-sm">
+      <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">{label}</p>
+      <p className="mt-2 break-words text-lg font-black leading-tight text-white sm:text-xl">{value}</p>
+    </div>
+  );
+}
+
+function DashboardCard({
+  title,
+  value,
+  subtitle,
+  icon,
+  onClick,
+  trend,
+  footer,
+  highlight = false,
+}: {
+  title: string;
+  value: string;
+  subtitle: string;
+  icon: React.ReactNode;
+  onClick?: () => void;
+  trend?: { value: string; isUp: boolean };
+  footer?: React.ReactNode;
+  highlight?: boolean;
+}) {
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!onClick) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onClick();
+    }
+  };
 
   return (
-    <div
-      className="min-h-full overflow-y-auto bg-zinc-50 p-4 sm:p-6 lg:p-8 custom-scrollbar"
-      role="status"
-      aria-live="polite"
-      aria-busy="true"
+    <motion.div
+      whileHover={onClick ? { y: -2 } : undefined}
+      onClick={onClick}
+      onKeyDown={handleKeyDown}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      aria-label={onClick ? `Ver detalle de ${title}` : undefined}
+      className={`min-w-0 rounded-[1.5rem] border p-5 shadow-sm transition focus:outline-none focus:ring-4 focus:ring-indigo-100 sm:p-6 ${
+        onClick ? 'cursor-pointer hover:border-indigo-300 hover:shadow-lg' : ''
+      } ${highlight ? 'border-red-200 bg-red-50/60' : 'border-slate-200 bg-white'}`}
     >
-      <div className="max-w-7xl mx-auto space-y-6 sm:space-y-8 lg:space-y-10">
-        <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
-          <div>
-            <h1 className="text-2xl sm:text-3xl md:text-4xl font-black text-zinc-900 tracking-tight">DASHBOARD</h1>
-            <p className="text-sm md:text-base text-zinc-500 font-medium">Indicadores clave del negocio en tiempo real</p>
-          </div>
-          <div className="inline-flex items-center gap-2 self-start sm:self-auto px-4 py-2 bg-white border border-zinc-200 rounded-xl text-sm font-bold text-zinc-500 shadow-sm">
-            <Loader2 size={17} className="animate-spin text-zinc-900" />
-            Cargando datos…
-          </div>
-        </header>
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 shadow-inner">{icon}</div>
+        <div className="flex min-w-0 items-center gap-2">
+          {trend && (
+            <span
+              className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-black ${
+                trend.isUp ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+              }`}
+            >
+              {trend.isUp ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+              {trend.value}
+            </span>
+          )}
+          {onClick && <ChevronRight size={18} className="shrink-0 text-slate-300" />}
+        </div>
+      </div>
+      <p className="mt-5 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">{title}</p>
+      <p className="mt-1 break-words text-[clamp(1.45rem,5vw,2rem)] font-black leading-tight tracking-tight text-slate-950">{value}</p>
+      <p className="mt-2 text-xs font-medium leading-5 text-slate-500">{subtitle}</p>
+      {footer}
+    </motion.div>
+  );
+}
 
-        {cardGroups.map((cardCount, sectionIndex) => (
-          <section key={sectionIndex} className="space-y-4 sm:space-y-6 animate-pulse">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-zinc-200 rounded-xl" />
-              <div className="h-5 w-28 sm:w-36 bg-zinc-200 rounded-lg" />
+function MiniStatus({ label, value, className }: { label: string; value: number; className: string }) {
+  return (
+    <div className="min-w-0 rounded-xl bg-white/70 p-2">
+      <p className="truncate text-[9px] font-black uppercase tracking-wider text-slate-400">{label}</p>
+      <p className={`mt-1 text-base font-black ${className}`}>{value}</p>
+    </div>
+  );
+}
+
+function RankingCard({
+  title,
+  icon,
+  items,
+  emptyMessage,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  items: { label: string; value: string; position: number }[];
+  emptyMessage: string;
+}) {
+  return (
+    <div className="rounded-[1.5rem] border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <div className="flex items-center gap-2 text-slate-950">
+        {icon}
+        <h3 className="text-sm font-black uppercase tracking-wider">{title}</h3>
+      </div>
+      {items.length > 0 ? (
+        <div className="mt-5 space-y-2">
+          {items.map((item) => (
+            <div key={`${item.label}-${item.position}`} className="flex min-w-0 items-center gap-3 rounded-xl bg-slate-50 p-3">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-950 text-[10px] font-black text-white">
+                {String(item.position).padStart(2, '0')}
+              </span>
+              <p className="min-w-0 flex-1 break-words text-sm font-bold text-slate-800">{item.label}</p>
+              <p className="shrink-0 text-sm font-black text-slate-950">{item.value}</p>
             </div>
-            <div className={`grid grid-cols-1 sm:grid-cols-2 ${cardCount === 4 ? 'xl:grid-cols-4' : 'xl:grid-cols-3'} gap-4 sm:gap-6`}>
-              {Array.from({ length: cardCount }).map((_, cardIndex) => (
-                <div
-                  key={cardIndex}
-                  className="min-h-[180px] bg-white border border-zinc-200 rounded-3xl sm:rounded-[40px] p-5 sm:p-7 shadow-sm"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="space-y-4 flex-1">
-                      <div className="h-3 w-28 bg-zinc-200 rounded" />
-                      <div className="h-8 w-3/4 bg-zinc-200 rounded-lg" />
-                      <div className="h-3 w-2/3 bg-zinc-100 rounded" />
-                    </div>
-                    <div className="w-11 h-11 bg-zinc-100 rounded-2xl shrink-0" />
-                  </div>
-                  <div className="h-8 w-full bg-zinc-100 rounded-xl mt-7" />
+          ))}
+        </div>
+      ) : (
+        <EmptyState icon={icon} title="Sin información" description={emptyMessage} compact />
+      )}
+    </div>
+  );
+}
+
+function DataTile({ label, value, valueClass = 'text-slate-950' }: { label: string; value: string; valueClass?: string }) {
+  return (
+    <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-3">
+      <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">{label}</p>
+      <p className={`mt-1 break-words text-sm font-black ${valueClass}`}>{value}</p>
+    </div>
+  );
+}
+
+function EmptyState({
+  icon,
+  title,
+  description,
+  compact = false,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  compact?: boolean;
+}) {
+  return (
+    <div className={`text-center ${compact ? 'py-7' : 'rounded-2xl border border-dashed border-slate-300 bg-slate-50 py-10 px-4'}`}>
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">{icon}</div>
+      <p className="mt-3 text-sm font-black text-slate-700">{title}</p>
+      <p className="mx-auto mt-1 max-w-md text-xs font-medium leading-5 text-slate-500">{description}</p>
+    </div>
+  );
+}
+
+function DashboardDetailContent({
+  type,
+  data,
+  updatingMinStockId,
+  onUpdateMinStock,
+}: {
+  type: string;
+  data: any[];
+  updatingMinStockId: number | null;
+  onUpdateMinStock: (productId: number, value: number) => Promise<void>;
+}) {
+  if (data.length === 0) {
+    return (
+      <EmptyState
+        icon={<Activity size={24} />}
+        title="No hay información para mostrar"
+        description="No se encontraron registros para este indicador y el filtro seleccionado."
+      />
+    );
+  }
+
+  if (type === 'stock-valorizado-detalle') {
+    return (
+      <DetailGrid>
+        {data.map((item, index) => (
+          <DetailCard key={`${item.producto}-${index}`} title={item.producto} eyebrow="Producto">
+            <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
+              <DataTile label="Stock" value={String(item.stock ?? 0)} />
+              <DataTile label="Costo unitario" value={formatCurrency(item.costo)} />
+              <DataTile label="Valor total" value={formatCurrency(item.valor_total)} valueClass="text-emerald-700" />
+            </div>
+          </DetailCard>
+        ))}
+      </DetailGrid>
+    );
+  }
+
+  if (type === 'ganancia-mes-detalle') {
+    return (
+      <DetailGrid>
+        {data.map((item, index) => (
+          <DetailCard key={`${item.fecha}-${item.cliente}-${index}`} title={item.cliente} eyebrow={formatDate(item.fecha)}>
+            <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
+              <DataTile label="Venta" value={formatCurrency(item.venta)} />
+              <DataTile label="Costo" value={formatCurrency(item.costo)} />
+              <DataTile label="Ganancia" value={formatCurrency(item.ganancia)} valueClass="text-emerald-700" />
+            </div>
+          </DetailCard>
+        ))}
+      </DetailGrid>
+    );
+  }
+
+  if (type === 'pedidos-clientes') {
+    return (
+      <DetailGrid>
+        {data.map((item, index) => {
+          const statusLabel =
+            item.estado === 'pendiente_aprobacion'
+              ? 'Pendiente de aprobación'
+              : item.stock_status === 'esperando_stock'
+              ? 'Esperando reposición'
+              : 'Listo para entregar';
+          const statusClass =
+            item.estado === 'pendiente_aprobacion'
+              ? 'bg-amber-100 text-amber-800'
+              : item.stock_status === 'esperando_stock'
+              ? 'bg-orange-100 text-orange-800'
+              : 'bg-blue-100 text-blue-800';
+
+          return (
+            <DetailCard key={`${item.id}-${index}`} title={`Pedido #${item.numero_pedido}`} eyebrow={item.cliente}>
+              <div className="flex flex-col gap-3 min-[420px]:flex-row min-[420px]:items-end min-[420px]:justify-between">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-slate-500">{formatDateTime(item.fecha)} · {item.items} productos</p>
+                  <span className={`mt-2 inline-flex rounded-lg px-2.5 py-1 text-[10px] font-black uppercase ${statusClass}`}>
+                    {statusLabel}
+                  </span>
+                </div>
+                <p className="break-words text-xl font-black text-slate-950">{formatCurrency(item.total_final)}</p>
+              </div>
+            </DetailCard>
+          );
+        })}
+      </DetailGrid>
+    );
+  }
+
+  if (type === 'ventas-mes-detalle') {
+    return (
+      <DetailGrid>
+        {data.map((item, index) => (
+          <DetailCard key={`${item.fecha}-${item.cliente}-${index}`} title={item.cliente} eyebrow={formatDate(item.fecha)}>
+            <p className="break-words text-xs font-medium leading-5 text-slate-500">{item.productos || 'Sin detalle de productos'}</p>
+            <div className="mt-3 grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+              <DataTile label="Forma de pago" value={item.forma_pago || 'Sin informar'} />
+              <DataTile label="Total" value={formatCurrency(item.total)} valueClass="text-indigo-700" />
+            </div>
+          </DetailCard>
+        ))}
+      </DetailGrid>
+    );
+  }
+
+  if (type === 'cuentas-cobrar') {
+    return (
+      <DetailGrid>
+        {data.map((item, index) => (
+          <DetailCard key={`${item.cliente}-${index}`} title={item.cliente} eyebrow={formatDate(item.fecha_venta)}>
+            <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+              <DataTile label="Monto de deuda" value={formatCurrency(item.deuda)} valueClass="text-red-700" />
+              <DataTile label="Días vencido" value={`${item.dias_atraso ?? 0} días`} valueClass={(item.dias_atraso ?? 0) > 7 ? 'text-red-700' : 'text-amber-700'} />
+            </div>
+          </DetailCard>
+        ))}
+      </DetailGrid>
+    );
+  }
+
+  if (type === 'cuentas-pagar') {
+    return (
+      <DetailGrid>
+        {data.map((item, index) => (
+          <DetailCard key={`${item.proveedor}-${item.fecha}-${index}`} title={item.proveedor} eyebrow={formatDate(item.fecha)}>
+            <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+              <DataTile label="Monto pendiente" value={formatCurrency(item.monto)} valueClass="text-amber-700" />
+              <DataTile label="Estado" value={item.estado || 'Pendiente'} />
+            </div>
+          </DetailCard>
+        ))}
+      </DetailGrid>
+    );
+  }
+
+  if (type === 'stock-critico') {
+    return (
+      <DetailGrid>
+        {data.map((item, index) => (
+          <DetailCard key={`${item.id}-${index}`} title={item.name} eyebrow={item.codigo_unico || 'Sin código'}>
+            <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2">
+              <DataTile label="Stock actual" value={String(item.stock ?? 0)} valueClass="text-red-700" />
+              <label className="min-w-0 rounded-xl border border-slate-200 bg-white p-3">
+                <span className="block text-[9px] font-black uppercase tracking-wider text-slate-400">Stock mínimo</span>
+                <div className="mt-1 flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="0"
+                    defaultValue={item.stock_minimo}
+                    disabled={updatingMinStockId === item.id}
+                    onBlur={(event) => void onUpdateMinStock(item.id, Number(event.target.value))}
+                    className="min-h-10 min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-black text-slate-950 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:opacity-60"
+                    aria-label={`Stock mínimo de ${item.name}`}
+                  />
+                  {updatingMinStockId === item.id && <Loader2 size={17} className="shrink-0 animate-spin text-indigo-600" />}
+                </div>
+              </label>
+            </div>
+          </DetailCard>
+        ))}
+      </DetailGrid>
+    );
+  }
+
+  if (type === 'pedidos-pendientes') {
+    return (
+      <DetailGrid>
+        {data.map((item, index) => (
+          <DetailCard key={`${item.cliente}-${item.fecha}-${index}`} title={item.cliente || 'Pedido a proveedor'} eyebrow={formatDate(item.fecha)}>
+            <span className="inline-flex rounded-lg bg-amber-100 px-2.5 py-1 text-[10px] font-black uppercase text-amber-800">
+              {item.estado || 'Pendiente'}
+            </span>
+          </DetailCard>
+        ))}
+      </DetailGrid>
+    );
+  }
+
+  if (type === 'deuda-vencida') {
+    return (
+      <DetailGrid>
+        {data.map((item, index) => (
+          <DetailCard key={`${item.cliente}-${index}`} title={item.cliente} eyebrow="Cuenta corriente vencida">
+            <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+              <DataTile label="Deuda" value={formatCurrency(item.deuda)} valueClass="text-red-700" />
+              <DataTile label="Días de atraso" value={`${item.dias_atraso ?? 0} días`} valueClass="text-red-700" />
+            </div>
+          </DetailCard>
+        ))}
+      </DetailGrid>
+    );
+  }
+
+  return (
+    <EmptyState
+      icon={<Activity size={24} />}
+      title="Detalle no disponible"
+      description="Este indicador no tiene una vista de detalle configurada."
+    />
+  );
+}
+
+function DetailGrid({ children }: { children: React.ReactNode }) {
+  return <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">{children}</div>;
+}
+
+function DetailCard({
+  title,
+  eyebrow,
+  children,
+}: {
+  title: string;
+  eyebrow?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <article className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+      {eyebrow && <p className="break-words text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">{eyebrow}</p>}
+      <h3 className="mt-1 break-words text-base font-black text-slate-950">{title}</h3>
+      <div className="mt-4">{children}</div>
+    </article>
+  );
+}
+
+function DetailLoadingState() {
+  return (
+    <div className="space-y-3" role="status" aria-live="polite">
+      <div className="flex items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-bold text-indigo-700">
+        <Loader2 size={18} className="animate-spin" />
+        Cargando detalle…
+      </div>
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index} className="animate-pulse rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="h-3 w-24 rounded bg-slate-200" />
+            <div className="mt-3 h-5 w-2/3 rounded bg-slate-200" />
+            <div className="mt-5 grid grid-cols-2 gap-2">
+              <div className="h-16 rounded-xl bg-white" />
+              <div className="h-16 rounded-xl bg-white" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DashboardLoadingState() {
+  return (
+    <div className="h-full overflow-y-auto bg-slate-50 p-3 sm:p-5 lg:p-7 custom-scrollbar" role="status" aria-live="polite" aria-busy="true">
+      <div className="mx-auto max-w-[1500px] space-y-5 sm:space-y-7">
+        <div className="animate-pulse rounded-[1.75rem] bg-slate-900 p-5 sm:p-7 lg:p-8">
+          <div className="h-6 w-36 rounded bg-white/15" />
+          <div className="mt-4 h-9 w-2/3 max-w-md rounded bg-white/15" />
+          <div className="mt-3 h-4 w-full max-w-xl rounded bg-white/10" />
+          <div className="mt-6 grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 xl:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <div key={index} className="h-24 rounded-2xl bg-white/10" />
+            ))}
+          </div>
+        </div>
+
+        {Array.from({ length: 4 }).map((_, sectionIndex) => (
+          <section key={sectionIndex} className="animate-pulse space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="h-11 w-11 rounded-2xl bg-slate-200" />
+              <div>
+                <div className="h-5 w-32 rounded bg-slate-200" />
+                <div className="mt-2 h-3 w-52 max-w-[60vw] rounded bg-slate-200" />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
+              {Array.from({ length: 3 }).map((_, cardIndex) => (
+                <div key={cardIndex} className="h-52 rounded-[1.5rem] border border-slate-200 bg-white p-5">
+                  <div className="h-11 w-11 rounded-2xl bg-slate-100" />
+                  <div className="mt-5 h-3 w-28 rounded bg-slate-200" />
+                  <div className="mt-3 h-8 w-2/3 rounded bg-slate-200" />
+                  <div className="mt-3 h-3 w-1/2 rounded bg-slate-100" />
                 </div>
               ))}
             </div>
@@ -879,51 +1068,5 @@ function DashboardLoadingState() {
       </div>
       <span className="sr-only">Cargando datos del Dashboard.</span>
     </div>
-  );
-}
-
-
-function DashboardCard({ 
-  title, 
-  value, 
-  subtitle, 
-  icon, 
-  onClick, 
-  trend, 
-  footer,
-  highlight = false
-}: { 
-  title: string; 
-  value: string; 
-  subtitle: string; 
-  icon: React.ReactNode; 
-  onClick?: () => void;
-  trend?: { value: string; isUp: boolean };
-  footer?: React.ReactNode;
-  highlight?: boolean;
-}) {
-  return (
-    <motion.div 
-      whileHover={onClick ? { y: -4, scale: 1.01 } : {}}
-      onClick={onClick}
-      className={`bg-white p-4 sm:p-6 md:p-8 rounded-3xl md:rounded-[40px] border transition-all ${onClick ? 'cursor-pointer hover:shadow-xl hover:border-zinc-300' : ''} ${highlight ? 'border-red-200 bg-red-50/30' : 'border-zinc-200 shadow-sm'}`}
-    >
-      <div className="flex items-start justify-between mb-6">
-        <div className="w-12 h-12 bg-zinc-50 rounded-2xl flex items-center justify-center shadow-inner">
-          {icon}
-        </div>
-        {trend && (
-          <div className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-black ${trend.isUp ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
-            {trend.isUp ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
-            {trend.value}
-          </div>
-        )}
-        {onClick && <ChevronRight size={16} className="text-zinc-300" />}
-      </div>
-      <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">{title}</h3>
-      <p className="text-2xl sm:text-3xl font-black text-zinc-900 font-mono tracking-tighter break-words">{value}</p>
-      <p className="text-xs font-medium text-zinc-500 mt-1">{subtitle}</p>
-      {footer}
-    </motion.div>
   );
 }
