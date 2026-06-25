@@ -1,4 +1,5 @@
 import jsPDF from 'jspdf';
+import { formatBusinessDate, getBusinessDateInputValue, getBusinessDateKey } from './businessDate';
 
 const formatCurrency = (value: any) => {
   const amount = Number(value || 0);
@@ -22,10 +23,8 @@ export const generatePaymentReceiptPdf = (
 ) => {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const receiptNumber = movement?.numero_pago || movement?.id || '';
-  const date = movement?.fecha ? new Date(movement.fecha) : new Date();
-  const dateText = Number.isNaN(date.getTime())
-    ? new Date().toLocaleDateString('es-AR')
-    : date.toLocaleDateString('es-AR');
+  const movementDate = movement?.fecha_dia || movement?.fecha;
+  const dateText = movementDate ? formatBusinessDate(movementDate) : formatBusinessDate(getBusinessDateInputValue());
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(18);
@@ -68,9 +67,9 @@ export const generatePaymentReceiptPdf = (
   );
 
   const clientFile = sanitizeFileName(customerName || 'Cliente');
-  const isoDate = Number.isNaN(date.getTime())
-    ? new Date().toISOString().split('T')[0]
-    : date.toISOString().split('T')[0];
+  const isoDate = movementDate
+    ? getBusinessDateKey(movementDate) || getBusinessDateInputValue()
+    : getBusinessDateInputValue();
 
   doc.save(`Pago_${clientFile}_${isoDate}_${receiptNumber || 'sin_numero'}.pdf`);
 };

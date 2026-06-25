@@ -34,12 +34,21 @@ import {
 import { getSocket } from '../utils/socket';
 import { useAuth } from '../contexts/AuthContext';
 import { unwrapResponse, apiFetch } from '../utils/api';
+import {
+  formatBusinessDate,
+  formatBusinessDateTime,
+  formatBusinessTime,
+  addBusinessDays,
+  getBusinessDateInputValue,
+  getBusinessDateKey,
+} from '../utils/businessDate';
 
 type Movimiento = {
   id: number;
   fecha: string;
+  fecha_dia?: string;
   tipo: 'ingreso' | 'egreso';
-  origen: 'venta' | 'pago_cc' | 'egreso_manual' | 'ajuste';
+  origen: 'venta' | 'pago_cc' | 'egreso_manual' | 'ajuste' | 'compra' | 'cobranza';
   cliente_id: number | null;
   venta_id: number | null;
   descripcion: string;
@@ -71,7 +80,7 @@ export default function FinanceModule() {
   const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
   const [cheques, setCheques] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(getBusinessDateInputValue());
   const [showEgresoModal, setShowEgresoModal] = useState(false);
   const [movimientosSearch, setMovimientosSearch] = useState('');
   const [movimientosTypeFilter, setMovimientosTypeFilter] = useState<'todos' | 'ingreso' | 'egreso'>('todos');
@@ -95,7 +104,7 @@ export default function FinanceModule() {
     descripcion: '',
     categoria: 'Otros',
     forma_pago: 'efectivo',
-    fecha: new Date().toISOString().split('T')[0],
+    fecha: getBusinessDateInputValue(),
     cheque_id: '',
     proveedor_id: ''
   });
@@ -191,7 +200,7 @@ export default function FinanceModule() {
         descripcion: '',
         categoria: 'Otros',
         forma_pago: 'efectivo',
-        fecha: new Date().toISOString().split('T')[0],
+        fecha: getBusinessDateInputValue(),
         cheque_id: '',
         proveedor_id: ''
       });
@@ -205,24 +214,23 @@ export default function FinanceModule() {
   };
 
   const stats = useMemo(() => {
-    const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
-    const monthStr = now.toISOString().slice(0, 7); // YYYY-MM
+    const todayStr = getBusinessDateInputValue();
+    const monthStr = todayStr.slice(0, 7);
 
     const ingresosDia = movimientos
-      .filter(m => m.tipo === 'ingreso' && m.fecha.startsWith(todayStr))
+      .filter(m => m.tipo === 'ingreso' && (m.fecha_dia || getBusinessDateKey(m.fecha)) === todayStr)
       .reduce((acc, m) => acc + m.monto, 0);
     
     const egresosDia = movimientos
-      .filter(m => m.tipo === 'egreso' && m.fecha.startsWith(todayStr))
+      .filter(m => m.tipo === 'egreso' && (m.fecha_dia || getBusinessDateKey(m.fecha)) === todayStr)
       .reduce((acc, m) => acc + m.monto, 0);
 
     const ingresosMes = movimientos
-      .filter(m => m.tipo === 'ingreso' && m.fecha.startsWith(monthStr))
+      .filter(m => m.tipo === 'ingreso' && (m.fecha_dia || getBusinessDateKey(m.fecha)).startsWith(monthStr))
       .reduce((acc, m) => acc + m.monto, 0);
     
     const egresosMes = movimientos
-      .filter(m => m.tipo === 'egreso' && m.fecha.startsWith(monthStr))
+      .filter(m => m.tipo === 'egreso' && (m.fecha_dia || getBusinessDateKey(m.fecha)).startsWith(monthStr))
       .reduce((acc, m) => acc + m.monto, 0);
 
     return {
@@ -236,7 +244,7 @@ export default function FinanceModule() {
   }, [movimientos]);
 
   const cajaDiaria = useMemo(() => {
-    return movimientos.filter(m => m.fecha.startsWith(selectedDate));
+    return movimientos.filter(m => (m.fecha_dia || getBusinessDateKey(m.fecha)) === selectedDate);
   }, [movimientos, selectedDate]);
 
   const cajaStats = useMemo(() => {
@@ -304,7 +312,7 @@ export default function FinanceModule() {
       
       const matchesType = movimientosTypeFilter === 'todos' || m.tipo === movimientosTypeFilter;
       
-      const matchesDate = !movimientosDateFilter || m.fecha.startsWith(movimientosDateFilter);
+      const matchesDate = !movimientosDateFilter || (m.fecha_dia || getBusinessDateKey(m.fecha)) === movimientosDateFilter;
       
       return matchesSearch && matchesType && matchesDate;
     });
@@ -326,14 +334,13 @@ export default function FinanceModule() {
   }, [cheques, chequesSearch, chequesEstadoFilter, chequesVencimientoFilter]);
 
   const chequesProximosAVencer = useMemo(() => {
-    const hoy = new Date();
-    const limite = new Date();
-    limite.setDate(hoy.getDate() + 7);
+    const today = getBusinessDateInputValue();
+    const limit = addBusinessDays(today, 7);
 
     return cheques.filter(c => {
       if (c.estado !== 'en_cartera') return false;
-      const vencimiento = new Date(c.fecha_vencimiento);
-      return vencimiento >= hoy && vencimiento <= limite;
+      const dueDate = getBusinessDateKey(c.fecha_vencimiento);
+      return Boolean(dueDate) && dueDate >= today && dueDate <= limit;
     });
   }, [cheques]);
 
@@ -354,14 +361,8 @@ export default function FinanceModule() {
       maximumFractionDigits: 2
     }).format(Number(value) || 0);
 
-  const formatDate = (value: string, includeTime = false) => {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '-';
-
-    return date.toLocaleString('es-AR', includeTime
-      ? { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }
-      : { day: '2-digit', month: '2-digit', year: 'numeric' });
-  };
+  const formatDate = (value: string, includeTime = false) =>
+    includeTime ? formatBusinessDateTime(value, '-') : formatBusinessDate(value, '-');
 
   const paymentLabel = (value?: string) => {
     const labels: Record<string, string> = {
@@ -633,7 +634,7 @@ export default function FinanceModule() {
                               <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs font-bold text-slate-500">
                                 <span>{paymentLabel(movement.forma_pago)}</span>
                                 <span>•</span>
-                                <span>{formatDate(movement.fecha, true)}</span>
+                                <span>{formatDate(movement.fecha_dia || movement.fecha, true)}</span>
                                 {movement.nombre_cliente && (
                                   <>
                                     <span>•</span>
@@ -668,12 +669,7 @@ export default function FinanceModule() {
                   <div className="min-w-0">
                     <h3 className="text-xl font-black text-slate-950">Caja diaria</h3>
                     <p className="mt-1 break-words text-sm text-slate-500">
-                      {new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-AR', {
-                        weekday: 'long',
-                        day: 'numeric',
-                        month: 'long',
-                        year: 'numeric'
-                      })}
+                      {formatBusinessDate(selectedDate)}
                     </p>
                   </div>
                   <label className="min-w-0 lg:w-64">
@@ -724,7 +720,9 @@ export default function FinanceModule() {
                       <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 border-t border-slate-100 pt-4 min-[420px]:grid-cols-2">
                         <div className="min-w-0 rounded-2xl bg-slate-50 p-3">
                           <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Hora</p>
-                          <p className="mt-1 text-sm font-bold text-slate-800">{formatDate(movement.fecha, true).split(',').pop()?.trim()}</p>
+                          <p className="mt-1 text-sm font-bold text-slate-800">
+                            {movement.fecha_dia ? 'Sin hora registrada' : formatBusinessTime(movement.fecha)}
+                          </p>
                         </div>
                         <div className="min-w-0 rounded-2xl bg-slate-50 p-3">
                           <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Forma de pago</p>
@@ -791,7 +789,7 @@ export default function FinanceModule() {
                       <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 min-[420px]:grid-cols-2">
                         <div className="min-w-0 rounded-2xl bg-slate-50 p-3">
                           <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Fecha</p>
-                          <p className="mt-1 text-sm font-bold text-slate-800">{formatDate(expense.fecha)}</p>
+                          <p className="mt-1 text-sm font-bold text-slate-800">{formatDate(expense.fecha_dia || expense.fecha)}</p>
                         </div>
                         <div className="min-w-0 rounded-2xl bg-slate-50 p-3">
                           <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Forma de pago</p>
@@ -912,7 +910,7 @@ export default function FinanceModule() {
                       <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 border-t border-slate-100 pt-4 min-[420px]:grid-cols-2">
                         <div className="min-w-0 rounded-2xl bg-slate-50 p-3">
                           <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Fecha</p>
-                          <p className="mt-1 break-words text-sm font-bold text-slate-800">{formatDate(movement.fecha, true)}</p>
+                          <p className="mt-1 break-words text-sm font-bold text-slate-800">{formatDate(movement.fecha_dia || movement.fecha, true)}</p>
                         </div>
                         <div className="min-w-0 rounded-2xl bg-slate-50 p-3">
                           <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Forma de pago</p>
@@ -1060,7 +1058,7 @@ export default function FinanceModule() {
                         <div className="min-w-0 rounded-2xl bg-slate-50 p-3">
                           <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Vencimiento</p>
                           <p className={`mt-1 text-sm font-bold ${
-                            new Date(cheque.fecha_vencimiento) < new Date() && cheque.estado === 'en_cartera'
+                            getBusinessDateKey(cheque.fecha_vencimiento) < getBusinessDateInputValue() && cheque.estado === 'en_cartera'
                               ? 'text-red-700'
                               : 'text-slate-800'
                           }`}>

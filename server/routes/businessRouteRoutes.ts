@@ -2,6 +2,7 @@ import { Router } from "express";
 import db from "../db.js";
 import { requireAuth, requirePermission } from "../middleware/authMiddleware.js";
 import { sendSuccess, sendError } from "../utils/response.js";
+import { getBusinessDate } from "../utils/businessDate.js";
 
 const router = Router();
 
@@ -20,7 +21,7 @@ router.get("/", requireAuth, requirePermission('routes', 'view'), (req, res) => 
 });
 
 router.get("/today", requireAuth, requirePermission('routes', 'view'), (req, res) => {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getBusinessDate();
   const route = db.prepare("SELECT * FROM routes WHERE date = ?").get(today) as any;
   if (!route) return sendSuccess(res, null, "No hay ruta para hoy");
   const items = db.prepare(`

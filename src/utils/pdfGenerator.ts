@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { formatBusinessDate, getBusinessDateInputValue, getBusinessDateKey } from './businessDate';
 
 const formatCurrency = (value: any) => {
   const numberValue = Number(value || 0);
@@ -9,10 +10,7 @@ const formatCurrency = (value: any) => {
   })}`;
 };
 
-const formatDate = (value: any) => {
-  if (!value) return '-';
-  return new Date(value).toLocaleDateString('es-AR');
-};
+const formatDate = (value: any) => formatBusinessDate(value, '-');
 
 const safeText = (value: any) => {
   if (value === null || value === undefined || value === '') return '-';
@@ -30,10 +28,9 @@ const sanitizeFileName = (value: any) => {
 
 const getReceiptFileName = (sale: any) => {
   const clientName = sanitizeFileName(sale.nombre_cliente || 'Cliente');
-  const rawDate = sale.fecha ? new Date(sale.fecha) : new Date();
-  const dateText = Number.isNaN(rawDate.getTime())
-    ? new Date().toISOString().split('T')[0]
-    : rawDate.toISOString().split('T')[0];
+  const dateText = sale.fecha
+    ? getBusinessDateKey(sale.fecha) || getBusinessDateInputValue()
+    : getBusinessDateInputValue();
 
   return `${clientName}_${dateText}.pdf`;
 };

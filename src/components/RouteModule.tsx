@@ -41,6 +41,7 @@ import { useAuth } from '../contexts/AuthContext';
 import CustomerDetail from './CustomerDetail';
 import RouteMap from './RouteMap';
 import { unwrapResponse, apiFetch } from '../utils/api';
+import { addBusinessDays, formatBusinessDate, getBusinessDateInputValue } from '../utils/businessDate';
 
 interface RouteItem {
   id: number;
@@ -125,7 +126,7 @@ export default function RouteModule() {
   const [confirmAction, setConfirmAction] = useState<{ type: 'complete' | 'delete'; routeId: number; routeName: string } | null>(null);
 
   // Planning state
-  const [planDate, setPlanDate] = useState(new Date(Date.now() + 86400000).toISOString().split('T')[0]);
+  const [planDate, setPlanDate] = useState(() => addBusinessDays(getBusinessDateInputValue(), 1));
   const [planName, setPlanName] = useState('');
   const [selectedCustomerIds, setSelectedCustomerIds] = useState<number[]>([]);
   const [customerSearch, setCustomerSearch] = useState('');
@@ -238,7 +239,7 @@ export default function RouteModule() {
       setClientes(unwrapResponse(clientesBody));
       setProducts(unwrapResponse(productsBody));
 
-      const tomorrow = new Date(Date.now() + 86400000).toLocaleDateString();
+      const tomorrow = formatBusinessDate(addBusinessDays(getBusinessDateInputValue(), 1));
       setPlanName(current => current || `Ruta ${tomorrow}`);
     } catch (error: any) {
       console.error('Error fetching route data:', error);
@@ -735,7 +736,7 @@ export default function RouteModule() {
   const routeProgress = todayItems.length > 0 ? Math.round((completedToday / todayItems.length) * 100) : 0;
   const formatCurrency = (value: number | null | undefined) =>
     new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(Number(value || 0));
-  const formatDate = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString('es-AR');
+  const formatDate = (value: string) => formatBusinessDate(value);
   const routeStatusClasses = (status: Route['status']) => {
     if (status === 'finalizada') return 'bg-emerald-100 text-emerald-700';
     if (status === 'en curso') return 'bg-indigo-100 text-indigo-700';
@@ -1101,7 +1102,7 @@ export default function RouteModule() {
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-[9px] font-black uppercase ${routeStatusClasses(route.status)}`}>{route.status}</span><span className="text-xs font-semibold text-slate-500">{formatDate(route.date)}</span></div>
                           <h3 className="mt-2 break-words text-lg font-black text-slate-900">{route.name}</h3>
-                          <p className="mt-1 text-xs text-slate-500">Creada el {new Date(route.created_at).toLocaleDateString('es-AR')}</p>
+                          <p className="mt-1 text-xs text-slate-500">Creada el {formatBusinessDate(route.created_at)}</p>
                         </div>
                         <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-50 text-sm font-black text-indigo-700">{percentage}%</div>
                       </div>

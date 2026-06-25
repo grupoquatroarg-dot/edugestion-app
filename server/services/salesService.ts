@@ -2,6 +2,7 @@ import db from '../db.js';
 import { salesRepository, SaleItem, Sale } from '../repositories/salesRepository.js';
 import { getPostgresPool, isPostgresConfigured } from '../utils/postgres.js';
 import { AppError } from '../utils/response.js';
+import { normalizeBusinessDateForStorage } from '../utils/businessDate.js';
 
 type TransactionClient = {
   query: (text: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }>;
@@ -416,7 +417,7 @@ export const salesService = {
         db.prepare(
           `INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cliente_id, venta_id)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        ).run('ingreso', 'cobranza', descriptionParts.join(' - '), 'Cobranzas', metodo_pago, paymentAmount, fecha || new Date().toISOString(), usuario || 'Sistema', nextPaymentNum, clientId, linkedSaleId);
+        ).run('ingreso', 'cobranza', descriptionParts.join(' - '), 'Cobranzas', metodo_pago, paymentAmount, normalizeBusinessDateForStorage(fecha), usuario || 'Sistema', nextPaymentNum, clientId, linkedSaleId);
 
         const updatedCustomer = db.prepare('SELECT * FROM clientes WHERE id = ?').get(clientId);
         return {
@@ -523,7 +524,7 @@ export const salesService = {
           'Cobranzas',
           metodo_pago,
           paymentAmount,
-          fecha || new Date().toISOString(),
+          normalizeBusinessDateForStorage(fecha),
           usuario || 'Sistema',
           nextPaymentNum,
           clientId,

@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { Product, ProductFamily } from '../types';
 import { unwrapResponse, apiFetch } from '../utils/api';
+import { formatBusinessDateTime } from '../utils/businessDate';
 
 interface PriceUpdateHistory {
   id: number;
@@ -799,7 +800,7 @@ export default function BulkPriceUpdate() {
             <div className="mt-4 space-y-3">
               {history.slice(0, 5).map((entry) => (
                 <article key={entry.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-black text-slate-900">{changeTypeLabels[entry.tipo_cambio as PriceChangeType] || entry.tipo_cambio}</p><p className="mt-1 text-xs text-slate-500">{new Date(entry.fecha).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}</p></div><span className={`rounded-xl px-3 py-1.5 text-sm font-black ${entry.tipo_cambio.includes('increase') ? 'bg-emerald-100 text-emerald-800' : entry.tipo_cambio.includes('decrease') ? 'bg-rose-100 text-rose-800' : 'bg-indigo-100 text-indigo-800'}`}>{entry.tipo_cambio.includes('fixed') ? formatCurrency(entry.valor) : `${entry.valor}%`}</span></div>
+                  <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-black text-slate-900">{changeTypeLabels[entry.tipo_cambio as PriceChangeType] || entry.tipo_cambio}</p><p className="mt-1 text-xs text-slate-500">{formatBusinessDateTime(entry.fecha)}</p></div><span className={`rounded-xl px-3 py-1.5 text-sm font-black ${entry.tipo_cambio.includes('increase') ? 'bg-emerald-100 text-emerald-800' : entry.tipo_cambio.includes('decrease') ? 'bg-rose-100 text-rose-800' : 'bg-indigo-100 text-indigo-800'}`}>{entry.tipo_cambio.includes('fixed') ? formatCurrency(entry.valor) : `${entry.valor}%`}</span></div>
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs"><div className="rounded-xl bg-white p-3"><p className="text-slate-500">Productos</p><p className="mt-1 font-black text-slate-900">{entry.productos_afectados}</p></div><div className="rounded-xl bg-white p-3"><p className="text-slate-500">Alcance</p><p className="mt-1 break-words font-black text-slate-900">{entry.alcance}</p></div></div>
                 </article>
               ))}

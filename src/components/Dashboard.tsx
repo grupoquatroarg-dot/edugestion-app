@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { apiFetch, unwrapResponse } from '../utils/api';
+import { formatBusinessDate, formatBusinessDateTime } from '../utils/businessDate';
 
 interface DashboardSummary {
   finanzas: {
@@ -77,17 +78,9 @@ const formatCurrency = (value: number) =>
     maximumFractionDigits: 2,
   }).format(Number(value) || 0);
 
-const formatDate = (value: string | null | undefined) => {
-  if (!value) return 'Sin fecha';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? 'Sin fecha' : date.toLocaleDateString('es-AR');
-};
+const formatDate = (value: string | null | undefined) => formatBusinessDate(value);
 
-const formatDateTime = (value: string | null | undefined) => {
-  if (!value) return 'Sin fecha';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? 'Sin fecha' : date.toLocaleString('es-AR');
-};
+const formatDateTime = (value: string | null | undefined) => formatBusinessDateTime(value);
 
 export default function Dashboard() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);

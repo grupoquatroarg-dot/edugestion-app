@@ -3,6 +3,7 @@ import db from "../db.js";
 import { requirePermission } from "../middleware/authMiddleware.js";
 import { sendError, sendSuccess } from "../utils/response.js";
 import { getPostgresPool, isPostgresConfigured } from "../utils/postgres.js";
+import { getBusinessDate } from "../utils/businessDate.js";
 
 const router = Router();
 
@@ -12,12 +13,19 @@ const toNumber = (value: any, fallback: number = 0) => {
   return Number.isNaN(parsed) ? fallback : parsed;
 };
 
+const getDateKeys = () => {
+  const today = getBusinessDate();
+  const [year, month] = today.split("-").map(Number);
+  const previousMonthDate = new Date(Date.UTC(year, month - 2, 1, 12, 0, 0));
+  return {
+    today,
+    currentMonth: today.slice(0, 7),
+    prevMonth: `${previousMonthDate.getUTCFullYear()}-${String(previousMonthDate.getUTCMonth() + 1).padStart(2, "0")}`,
+  };
+};
+
 router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async (_req, res) => {
-  const now = new Date();
-  const currentMonth = now.toISOString().slice(0, 7);
-  const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const prevMonth = prevMonthDate.toISOString().slice(0, 7);
-  const today = now.toISOString().slice(0, 10);
+  const { currentMonth, prevMonth, today } = getDateKeys();
 
   try {
     if (!isPostgresConfigured()) {
@@ -163,12 +171,12 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
       pool.query(`
         SELECT COALESCE(SUM(ganancia), 0) AS total
         FROM sales
-        WHERE TO_CHAR(fecha::timestamp, 'YYYY-MM') = $1
+        WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
       `, [currentMonth]),
       pool.query(`
         SELECT COALESCE(SUM(ganancia), 0) AS total
         FROM sales
-        WHERE TO_CHAR(fecha::timestamp, 'YYYY-MM') = $1
+        WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
       `, [prevMonth]),
       pool.query(`
         SELECT
@@ -176,17 +184,17 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
           COUNT(*)::int AS cantidad,
           COALESCE(AVG(total), 0) AS ticket_promedio
         FROM sales
-        WHERE TO_CHAR(fecha::timestamp, 'YYYY-MM') = $1
+        WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
       `, [currentMonth]),
       pool.query(`
         SELECT COALESCE(SUM(total), 0) AS total
         FROM sales
-        WHERE TO_CHAR(fecha::timestamp, 'YYYY-MM') = $1
+        WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
       `, [prevMonth]),
       pool.query(`
         SELECT COALESCE(SUM(total), 0) AS total
         FROM sales
-        WHERE TO_CHAR(fecha::timestamp, 'YYYY-MM-DD') = $1
+        WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD') = $1
       `, [today]),
       pool.query(`
         SELECT
@@ -194,7 +202,7 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
           COALESCE(SUM(s.total), 0) AS total
         FROM sales s
         LEFT JOIN clientes c ON s.cliente_id = c.id
-        WHERE TO_CHAR(s.fecha::timestamp, 'YYYY-MM') = $1
+        WHERE TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
         GROUP BY COALESCE(c.nombre_apellido, s.nombre_cliente, 'Sin nombre')
         ORDER BY total DESC
         LIMIT 5
@@ -206,7 +214,7 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
         FROM sale_items si
         JOIN products p ON si.product_id = p.id
         JOIN sales s ON si.sale_id = s.id
-        WHERE TO_CHAR(s.fecha::timestamp, 'YYYY-MM') = $1
+        WHERE TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
         GROUP BY p.id, p.name
         ORDER BY total_qty DESC, p.name ASC
         LIMIT 5
@@ -225,7 +233,7 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
         FROM sale_items si
         JOIN products p ON si.product_id = p.id
         JOIN sales s ON si.sale_id = s.id
-        WHERE TO_CHAR(s.fecha::timestamp, 'YYYY-MM') = $1
+        WHERE TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
         GROUP BY p.id, p.name
         ORDER BY ganancia DESC, p.name ASC
         LIMIT 5
@@ -251,7 +259,7 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
             FROM sales s
             WHERE s.cliente_id = c.id
               AND s.metodo_pago = 'Cta Cte'
-              AND DATE(s.fecha::timestamp) <= CURRENT_DATE - INTERVAL '7 days'
+              AND DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') <= CURRENT_DATE - INTERVAL '7 days'
           )
       `),
     ]);
@@ -339,12 +347,12 @@ router.get("/cuentas-cobrar", requirePermission("dashboard", "view"), async (req
           c.nombre_apellido AS cliente,
           c.saldo_cta_cte AS deuda,
           MAX(s.fecha) AS fecha_venta,
-          (CURRENT_DATE - MAX(DATE(s.fecha::timestamp)))::int AS dias_atraso
+          (CURRENT_DATE - MAX(DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires')))::int AS dias_atraso
         FROM clientes c
         JOIN sales s ON c.id = s.cliente_id
         WHERE c.saldo_cta_cte > 0
           AND s.metodo_pago = 'Cta Cte'
-          AND ($1::int = 0 OR DATE(s.fecha::timestamp) <= CURRENT_DATE - ($1::int * INTERVAL '1 day'))
+          AND ($1::int = 0 OR DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') <= CURRENT_DATE - ($1::int * INTERVAL '1 day'))
         GROUP BY c.id, c.nombre_apellido, c.saldo_cta_cte
         ORDER BY dias_atraso DESC, cliente ASC
       `,
@@ -410,7 +418,7 @@ router.get("/cuentas-pagar", requirePermission("dashboard", "view"), async (_req
 });
 
 router.get("/ganancia-mes-detalle", requirePermission("dashboard", "view"), async (_req, res) => {
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = getBusinessDate().slice(0, 7);
 
   try {
     if (!isPostgresConfigured()) {
@@ -438,7 +446,7 @@ router.get("/ganancia-mes-detalle", requirePermission("dashboard", "view"), asyn
           costo_total AS costo,
           ganancia
         FROM sales
-        WHERE TO_CHAR(fecha::timestamp, 'YYYY-MM') = $1
+        WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
         ORDER BY fecha DESC, id DESC
       `,
       [currentMonth]
@@ -460,7 +468,7 @@ router.get("/ganancia-mes-detalle", requirePermission("dashboard", "view"), asyn
 });
 
 router.get("/ventas-mes-detalle", requirePermission("dashboard", "view"), async (_req, res) => {
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = getBusinessDate().slice(0, 7);
 
   try {
     if (!isPostgresConfigured()) {
@@ -494,7 +502,7 @@ router.get("/ventas-mes-detalle", requirePermission("dashboard", "view"), async 
         JOIN sale_items si ON s.id = si.sale_id
         JOIN products p ON si.product_id = p.id
         LEFT JOIN clientes c ON s.cliente_id = c.id
-        WHERE TO_CHAR(s.fecha::timestamp, 'YYYY-MM') = $1
+        WHERE TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
         GROUP BY s.id, s.fecha, cliente, s.metodo_pago, s.total
         ORDER BY s.fecha DESC, s.id DESC
       `,
@@ -606,13 +614,13 @@ router.get("/deuda-vencida", requirePermission("dashboard", "view"), async (_req
       SELECT
         c.nombre_apellido AS cliente,
         c.saldo_cta_cte AS deuda,
-        (CURRENT_DATE - MAX(DATE(s.fecha::timestamp)))::int AS dias_atraso
+        (CURRENT_DATE - MAX(DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires')))::int AS dias_atraso
       FROM clientes c
       JOIN sales s ON c.id = s.cliente_id
       WHERE c.saldo_cta_cte > 0
         AND s.metodo_pago = 'Cta Cte'
       GROUP BY c.id, c.nombre_apellido, c.saldo_cta_cte
-      HAVING (CURRENT_DATE - MAX(DATE(s.fecha::timestamp))) > 7
+      HAVING (CURRENT_DATE - MAX(DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires'))) > 7
       ORDER BY dias_atraso DESC, cliente ASC
     `);
 

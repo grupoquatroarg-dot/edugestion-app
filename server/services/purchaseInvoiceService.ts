@@ -1,7 +1,8 @@
-﻿import { z } from "zod";
+import { z } from "zod";
 import db from "../db.js";
 import { getPostgresPool, isPostgresConfigured } from "../utils/postgres.js";
 import { AppError } from "../utils/response.js";
+import { normalizeBusinessDateForStorage, toStoredDateOnly } from "../utils/businessDate.js";
 
 type Queryable = {
   query: (text: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }>;
@@ -72,12 +73,12 @@ const mapInvoice = (row: any) => {
     proveedor: row.proveedor ?? row.proveedor_nombre ?? "",
     numero_factura: row.numero_factura || "",
     total,
-    fecha_compra: row.fecha_compra || row.fecha || "",
+    fecha_compra: toStoredDateOnly(row.fecha_compra || row.fecha),
     metodo_pago: row.metodo_pago || "",
     estado_pago: row.estado_pago || (isCurrentAccount(row.metodo_pago) ? "pendiente" : "pagado"),
     monto_pagado: montoPagado,
     saldo_pendiente: saldoPendiente,
-    fecha_pago: row.fecha_pago || null,
+    fecha_pago: row.fecha_pago ? toStoredDateOnly(row.fecha_pago) : null,
     metodo_pago_real: row.metodo_pago_real || null,
   };
 };
@@ -333,7 +334,7 @@ export const getPurchaseInvoiceById = async (id: number, executor?: Queryable) =
 };
 
 export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvoiceBodySchema>, userName: string) => {
-  const invoiceDate = payload.fecha || new Date().toISOString();
+  const invoiceDate = normalizeBusinessDateForStorage(payload.fecha);
   const isDebt = isCurrentAccount(payload.metodo_pago);
   const estadoPago = isDebt ? "pendiente" : "pagado";
   const montoPagado = isDebt ? 0 : payload.total;
@@ -546,7 +547,7 @@ export const payPurchaseInvoice = async (
   payload: z.infer<typeof purchaseInvoicePaymentSchema>,
   userName: string
 ) => {
-  const paymentDate = payload.fecha_pago || new Date().toISOString();
+  const paymentDate = normalizeBusinessDateForStorage(payload.fecha_pago);
 
   if (isCurrentAccount(payload.metodo_pago_real)) {
     throw new AppError("El pago de una cuenta corriente debe registrarse con un metodo real de pago.", 400);

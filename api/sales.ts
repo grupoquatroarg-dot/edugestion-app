@@ -5,6 +5,7 @@ import { UserRepository } from "../server/repositories/userRepository.js";
 import { verifyToken } from "../server/utils/jwt.js";
 import { sendError, sendSuccess } from "../server/utils/response.js";
 import { getPostgresPool } from "../server/utils/postgres.js";
+import { normalizeBusinessDateForStorage } from "../server/utils/businessDate.js";
 
 const saleSchema = z.object({
   cliente_id: z.number(),
@@ -1403,7 +1404,7 @@ const handleCustomerOrders = async (req: any, res: any) => {
       const newPaid = Math.round((toNumber(sale.monto_pagado) + totalPayment) * 100) / 100;
       const newPending = Math.max(0, Math.round((pendingAmount - totalPayment) * 100) / 100);
       const newStatus = newPending <= 0 ? "Pagada" : "Pendiente";
-      const paymentDate = parsed.data.fecha || new Date().toISOString();
+      const paymentDate = normalizeBusinessDateForStorage(parsed.data.fecha);
       const observations = String(parsed.data.observaciones || "").trim();
 
       await client.query(

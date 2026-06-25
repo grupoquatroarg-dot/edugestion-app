@@ -8,6 +8,7 @@ import {
   ChecklistItem 
 } from '../types';
 import { unwrapResponse, apiFetch } from '../utils/api';
+import { formatBusinessDate, formatBusinessTime, getBusinessDateInputValue } from '../utils/businessDate';
 import { 
   ClipboardCheck, 
   Plus, 
@@ -279,12 +280,7 @@ export default function ChecklistModule() {
   const handleStartTodayChecklist = async (templateId: number) => {
     if (startingTemplateId !== null) return;
 
-    const today = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Argentina/Buenos_Aires',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    }).format(new Date());
+    const today = getBusinessDateInputValue();
     setStartingTemplateId(templateId);
 
     try {
@@ -822,7 +818,7 @@ export default function ChecklistModule() {
                                     <p className={`break-words text-sm font-bold ${complete ? 'line-through opacity-60' : ''}`}>{item.task_name}</p>
                                     {complete && (
                                       <p className="mt-1 break-words text-xs text-emerald-700">
-                                        {item.completed_at ? new Date(item.completed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                                        {item.completed_at ? formatBusinessTime(item.completed_at) : ''}
                                         {item.completed_by ? ` · ${item.completed_by}` : ''}
                                       </p>
                                     )}
@@ -854,7 +850,7 @@ export default function ChecklistModule() {
                         <div className="min-w-0">
                           <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-indigo-200">Ruta del día</p>
                           <h2 className="mt-1 break-words text-xl font-black sm:text-2xl">{todayRoute.name}</h2>
-                          <p className="mt-1 text-sm text-indigo-100">{new Date(todayRoute.date).toLocaleDateString()}</p>
+                          <p className="mt-1 text-sm text-indigo-100">{formatBusinessDate(todayRoute.date)}</p>
                         </div>
                         <span className="w-fit rounded-full bg-white/10 px-3 py-1 text-xs font-bold">{todayRoute.items?.length || 0} clientes</span>
                       </div>
@@ -995,7 +991,7 @@ export default function ChecklistModule() {
                         <article key={item.id} className="min-w-0 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                              <p className="flex items-center gap-2 text-xs font-bold text-slate-500"><Calendar size={15} /> {new Date(item.date).toLocaleDateString()}</p>
+                              <p className="flex items-center gap-2 text-xs font-bold text-slate-500"><Calendar size={15} /> {formatBusinessDate(item.date)}</p>
                               <h3 className="mt-2 break-words text-lg font-black text-slate-900">{item.template_name}</h3>
                             </div>
                             <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${complete ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{complete ? 'Completo' : 'Incompleto'}</span>
@@ -1027,7 +1023,7 @@ export default function ChecklistModule() {
           <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} className="flex max-h-[94dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:max-h-[90dvh] sm:rounded-[28px]">
             <div className="border-b border-slate-200 bg-slate-50 p-5 pr-16 sm:p-6 sm:pr-16">
               <h2 className="break-words text-xl font-black text-slate-900">{selectedChecklistForDetail.template_name}</h2>
-              <p className="mt-1 text-sm text-slate-500">{new Date(selectedChecklistForDetail.date).toLocaleDateString()} · {selectedChecklistForDetail.status}</p>
+              <p className="mt-1 text-sm text-slate-500">{formatBusinessDate(selectedChecklistForDetail.date)} · {selectedChecklistForDetail.status}</p>
               <button type="button" onClick={() => { setSelectedChecklistForDetail(null); setDetailError(null); }} className="absolute right-4 top-4 flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 hover:bg-slate-100" aria-label="Cerrar detalle"><X size={21} /></button>
             </div>
             <div className="flex-1 overflow-y-auto p-4 sm:p-6">
@@ -1042,7 +1038,7 @@ export default function ChecklistModule() {
                     return (
                       <div key={item.id} className={`flex min-w-0 items-start gap-3 rounded-2xl border p-4 ${complete ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}>
                         {complete ? <CheckCircle2 size={21} className="mt-0.5 shrink-0 text-emerald-600" /> : <Circle size={21} className="mt-0.5 shrink-0 text-slate-300" />}
-                        <div className="min-w-0 flex-1"><p className="break-words text-sm font-bold text-slate-900">{item.task_name}</p>{complete && <p className="mt-1 break-words text-xs text-emerald-700">{item.completed_at ? new Date(item.completed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}{item.completed_by ? ` · ${item.completed_by}` : ''}</p>}</div>
+                        <div className="min-w-0 flex-1"><p className="break-words text-sm font-bold text-slate-900">{item.task_name}</p>{complete && <p className="mt-1 break-words text-xs text-emerald-700">{item.completed_at ? formatBusinessTime(item.completed_at) : ''}{item.completed_by ? ` · ${item.completed_by}` : ''}</p>}</div>
                       </div>
                     );
                   })}

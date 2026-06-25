@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { unwrapResponse, apiFetch } from '../utils/api';
 import { generateCustomerOrderPdf } from '../utils/customerOrderPdf';
+import { formatBusinessDateTime, getBusinessDateInputValue, getBusinessDateKey } from '../utils/businessDate';
 
 const formatCurrency = (value: number) =>
   `$${Number(value || 0).toLocaleString('es-AR', {
@@ -180,7 +181,7 @@ export default function CustomerOrdersAdmin({
   const [paymentOrderId, setPaymentOrderId] = useState<number | null>(null);
   const [paymentLines, setPaymentLines] = useState<PaymentLine[]>([]);
   const [paymentDate, setPaymentDate] = useState(
-    new Date().toISOString().split('T')[0]
+    getBusinessDateInputValue()
   );
   const [paymentNotes, setPaymentNotes] = useState('');
 
@@ -228,7 +229,7 @@ export default function CustomerOrdersAdmin({
     const query = searchTerm.trim().toLowerCase();
 
     return orders.filter((order) => {
-      const orderDate = new Date(order.fecha).toISOString().split('T')[0];
+      const orderDate = getBusinessDateKey(order.fecha);
       const matchesSearch =
         !query ||
         String(order.cliente || '').toLowerCase().includes(query) ||
@@ -528,7 +529,7 @@ export default function CustomerOrdersAdmin({
         monto: String(Number(order.sale_monto_pendiente || 0)),
       },
     ]);
-    setPaymentDate(new Date().toISOString().split('T')[0]);
+    setPaymentDate(getBusinessDateInputValue());
     setPaymentNotes('');
   };
 
@@ -851,7 +852,7 @@ export default function CustomerOrdersAdmin({
                       {order.cliente}
                     </h3>
                     <p className="text-xs text-zinc-400 font-bold">
-                      {new Date(order.fecha).toLocaleString('es-AR')}
+                      {formatBusinessDateTime(order.fecha)}
                     </p>
 
                     {order.numero_venta && (

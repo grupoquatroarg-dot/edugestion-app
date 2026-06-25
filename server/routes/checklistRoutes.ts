@@ -2,6 +2,7 @@ import { Router } from "express";
 import db from "../db.js";
 import { requireAuth, requirePermission } from "../middleware/authMiddleware.js";
 import { sendSuccess, sendError } from "../utils/response.js";
+import { getBusinessDate } from "../utils/businessDate.js";
 
 const router = Router();
 
@@ -87,7 +88,7 @@ router.get("/checklists", requireAuth, requirePermission('checklist', 'view'), (
 });
 
 router.get("/checklists/today", requireAuth, requirePermission('checklist', 'view'), (req, res) => {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getBusinessDate();
   const checklists = db.prepare(`
     SELECT c.*, t.name as template_name 
     FROM checklists c 
@@ -151,7 +152,7 @@ router.patch("/checklist-items/:id", requireAuth, requirePermission('checklist',
 });
 
 router.get("/checklist/summary", requireAuth, requirePermission('checklist', 'view'), (req, res) => {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getBusinessDate();
   
   // Clients in route for today
   const routeClients = (db.prepare("SELECT COUNT(*) as count FROM route_items ri JOIN routes r ON ri.route_id = r.id WHERE r.date = ?").get(today) as any)?.count || 0;

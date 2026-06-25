@@ -4,6 +4,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { useAuth } from '../contexts/AuthContext';
 import { unwrapResponse, apiFetch } from '../utils/api';
+import { formatBusinessDateTime, getBusinessDateKey } from '../utils/businessDate';
 
 interface SupplierOrderItem {
   id: number;
@@ -219,7 +220,7 @@ export default function SupplierOrders() {
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(100, 100, 100);
     doc.text(`Pedido N°: ${(order.numero_pedido || order.id).toString().padStart(6, '0')}`, 20, 65);
-    doc.text(`Fecha: ${order.fecha ? new Date(order.fecha).toLocaleString() : ''}`, 20, 70);
+    doc.text(`Fecha: ${order.fecha ? formatBusinessDateTime(order.fecha) : ''}`, 20, 70);
     
     doc.setFontSize(12);
     doc.setTextColor(20, 20, 20);
@@ -322,7 +323,7 @@ export default function SupplierOrders() {
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(100, 100, 100);
     doc.text(`Remito N°: ${(order.numero_pedido || order.id).toString().padStart(6, '0')}`, 20, 65);
-    doc.text(`Fecha: ${new Date().toLocaleString()}`, 20, 70);
+    doc.text(`Fecha: ${formatBusinessDateTime(new Date())}`, 20, 70);
     
     doc.setFontSize(12);
     doc.setTextColor(20, 20, 20);
@@ -515,7 +516,7 @@ export default function SupplierOrders() {
     return orders.filter(order => {
       const matchCliente = order.cliente.toLowerCase().includes(filterCliente.toLowerCase());
       const matchEstado = filterEstado === 'todos' || order.estado === filterEstado;
-      const matchFecha = !filterFecha || order.fecha.startsWith(filterFecha);
+      const matchFecha = !filterFecha || getBusinessDateKey(order.fecha) === filterFecha;
       const matchProducto = !filterProducto || order.productos.some(p => 
         p.product_name.toLowerCase().includes(filterProducto.toLowerCase()) ||
         p.codigo_unico.toLowerCase().includes(filterProducto.toLowerCase())
@@ -549,13 +550,7 @@ export default function SupplierOrders() {
       maximumFractionDigits: 2,
     }).format(Number(value || 0));
 
-  const formatDateTime = (value: string) => {
-    if (!value) return 'Sin fecha';
-    const date = new Date(value);
-    return Number.isNaN(date.getTime())
-      ? value
-      : date.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
-  };
+  const formatDateTime = (value: string) => formatBusinessDateTime(value);
 
   const normalizePaymentMethod = (value: string) => {
     const raw = (value || '').trim();

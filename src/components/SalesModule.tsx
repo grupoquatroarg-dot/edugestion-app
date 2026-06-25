@@ -30,6 +30,13 @@ import CustomerDetail from './CustomerDetail';
 import CustomerOrdersAdmin from './CustomerOrdersAdmin';
 import { useAuth } from '../contexts/AuthContext';
 import { unwrapResponse, apiFetch } from '../utils/api';
+import {
+  formatBusinessDate,
+  formatBusinessDateTime,
+  formatBusinessTime,
+  getBusinessDateInputValue,
+  getBusinessDateKey,
+} from '../utils/businessDate';
 
 const socket = getSocket();
 
@@ -96,7 +103,7 @@ export default function SalesModule() {
   const [chequeData, setChequeData] = useState({
     banco: '',
     numero_cheque: '',
-    fecha_vencimiento: new Date().toISOString().split('T')[0],
+    fecha_vencimiento: getBusinessDateInputValue(),
     importe: ''
   });
   const [clientes, setClientes] = useState<any[]>([]);
@@ -136,7 +143,7 @@ export default function SalesModule() {
   const filteredSalesHistory = useMemo(() => {
     return salesHistory.filter(sale => {
       const matchesSearch = (sale.nombre_cliente || '').toLowerCase().includes(historySearchTerm.toLowerCase());
-      const saleDate = new Date(sale.fecha).toISOString().split('T')[0];
+      const saleDate = getBusinessDateKey(sale.fecha);
       const matchesDateFrom = !historyDateFrom || saleDate >= historyDateFrom;
       const matchesDateTo = !historyDateTo || saleDate <= historyDateTo;
       return matchesSearch && matchesDateFrom && matchesDateTo;
@@ -695,7 +702,7 @@ export default function SalesModule() {
       setChequeData({
         banco: '',
         numero_cheque: '',
-        fecha_vencimiento: new Date().toISOString().split('T')[0],
+        fecha_vencimiento: getBusinessDateInputValue(),
         importe: ''
       });
       await Promise.all([fetchSalesHistory(), fetchActiveProducts(), fetchClientes()]);
@@ -1325,7 +1332,7 @@ export default function SalesModule() {
                           {sale.nombre_cliente}
                         </h3>
                         <p className="mt-1 text-xs font-medium text-slate-500">
-                          {new Date(sale.fecha).toLocaleDateString()} · {new Date(sale.fecha).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {formatBusinessDate(sale.fecha)} · {formatBusinessTime(sale.fecha)}
                         </p>
                       </div>
 
@@ -1461,7 +1468,7 @@ export default function SalesModule() {
                         </div>
                         <h3 className="break-words text-base font-black text-slate-900">{entry.nombre}</h3>
                         <p className="mt-1 text-xs font-medium text-slate-500">
-                          Última compra: {new Date(entry.ultimaCompra).toLocaleDateString()}
+                          Última compra: {formatBusinessDate(entry.ultimaCompra)}
                         </p>
                         <p className="mt-1 text-xs font-bold text-slate-400">
                           {entry.ventas.length} {entry.ventas.length === 1 ? 'venta pendiente' : 'ventas pendientes'}
@@ -1576,7 +1583,7 @@ export default function SalesModule() {
             <div className="p-4 sm:p-8 border-b border-zinc-100 flex items-center justify-between bg-zinc-900 text-white shrink-0">
               <div>
                 <h3 className="text-lg sm:text-xl font-black uppercase tracking-tight">Detalle #{selectedSale.numero_venta || selectedSale.id}</h3>
-                <p className="text-[10px] sm:text-xs text-white/60 font-medium">{selectedSale.fecha ? new Date(selectedSale.fecha).toLocaleString() : ''}</p>
+                <p className="text-[10px] sm:text-xs text-white/60 font-medium">{selectedSale.fecha ? formatBusinessDateTime(selectedSale.fecha) : ''}</p>
               </div>
               <button 
                 onClick={() => setSelectedSale(null)}
@@ -1710,7 +1717,7 @@ export default function SalesModule() {
                       <div>
                         <p className="text-xs font-black text-slate-900">Venta #{sale.numero_venta || sale.id}</p>
                         <p className="mt-1 text-[11px] font-medium text-slate-500">
-                          {new Date(sale.fecha).toLocaleDateString()}
+                          {formatBusinessDate(sale.fecha)}
                         </p>
                       </div>
                       <p className="text-lg font-black font-mono text-slate-900">${sale.total.toFixed(2)}</p>

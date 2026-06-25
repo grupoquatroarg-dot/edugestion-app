@@ -39,12 +39,12 @@ export default async function handler(req: any, res: any) {
             c.nombre_apellido AS cliente,
             c.saldo_cta_cte AS deuda,
             MAX(s.fecha) AS fecha_venta,
-            (CURRENT_DATE - MAX(DATE(s.fecha::timestamp)))::int AS dias_atraso
+            (CURRENT_DATE - MAX(DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires')))::int AS dias_atraso
           FROM clientes c
           JOIN sales s ON c.id = s.cliente_id
           WHERE c.saldo_cta_cte > 0
             AND s.metodo_pago = 'Cta Cte'
-            AND ($1::int = 0 OR DATE(s.fecha::timestamp) <= CURRENT_DATE - ($1::int * INTERVAL '1 day'))
+            AND ($1::int = 0 OR DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') <= CURRENT_DATE - ($1::int * INTERVAL '1 day'))
           GROUP BY c.id, c.nombre_apellido, c.saldo_cta_cte
           ORDER BY dias_atraso DESC, cliente ASC
         `,
@@ -97,7 +97,7 @@ export default async function handler(req: any, res: any) {
             costo_total AS costo,
             ganancia
           FROM sales
-          WHERE TO_CHAR(fecha::timestamp, 'YYYY-MM') = $1
+          WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
           ORDER BY fecha DESC, id DESC
         `,
         [currentMonth]
@@ -129,7 +129,7 @@ export default async function handler(req: any, res: any) {
           JOIN sale_items si ON s.id = si.sale_id
           JOIN products p ON si.product_id = p.id
           LEFT JOIN clientes c ON s.cliente_id = c.id
-          WHERE TO_CHAR(s.fecha::timestamp, 'YYYY-MM') = $1
+          WHERE TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
           GROUP BY s.id, s.fecha, cliente, s.metodo_pago, s.total
           ORDER BY s.fecha DESC, s.id DESC
         `,
@@ -238,13 +238,13 @@ export default async function handler(req: any, res: any) {
         SELECT
           c.nombre_apellido AS cliente,
           c.saldo_cta_cte AS deuda,
-          (CURRENT_DATE - MAX(DATE(s.fecha::timestamp)))::int AS dias_atraso
+          (CURRENT_DATE - MAX(DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires')))::int AS dias_atraso
         FROM clientes c
         JOIN sales s ON c.id = s.cliente_id
         WHERE c.saldo_cta_cte > 0
           AND s.metodo_pago = 'Cta Cte'
         GROUP BY c.id, c.nombre_apellido, c.saldo_cta_cte
-        HAVING (CURRENT_DATE - MAX(DATE(s.fecha::timestamp))) > 7
+        HAVING (CURRENT_DATE - MAX(DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires'))) > 7
         ORDER BY dias_atraso DESC, cliente ASC
       `);
 
@@ -275,8 +275,8 @@ export default async function handler(req: any, res: any) {
       const rawClienteId = Array.isArray(req.query?.cliente_id) ? req.query.cliente_id[0] : req.query?.cliente_id;
       const rawProductId = Array.isArray(req.query?.productId) ? req.query.productId[0] : req.query?.productId;
 
-      const fromDate = rawFrom ? `${rawFrom} 00:00:00` : "1970-01-01 00:00:00";
-      const toDate = rawTo ? `${rawTo} 23:59:59` : "2099-12-31 23:59:59";
+      const fromDate = String(rawFrom || "1970-01-01");
+      const toDate = String(rawTo || "2099-12-31");
       const clienteId = rawClienteId ? Number(rawClienteId) : null;
       const productId = rawProductId && rawProductId !== "all" ? Number(rawProductId) : null;
 
@@ -288,7 +288,7 @@ export default async function handler(req: any, res: any) {
               COUNT(*)::int AS cantidad,
               COALESCE(AVG(total), 0) AS promedio
             FROM sales s
-            WHERE s.fecha BETWEEN $1 AND $2
+            WHERE DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
               AND ($3::int IS NULL OR s.cliente_id = $3)
           `,
           [fromDate, toDate, clienteId]
@@ -297,13 +297,13 @@ export default async function handler(req: any, res: any) {
         const salesByDayResult = await pool.query(
           `
             SELECT
-              TO_CHAR(s.fecha::timestamp, 'YYYY-MM-DD') AS fecha,
+              TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD') AS fecha,
               COALESCE(SUM(s.total), 0) AS total,
               COUNT(*)::int AS cantidad
             FROM sales s
-            WHERE s.fecha BETWEEN $1 AND $2
+            WHERE DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
               AND ($3::int IS NULL OR s.cliente_id = $3)
-            GROUP BY TO_CHAR(s.fecha::timestamp, 'YYYY-MM-DD')
+            GROUP BY TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD')
             ORDER BY fecha ASC
           `,
           [fromDate, toDate, clienteId]
@@ -315,7 +315,7 @@ export default async function handler(req: any, res: any) {
               s.metodo_pago AS name,
               COALESCE(SUM(s.total), 0) AS value
             FROM sales s
-            WHERE s.fecha BETWEEN $1 AND $2
+            WHERE DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
               AND ($3::int IS NULL OR s.cliente_id = $3)
             GROUP BY s.metodo_pago
             ORDER BY value DESC
@@ -333,7 +333,7 @@ export default async function handler(req: any, res: any) {
               s.metodo_pago
             FROM sales s
             LEFT JOIN clientes c ON s.cliente_id = c.id
-            WHERE s.fecha BETWEEN $1 AND $2
+            WHERE DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
               AND ($3::int IS NULL OR s.cliente_id = $3)
             ORDER BY s.fecha DESC, s.id DESC
           `,
@@ -344,7 +344,7 @@ export default async function handler(req: any, res: any) {
           `
             SELECT COUNT(*)::int AS count
             FROM clientes
-            WHERE fecha_alta BETWEEN $1 AND $2
+            WHERE DATE(fecha_alta::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
           `,
           [fromDate, toDate]
         );
@@ -353,7 +353,7 @@ export default async function handler(req: any, res: any) {
           `
             SELECT COUNT(DISTINCT cliente_id)::int AS count
             FROM sales
-            WHERE fecha BETWEEN $1 AND $2
+            WHERE DATE(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
           `,
           [fromDate, toDate]
         );
@@ -372,7 +372,7 @@ export default async function handler(req: any, res: any) {
               MAX(s.fecha) AS ultima_compra
             FROM sales s
             JOIN clientes c ON s.cliente_id = c.id
-            WHERE s.fecha BETWEEN $1 AND $2
+            WHERE DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
             GROUP BY c.id, c.nombre_apellido
             ORDER BY total DESC, c.nombre_apellido ASC
           `,
@@ -389,7 +389,7 @@ export default async function handler(req: any, res: any) {
             FROM sale_items si
             JOIN sales s ON si.sale_id = s.id
             JOIN products p ON si.product_id = p.id
-            WHERE s.fecha BETWEEN $1 AND $2
+            WHERE DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
             GROUP BY p.id, p.name
             ORDER BY cantidad DESC, p.name ASC
           `,
@@ -405,7 +405,7 @@ export default async function handler(req: any, res: any) {
             JOIN sales s ON si.sale_id = s.id
             JOIN products p ON si.product_id = p.id
             LEFT JOIN product_families f ON p.family_id = f.id
-            WHERE s.fecha BETWEEN $1 AND $2
+            WHERE DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
             GROUP BY COALESCE(f.name, 'Sin familia')
             ORDER BY value DESC
           `,
@@ -451,7 +451,7 @@ export default async function handler(req: any, res: any) {
               COALESCE(SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE 0 END), 0) AS ingresos,
               COALESCE(SUM(CASE WHEN tipo = 'egreso' THEN monto ELSE 0 END), 0) AS egresos
             FROM movimientos_financieros
-            WHERE fecha BETWEEN $1 AND $2
+            WHERE DATE(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
           `,
           [fromDate, toDate]
         );
@@ -460,7 +460,7 @@ export default async function handler(req: any, res: any) {
           `
             SELECT categoria AS name, COALESCE(SUM(monto), 0) AS value
             FROM movimientos_financieros
-            WHERE tipo = 'egreso' AND fecha BETWEEN $1 AND $2
+            WHERE tipo = 'egreso' AND DATE(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
             GROUP BY categoria
             ORDER BY value DESC
           `,
@@ -470,12 +470,12 @@ export default async function handler(req: any, res: any) {
         const cashFlowResult = await pool.query(
           `
             SELECT
-              TO_CHAR(fecha::timestamp, 'YYYY-MM-DD') AS fecha,
+              TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD') AS fecha,
               COALESCE(SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE 0 END), 0) AS ingresos,
               COALESCE(SUM(CASE WHEN tipo = 'egreso' THEN monto ELSE 0 END), 0) AS egresos
             FROM movimientos_financieros
-            WHERE fecha BETWEEN $1 AND $2
-            GROUP BY TO_CHAR(fecha::timestamp, 'YYYY-MM-DD')
+            WHERE DATE(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
+            GROUP BY TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD')
             ORDER BY fecha ASC
           `,
           [fromDate, toDate]
@@ -580,7 +580,7 @@ export default async function handler(req: any, res: any) {
             JOIN sale_items si ON s.id = si.sale_id
             JOIN products p ON si.product_id = p.id
             LEFT JOIN clientes c ON s.cliente_id = c.id
-            WHERE s.fecha BETWEEN $1 AND $2
+            WHERE DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
               AND ($3::int IS NULL OR s.cliente_id = $3)
             GROUP BY s.id, s.fecha, cliente, s.metodo_pago, s.total, s.costo_total, s.ganancia
             ORDER BY s.fecha DESC, s.id DESC
@@ -597,7 +597,7 @@ export default async function handler(req: any, res: any) {
               COUNT(*)::int AS cantidad_ventas,
               COALESCE(AVG(total), 0) AS ticket_promedio
             FROM sales s
-            WHERE s.fecha BETWEEN $1 AND $2
+            WHERE DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
               AND ($3::int IS NULL OR s.cliente_id = $3)
           `,
           [fromDate, toDate, clienteId]
@@ -638,7 +638,7 @@ export default async function handler(req: any, res: any) {
               COALESCE(SUM(s.ganancia), 0) AS total_ganancia
             FROM sales s
             LEFT JOIN clientes c ON s.cliente_id = c.id
-            WHERE s.fecha BETWEEN $1 AND $2
+            WHERE DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
             GROUP BY COALESCE(c.id, s.cliente_id), COALESCE(c.nombre_apellido, s.nombre_cliente, 'Consumidor Final')
             ORDER BY total_comprado DESC, cliente ASC
           `,
@@ -668,7 +668,7 @@ export default async function handler(req: any, res: any) {
             FROM sale_items si
             JOIN sales s ON si.sale_id = s.id
             JOIN products p ON si.product_id = p.id
-            WHERE s.fecha BETWEEN $1 AND $2
+            WHERE DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
             GROUP BY p.id, p.name
             ORDER BY cantidad_vendida DESC, producto ASC
           `,
@@ -705,7 +705,7 @@ export default async function handler(req: any, res: any) {
             FROM sale_items si
             JOIN sales s ON si.sale_id = s.id
             JOIN products p ON si.product_id = p.id
-            WHERE s.fecha BETWEEN $1 AND $2
+            WHERE DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
               AND ($3::int IS NULL OR p.id = $3)
             GROUP BY p.id, p.name
             ORDER BY ganancia DESC, producto ASC
@@ -736,7 +736,7 @@ export default async function handler(req: any, res: any) {
               c.saldo_cta_cte AS monto_deuda,
               COUNT(s.id)::int AS ventas_pendientes,
               MIN(s.fecha) AS fecha_antigua,
-              COALESCE((CURRENT_DATE - MIN(DATE(s.fecha::timestamp)))::int, 0) AS dias_vencidos
+              COALESCE((CURRENT_DATE - MIN(DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires')))::int, 0) AS dias_vencidos
             FROM clientes c
             LEFT JOIN sales s ON s.cliente_id = c.id AND s.monto_pendiente > 0
             WHERE COALESCE(c.saldo_cta_cte, 0) > 0
@@ -775,7 +775,7 @@ export default async function handler(req: any, res: any) {
               (s.total * $3::numeric / 100) AS comision_generada
             FROM sales s
             JOIN clientes c ON s.cliente_id = c.id
-            WHERE s.fecha BETWEEN $1 AND $2
+            WHERE DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
               AND c.tipo_cliente = 'mayorista'
             ORDER BY s.fecha DESC, s.id DESC
           `,

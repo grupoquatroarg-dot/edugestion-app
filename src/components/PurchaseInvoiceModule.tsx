@@ -25,6 +25,7 @@ import {
 import { Product, PurchaseInvoice } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { apiFetch, unwrapResponse } from '../utils/api';
+import { formatBusinessDate, getBusinessDateInputValue } from '../utils/businessDate';
 
 type InvoiceFormItem = {
   product_id: number | string;
@@ -56,11 +57,7 @@ const emptyProviderForm: ProviderForm = {
   direccion: '',
 };
 
-const getToday = () => {
-  const now = new Date();
-  const offset = now.getTimezoneOffset();
-  return new Date(now.getTime() - offset * 60_000).toISOString().split('T')[0];
-};
+const getToday = getBusinessDateInputValue;
 
 const formatCurrency = (value: unknown) =>
   new Intl.NumberFormat('es-AR', {
@@ -69,19 +66,7 @@ const formatCurrency = (value: unknown) =>
     maximumFractionDigits: 0,
   }).format(Number(value || 0));
 
-const formatDate = (value: unknown) => {
-  const raw = String(value || '').trim();
-  if (!raw) return 'Sin fecha';
-
-  const date = new Date(raw.length === 10 ? `${raw}T12:00:00` : raw);
-  if (Number.isNaN(date.getTime())) return raw;
-
-  return new Intl.DateTimeFormat('es-AR', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  }).format(date);
-};
+const formatDate = (value: unknown) => formatBusinessDate(value);
 
 const getInvoiceBalance = (invoice: PurchaseInvoice) =>
   Math.max(0, Number((invoice as any).saldo_pendiente ?? Number(invoice.total || 0) - Number((invoice as any).monto_pagado || 0)));

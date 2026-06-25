@@ -37,6 +37,13 @@ import {
   Area
 } from 'recharts';
 import { apiFetch, unwrapResponse } from '../utils/api';
+import {
+  addBusinessDays,
+  differenceInBusinessCalendarDays,
+  formatBusinessDate,
+  formatBusinessTime,
+  getBusinessDateInputValue,
+} from '../utils/businessDate';
 
 type ReportData = {
   ventas: {
@@ -164,9 +171,12 @@ function ReportEmptyState({
 
 export default function ReportsModule() {
   const [activeTab, setActiveTab] = useState<'ventas' | 'clientes' | 'productos' | 'deudas' | 'finanzas' | 'ventas-periodo' | 'ventas-cliente' | 'productos-vendidos' | 'rentabilidad-producto' | 'cuentas-corrientes' | 'comisiones'>('ventas');
-  const [dateRange, setDateRange] = useState({
-    from: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0],
-    to: new Date().toISOString().split('T')[0]
+  const [dateRange, setDateRange] = useState(() => {
+    const today = getBusinessDateInputValue();
+    return {
+      from: addBusinessDays(today, -30),
+      to: today,
+    };
   });
   const [clienteId, setClienteId] = useState<string>('');
   const [clientes, setClientes] = useState<{ id: number; nombre_apellido: string }[]>([]);
@@ -456,19 +466,9 @@ export default function ReportsModule() {
   const number = (value: unknown) =>
     (Number(value) || 0).toLocaleString('es-AR', { maximumFractionDigits: 2 });
 
-  const formatDate = (value: unknown) => {
-    if (!value) return 'Sin fecha';
-    const parsed = new Date(String(value));
-    return Number.isNaN(parsed.getTime()) ? 'Sin fecha' : parsed.toLocaleDateString('es-AR');
-  };
+  const formatDate = (value: unknown) => formatBusinessDate(value);
 
-  const formatTime = (value: unknown) => {
-    if (!value) return '';
-    const parsed = new Date(String(value));
-    return Number.isNaN(parsed.getTime())
-      ? ''
-      : parsed.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-  };
+  const formatTime = (value: unknown) => formatBusinessTime(value);
 
   const openClientHistory = (id: number, nombre: string) => {
     setViewingClientSales({ id, nombre });
@@ -1336,7 +1336,7 @@ export default function ReportsModule() {
                   <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
                     {reportData.deudas.rankingDeudores.map((debtor, index) => {
                       const delayDays = debtor.fecha_antigua
-                        ? Math.max(0, Math.floor((Date.now() - new Date(debtor.fecha_antigua).getTime()) / 86400000))
+                        ? Math.max(0, differenceInBusinessCalendarDays(debtor.fecha_antigua))
                         : 0;
                       return (
                         <article key={debtor.id} className="min-w-0 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">

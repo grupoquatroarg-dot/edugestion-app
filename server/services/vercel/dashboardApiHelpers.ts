@@ -2,6 +2,7 @@ import { getPostgresPool, isPostgresConfigured } from "../../utils/postgres.js";
 import { UserRepository } from "../../repositories/userRepository.js";
 import { verifyToken } from "../../utils/jwt.js";
 import { sendError } from "../../utils/response.js";
+import { getBusinessDate } from "../../utils/businessDate.js";
 
 export const toNumber = (value: any, fallback: number = 0) => {
   if (value === null || value === undefined || value === "") return fallback;
@@ -10,11 +11,11 @@ export const toNumber = (value: any, fallback: number = 0) => {
 };
 
 export const getDateKeys = () => {
-  const now = new Date();
-  const currentMonth = now.toISOString().slice(0, 7);
-  const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const prevMonth = prevMonthDate.toISOString().slice(0, 7);
-  const today = now.toISOString().slice(0, 10);
+  const today = getBusinessDate();
+  const [year, month] = today.split("-").map(Number);
+  const previousMonthDate = new Date(Date.UTC(year, month - 2, 1, 12, 0, 0));
+  const currentMonth = today.slice(0, 7);
+  const prevMonth = `${previousMonthDate.getUTCFullYear()}-${String(previousMonthDate.getUTCMonth() + 1).padStart(2, "0")}`;
 
   return { currentMonth, prevMonth, today };
 };
@@ -90,12 +91,12 @@ export const getSummaryData = async (pool: any) => {
     pool.query(`
       SELECT COALESCE(SUM(ganancia), 0) AS total
       FROM sales
-      WHERE TO_CHAR(fecha::timestamp, 'YYYY-MM') = $1
+      WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
     `, [currentMonth]),
     pool.query(`
       SELECT COALESCE(SUM(ganancia), 0) AS total
       FROM sales
-      WHERE TO_CHAR(fecha::timestamp, 'YYYY-MM') = $1
+      WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
     `, [prevMonth]),
     pool.query(`
       SELECT
@@ -103,17 +104,17 @@ export const getSummaryData = async (pool: any) => {
         COUNT(*)::int AS cantidad,
         COALESCE(AVG(total), 0) AS ticket_promedio
       FROM sales
-      WHERE TO_CHAR(fecha::timestamp, 'YYYY-MM') = $1
+      WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
     `, [currentMonth]),
     pool.query(`
       SELECT COALESCE(SUM(total), 0) AS total
       FROM sales
-      WHERE TO_CHAR(fecha::timestamp, 'YYYY-MM') = $1
+      WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
     `, [prevMonth]),
     pool.query(`
       SELECT COALESCE(SUM(total), 0) AS total
       FROM sales
-      WHERE TO_CHAR(fecha::timestamp, 'YYYY-MM-DD') = $1
+      WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD') = $1
     `, [today]),
     pool.query(`
       SELECT
@@ -121,7 +122,7 @@ export const getSummaryData = async (pool: any) => {
         COALESCE(SUM(s.total), 0) AS total
       FROM sales s
       LEFT JOIN clientes c ON s.cliente_id = c.id
-      WHERE TO_CHAR(s.fecha::timestamp, 'YYYY-MM') = $1
+      WHERE TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
       GROUP BY COALESCE(c.nombre_apellido, s.nombre_cliente, 'Sin nombre')
       ORDER BY total DESC
       LIMIT 5
@@ -133,7 +134,7 @@ export const getSummaryData = async (pool: any) => {
       FROM sale_items si
       JOIN products p ON si.product_id = p.id
       JOIN sales s ON si.sale_id = s.id
-      WHERE TO_CHAR(s.fecha::timestamp, 'YYYY-MM') = $1
+      WHERE TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
       GROUP BY p.id, p.name
       ORDER BY total_qty DESC, p.name ASC
       LIMIT 5
@@ -152,7 +153,7 @@ export const getSummaryData = async (pool: any) => {
       FROM sale_items si
       JOIN products p ON si.product_id = p.id
       JOIN sales s ON si.sale_id = s.id
-      WHERE TO_CHAR(s.fecha::timestamp, 'YYYY-MM') = $1
+      WHERE TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
       GROUP BY p.id, p.name
       ORDER BY ganancia DESC, p.name ASC
       LIMIT 5
@@ -203,7 +204,7 @@ export const getSummaryData = async (pool: any) => {
           FROM sales s
           WHERE s.cliente_id = c.id
             AND s.metodo_pago = 'Cta Cte'
-            AND DATE(s.fecha::timestamp) <= CURRENT_DATE - INTERVAL '7 days'
+            AND DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') <= CURRENT_DATE - INTERVAL '7 days'
         )
     `),
   ]);

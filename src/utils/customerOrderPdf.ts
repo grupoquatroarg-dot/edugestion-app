@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { formatBusinessDate, getBusinessDateInputValue, getBusinessDateKey } from './businessDate';
 
 const formatCurrency = (value: any) => {
   const numberValue = Number(value || 0);
@@ -43,10 +44,9 @@ const getStatusLabel = (order: any) => {
 
 export const getCustomerOrderPdfFileName = (order: any) => {
   const clientName = sanitizeFileName(order?.cliente || order?.nombre_cliente || 'Cliente');
-  const rawDate = order?.fecha ? new Date(order.fecha) : new Date();
-  const dateText = Number.isNaN(rawDate.getTime())
-    ? new Date().toISOString().split('T')[0]
-    : rawDate.toISOString().split('T')[0];
+  const dateText = order?.fecha
+    ? getBusinessDateKey(order.fecha) || getBusinessDateInputValue()
+    : getBusinessDateInputValue();
 
   return `Pedido_${clientName}_${dateText}.pdf`;
 };
@@ -67,7 +67,7 @@ export const generateCustomerOrderPdf = (order: any, businessSettings: Record<st
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   doc.text(`Cliente: ${order?.cliente || '-'}`, margin, 39);
-  doc.text(`Fecha: ${order?.fecha ? new Date(order.fecha).toLocaleDateString('es-AR') : '-'}`, margin, 45);
+  doc.text(`Fecha: ${order?.fecha ? formatBusinessDate(order.fecha) : '-'}`, margin, 45);
   doc.text(`Estado: ${getStatusLabel(order)}`, margin, 51);
 
   const rows = (order?.items || []).map((item: any) => [

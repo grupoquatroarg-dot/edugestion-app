@@ -1,6 +1,7 @@
 import db from '../db.js';
 import { getPostgresPool, isPostgresConfigured } from '../utils/postgres.js';
 import { AppError } from '../utils/response.js';
+import { normalizeBusinessDateForStorage, toBusinessDateKey, toStoredDateOnly } from '../utils/businessDate.js';
 
 type Queryable = {
   query: (text: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }>;
@@ -42,9 +43,14 @@ const getAndIncrementSetting = async (client: Queryable, key: string, defaultVal
   return currentValue;
 };
 
+const DATE_BASED_MOVEMENT_ORIGINS = new Set(['egreso_manual', 'compra', 'cobranza', 'pago_cc']);
+
 const mapMovement = (row: any) => ({
   id: toNumber(row.id),
   fecha: row.fecha,
+  fecha_dia: DATE_BASED_MOVEMENT_ORIGINS.has(String(row.origen || '').toLowerCase())
+    ? toStoredDateOnly(row.fecha)
+    : toBusinessDateKey(row.fecha),
   tipo: row.tipo,
   origen: row.origen,
   cliente_id: row.cliente_id === null || row.cliente_id === undefined ? null : toNumber(row.cliente_id),
@@ -64,12 +70,12 @@ const mapCheque = (row: any) => ({
   numero_cheque: row.numero_cheque || '',
   banco: row.banco || '',
   importe: toNumber(row.importe),
-  fecha_vencimiento: row.fecha_vencimiento || '',
+  fecha_vencimiento: toStoredDateOnly(row.fecha_vencimiento) || '',
   estado: row.estado || 'en_cartera',
   cliente_id: row.cliente_id === null || row.cliente_id === undefined ? null : toNumber(row.cliente_id),
   venta_id: row.venta_id === null || row.venta_id === undefined ? null : toNumber(row.venta_id),
   proveedor_id: row.proveedor_id === null || row.proveedor_id === undefined ? null : toNumber(row.proveedor_id),
-  fecha_entrega: row.fecha_entrega || null,
+  fecha_entrega: row.fecha_entrega ? toStoredDateOnly(row.fecha_entrega) : null,
   observaciones: row.observaciones || null,
   nombre_cliente: row.nombre_cliente || null,
   numero_venta: row.numero_venta || null,
@@ -84,7 +90,7 @@ export const financeRepository = {
         FROM movimientos_financieros m
         LEFT JOIN clientes c ON m.cliente_id = c.id
         ORDER BY m.fecha DESC, m.id DESC
-      `).all();
+      `).all().map(mapMovement);
     }
 
     const queryable = getExecutor(executor);
@@ -107,7 +113,7 @@ export const financeRepository = {
         LEFT JOIN sales s ON ch.venta_id = s.id
         LEFT JOIN proveedores p ON ch.proveedor_id = p.id
         ORDER BY ch.fecha_vencimiento ASC, ch.id ASC
-      `).all();
+      `).all().map(mapCheque);
     }
 
     const queryable = getExecutor(executor);
@@ -147,7 +153,7 @@ export const financeRepository = {
             'Cheque Rechazado',
             'cheque',
             cheque.importe,
-            new Date().toISOString(),
+            normalizeBusinessDateForStorage(),
             'Sistema',
             nextPaymentNum,
             id
@@ -196,7 +202,7 @@ export const financeRepository = {
               'Cheque Rechazado',
               'cheque',
               toNumber(cheque.importe),
-              new Date().toISOString(),
+              normalizeBusinessDateForStorage(),
               'Sistema',
               nextPaymentNum,
               id,
@@ -227,6 +233,7 @@ export const financeRepository = {
     } = expenseData;
 
     const amount = toNumber(monto);
+    const movementDate = normalizeBusinessDateForStorage(fecha);
     const chequeId = cheque_id === null || cheque_id === undefined || cheque_id === '' ? null : Number(cheque_id);
     const proveedorId = proveedor_id === null || proveedor_id === undefined || proveedor_id === '' ? null : Number(proveedor_id);
 
@@ -250,7 +257,7 @@ export const financeRepository = {
           categoria,
           forma_pago,
           amount,
-          fecha || new Date().toISOString(),
+          movementDate,
           usuario || 'Sistema',
           nextPaymentNum,
           chequeId || null
@@ -263,7 +270,7 @@ export const financeRepository = {
                 proveedor_id = ?,
                 fecha_entrega = ?
             WHERE id = ?
-          `).run(proveedorId || null, fecha || new Date().toISOString(), chequeId);
+          `).run(proveedorId || null, movementDate, chequeId);
         }
       })();
     }
@@ -285,7 +292,7 @@ export const financeRepository = {
             categoria,
             forma_pago,
             amount,
-            fecha || new Date().toISOString(),
+            movementDate,
             usuario || 'Sistema',
             nextPaymentNum,
             chequeId,
@@ -311,7 +318,7 @@ export const financeRepository = {
                  proveedor_id = $1,
                  fecha_entrega = $2
              WHERE id = $3`,
-            [proveedorId, fecha || new Date().toISOString(), chequeId]
+            [proveedorId, movementDate, chequeId]
           );
         }
 

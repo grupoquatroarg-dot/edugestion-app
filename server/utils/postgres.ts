@@ -19,6 +19,7 @@ export const getPostgresPool = () => {
     pool = new Pool({
       connectionString: process.env.DATABASE_URL,
       ssl: useSsl ? { rejectUnauthorized: false } : false,
+      options: "-c timezone=America/Argentina/Buenos_Aires",
     });
   }
 

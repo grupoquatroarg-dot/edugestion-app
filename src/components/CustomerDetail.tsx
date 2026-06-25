@@ -29,6 +29,7 @@ import {
 import { getSocket } from '../utils/socket';
 import { generateSaleReceipt } from '../utils/pdfGenerator';
 import { unwrapResponse, apiFetch } from '../utils/api';
+import { formatBusinessDate, formatBusinessDateTime, getBusinessDateInputValue } from '../utils/businessDate';
 
 const socket = getSocket();
 
@@ -60,7 +61,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentForm, setPaymentForm] = useState({
     monto: '',
-    fecha: new Date().toISOString().split('T')[0],
+    fecha: getBusinessDateInputValue(),
     metodo_pago: '',
     observaciones: ''
   });
@@ -169,7 +170,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
       setShowPaymentModal(false);
       setPaymentForm({
         monto: '',
-        fecha: new Date().toISOString().split('T')[0],
+        fecha: getBusinessDateInputValue(),
         metodo_pago: paymentMethods.length > 0 ? paymentMethods[0].name : '',
         observaciones: ''
       });
@@ -264,18 +265,14 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
       maximumFractionDigits: 2
     }).format(Number(value || 0));
 
-  const formatDateTime = (value: string) => {
-    if (!value) return '-';
-    return new Date(value).toLocaleString('es-AR', {
-      dateStyle: 'short',
-      timeStyle: 'short'
-    });
-  };
+  const formatDateTime = (value: string) => formatBusinessDateTime(value, '-');
 
-  const formatDate = (value: string) => {
-    if (!value) return '-';
-    return new Date(value).toLocaleDateString('es-AR');
-  };
+  const formatDate = (value: string) => formatBusinessDate(value, '-');
+
+  const formatMovementDate = (movement: any) =>
+    movement?.operation_type === 'venta'
+      ? formatDateTime(movement.fecha)
+      : formatDate(movement?.fecha);
 
   if (loading) {
     return (
@@ -720,7 +717,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                                   <span className="break-all font-mono text-[10px] font-bold text-slate-500">{reference}</span>
                                 </div>
                                 <h4 className="mt-2 break-words text-sm font-black leading-5 text-slate-950">{movement.descripcion || 'Movimiento de cuenta corriente'}</h4>
-                                <p className="mt-1 text-xs text-slate-400">{formatDateTime(movement.fecha)}</p>
+                                <p className="mt-1 text-xs text-slate-400">{formatMovementDate(movement)}</p>
                               </div>
                               <button type="button" onClick={() => movement.venta_id ? fetchSaleDetails(Number(movement.venta_id)) : setSelectedMovement(movement)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50" title="Ver detalle" aria-label="Ver detalle del movimiento">
                                 <Eye size={17} />
@@ -860,7 +857,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
             <div className="flex shrink-0 items-center justify-between gap-3 bg-slate-950 p-4 text-white sm:p-5">
               <div className="min-w-0">
                 <h3 className="text-lg font-black">Detalle del movimiento</h3>
-                <p className="mt-1 text-xs text-slate-400">{formatDateTime(selectedMovement.fecha)}</p>
+                <p className="mt-1 text-xs text-slate-400">{formatMovementDate(selectedMovement)}</p>
               </div>
               <button type="button" onClick={() => setSelectedMovement(null)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl hover:bg-white/10" aria-label="Cerrar detalle" title="Cerrar">
                 <X size={20} />
