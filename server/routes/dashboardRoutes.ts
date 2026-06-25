@@ -1,4 +1,4 @@
-eimport { Router } from "express";
+import { Router } from "express";
 import db from "../db.js";
 import { requirePermission } from "../middleware/authMiddleware.js";
 import { sendError, sendSuccess } from "../utils/response.js";
