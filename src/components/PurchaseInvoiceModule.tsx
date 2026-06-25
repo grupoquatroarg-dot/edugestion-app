@@ -1,8 +1,30 @@
-import React, { useEffect, useState } from 'react';
-import { Plus, Search, X, FileText, Calendar, User, Trash2, Save, Eye, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  AlertCircle,
+  Building2,
+  Calendar,
+  CheckCircle2,
+  CircleDollarSign,
+  CreditCard,
+  Eye,
+  FileText,
+  Loader2,
+  Mail,
+  MapPin,
+  PackagePlus,
+  Phone,
+  Plus,
+  Receipt,
+  RefreshCw,
+  Save,
+  Search,
+  Trash2,
+  WalletCards,
+  X,
+} from 'lucide-react';
 import { Product, PurchaseInvoice } from '../types';
 import { useAuth } from '../contexts/AuthContext';
-import { unwrapResponse, apiFetch } from '../utils/api';
+import { apiFetch, unwrapResponse } from '../utils/api';
 
 type InvoiceFormItem = {
   product_id: number | string;
@@ -18,6 +40,14 @@ type ProviderForm = {
   direccion: string;
 };
 
+type Provider = ProviderForm & {
+  id: number;
+  estado?: string;
+};
+
+type ModuleView = 'invoices' | 'providers';
+type InvoiceFilter = 'all' | 'paid' | 'pending';
+
 const emptyProviderForm: ProviderForm = {
   nombre: '',
   cuit: '',
@@ -26,33 +56,94 @@ const emptyProviderForm: ProviderForm = {
   direccion: '',
 };
 
+const getToday = () => {
+  const now = new Date();
+  const offset = now.getTimezoneOffset();
+  return new Date(now.getTime() - offset * 60_000).toISOString().split('T')[0];
+};
+
+const formatCurrency = (value: unknown) =>
+  new Intl.NumberFormat('es-AR', {
+    style: 'currency',
+    currency: 'ARS',
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0));
+
+const formatDate = (value: unknown) => {
+  const raw = String(value || '').trim();
+  if (!raw) return 'Sin fecha';
+
+  const date = new Date(raw.length === 10 ? `${raw}T12:00:00` : raw);
+  if (Number.isNaN(date.getTime())) return raw;
+
+  return new Intl.DateTimeFormat('es-AR', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(date);
+};
+
+const getInvoiceBalance = (invoice: PurchaseInvoice) =>
+  Math.max(0, Number((invoice as any).saldo_pendiente ?? Number(invoice.total || 0) - Number((invoice as any).monto_pagado || 0)));
+
+const isInvoicePaid = (invoice: PurchaseInvoice) =>
+  String((invoice as any).estado_pago || '').toLowerCase() === 'pagado' || getInvoiceBalance(invoice) <= 0;
+
+const getPaymentMethodLabel = (method: unknown) => {
+  const value = String(method || '').toLowerCase();
+  const labels: Record<string, string> = {
+    efectivo: 'Efectivo',
+    transferencia: 'Transferencia',
+    mercado_pago: 'Mercado Pago',
+    cheque: 'Cheque',
+    'cta cte': 'Cuenta corriente',
+  };
+
+  return labels[value] || String(method || 'Sin informar');
+};
+
 export default function PurchaseInvoiceModule() {
   const { hasPermission } = useAuth();
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [proveedores, setProveedores] = useState<any[]>([]);
+  const [proveedores, setProveedores] = useState<Provider[]>([]);
+  const [activeView, setActiveView] = useState<ModuleView>('invoices');
+  const [invoiceFilter, setInvoiceFilter] = useState<InvoiceFilter>('all');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [providerSearch, setProviderSearch] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState('');
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isProviderModalOpen, setIsProviderModalOpen] = useState(false);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<PurchaseInvoice | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedInvoiceForPayment, setSelectedInvoiceForPayment] = useState<PurchaseInvoice | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState('');
+
   const [isCreatingNewProduct, setIsCreatingNewProduct] = useState(false);
   const [newProductName, setNewProductName] = useState('');
   const [providerForm, setProviderForm] = useState<ProviderForm>(emptyProviderForm);
-  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [isCreatingProvider, setIsCreatingProvider] = useState(false);
+  const [providerSubmitError, setProviderSubmitError] = useState('');
+  const [isPayingInvoice, setIsPayingInvoice] = useState(false);
+  const [paymentSubmitError, setPaymentSubmitError] = useState('');
   const [isSubmittingInvoice, setIsSubmittingInvoice] = useState(false);
   const [invoiceSubmitError, setInvoiceSubmitError] = useState('');
-  const [invoiceSuccessMessage, setInvoiceSuccessMessage] = useState('');
-  const [selectedInvoiceForPayment, setSelectedInvoiceForPayment] = useState<PurchaseInvoice | null>(null);
+  const [successMessage, setSuccessMessage] = useState('');
+
   const [paymentForm, setPaymentForm] = useState({
     metodo_pago_real: 'efectivo',
-    fecha_pago: new Date().toISOString().split('T')[0],
+    fecha_pago: getToday(),
   });
 
   const [formData, setFormData] = useState({
     numero_factura: '',
     proveedor_id: 0,
-    fecha_compra: new Date().toISOString().split('T')[0],
+    fecha_compra: getToday(),
     metodo_pago: 'efectivo',
     items: [] as InvoiceFormItem[],
   });
@@ -63,66 +154,76 @@ export default function PurchaseInvoiceModule() {
     costo_unitario: 0,
   });
 
-  useEffect(() => {
-    fetchInvoices();
-    fetchProducts();
-    fetchProveedores();
-  }, []);
+  const handleApiJson = async <T,>(res: Response): Promise<T> => {
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      throw new Error('El servidor devolvió una respuesta inesperada. Intente nuevamente.');
+    }
 
-  useEffect(() => {
-    if (!invoiceSuccessMessage) return;
-
-    const timer = window.setTimeout(() => {
-      setInvoiceSuccessMessage('');
-    }, 5000);
-
-    return () => window.clearTimeout(timer);
-  }, [invoiceSuccessMessage]);
-
-  const handleApiJson = async (res: Response) => {
     const body = await res.json();
-    return unwrapResponse(body);
+    return unwrapResponse<T>(body);
   };
 
   const fetchProveedores = async () => {
-    try {
-      const res = await apiFetch('/api/purchase-invoices?endpoint=proveedores');
-      const data = await handleApiJson(res);
-      setProveedores(data || []);
-    } catch (error) {
-      console.error('Error fetching proveedores:', error);
-    }
+    const res = await apiFetch('/api/purchase-invoices?endpoint=proveedores');
+    const data = await handleApiJson<Provider[]>(res);
+    setProveedores(Array.isArray(data) ? data : []);
   };
 
   const fetchInvoices = async () => {
-    try {
-      const res = await apiFetch('/api/purchase-invoices');
-      const data = await handleApiJson(res);
-      setInvoices(data || []);
-    } catch (error) {
-      console.error('Error fetching invoices:', error);
-    }
+    const res = await apiFetch('/api/purchase-invoices');
+    const data = await handleApiJson<PurchaseInvoice[]>(res);
+    setInvoices(Array.isArray(data) ? data : []);
   };
 
   const fetchProducts = async () => {
+    const res = await apiFetch('/api/products?all=true');
+    const data = await handleApiJson<Product[]>(res);
+    setProducts(Array.isArray(data) ? data : []);
+  };
+
+  const loadData = async (background = false) => {
+    if (background) setIsRefreshing(true);
+    else setIsLoading(true);
+
+    setLoadError('');
+
     try {
-      const res = await apiFetch('/api/products?all=true');
-      const data = await handleApiJson(res);
-      setProducts(data || []);
-    } catch (error) {
-      console.error('Error fetching products:', error);
+      await Promise.all([fetchInvoices(), fetchProducts(), fetchProveedores()]);
+    } catch (error: any) {
+      console.error('Error loading purchase invoice module:', error);
+      setLoadError(error?.message || 'No se pudieron cargar las facturas y proveedores.');
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
+  useEffect(() => {
+    void loadData();
+  }, []);
+
+  useEffect(() => {
+    if (!successMessage) return;
+    const timer = window.setTimeout(() => setSuccessMessage(''), 5000);
+    return () => window.clearTimeout(timer);
+  }, [successMessage]);
+
   const fetchInvoiceDetails = async (id: number) => {
+    setDetailLoading(true);
+    setDetailError('');
+    setSelectedInvoice(null);
+    setIsViewModalOpen(true);
+
     try {
       const res = await apiFetch(`/api/purchase-invoices?id=${id}`);
-      const data = await handleApiJson(res);
+      const data = await handleApiJson<PurchaseInvoice>(res);
       setSelectedInvoice(data);
-      setIsViewModalOpen(true);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching invoice details:', error);
-      alert('Error al obtener el detalle de la factura');
+      setDetailError(error?.message || 'No se pudo obtener el detalle de la factura.');
+    } finally {
+      setDetailLoading(false);
     }
   };
 
@@ -136,20 +237,33 @@ export default function PurchaseInvoiceModule() {
     setFormData({
       numero_factura: '',
       proveedor_id: 0,
-      fecha_compra: new Date().toISOString().split('T')[0],
+      fecha_compra: getToday(),
       metodo_pago: 'efectivo',
       items: [],
     });
     resetCurrentItem();
   };
 
-  const handleCreateProvider = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const openInvoiceForm = (providerId?: number) => {
+    setInvoiceSubmitError('');
+    if (providerId) {
+      setFormData((previous) => ({ ...previous, proveedor_id: providerId }));
+    }
+    setIsModalOpen(true);
+  };
+
+  const handleCreateProvider = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (isCreatingProvider) return;
+
+    setProviderSubmitError('');
 
     if (!providerForm.nombre.trim()) {
-      alert('Ingrese el nombre del proveedor');
+      setProviderSubmitError('Ingrese el nombre del proveedor.');
       return;
     }
+
+    setIsCreatingProvider(true);
 
     try {
       const res = await apiFetch('/api/purchase-invoices?endpoint=proveedores', {
@@ -164,46 +278,48 @@ export default function PurchaseInvoiceModule() {
         }),
       });
 
-      const createdProvider = await handleApiJson(res);
+      const createdProvider = await handleApiJson<Provider>(res);
       await fetchProveedores();
 
       if (createdProvider?.id) {
-        setFormData((prev) => ({ ...prev, proveedor_id: Number(createdProvider.id) }));
+        setFormData((previous) => ({ ...previous, proveedor_id: Number(createdProvider.id) }));
       }
 
       setProviderForm(emptyProviderForm);
       setIsProviderModalOpen(false);
+      setSuccessMessage(`Proveedor ${createdProvider?.nombre || ''} creado correctamente.`);
     } catch (error: any) {
       console.error('Error creating provider:', error);
-      alert(error?.message || 'Error al crear proveedor');
+      setProviderSubmitError(error?.message || 'No se pudo crear el proveedor.');
+    } finally {
+      setIsCreatingProvider(false);
     }
   };
 
   const openPaymentModal = (invoice: PurchaseInvoice) => {
     setSelectedInvoiceForPayment(invoice);
-    setPaymentForm({
-      metodo_pago_real: 'efectivo',
-      fecha_pago: new Date().toISOString().split('T')[0],
-    });
+    setPaymentSubmitError('');
+    setPaymentForm({ metodo_pago_real: 'efectivo', fecha_pago: getToday() });
     setIsPaymentModalOpen(true);
   };
 
-  const handlePayInvoice = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handlePayInvoice = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedInvoiceForPayment || isPayingInvoice) return;
 
-    if (!selectedInvoiceForPayment) return;
-
-    const saldoPendiente = Number((selectedInvoiceForPayment as any).saldo_pendiente ?? selectedInvoiceForPayment.total ?? 0);
-
+    const saldoPendiente = getInvoiceBalance(selectedInvoiceForPayment);
     if (saldoPendiente <= 0) {
-      alert('La factura no tiene saldo pendiente');
+      setPaymentSubmitError('La factura no tiene saldo pendiente.');
       return;
     }
 
     if (paymentForm.metodo_pago_real === 'Cta Cte') {
-      alert('Seleccione un metodo de pago real');
+      setPaymentSubmitError('Seleccione un método de pago real.');
       return;
     }
+
+    setIsPayingInvoice(true);
+    setPaymentSubmitError('');
 
     try {
       const res = await apiFetch(`/api/purchase-invoices?id=${selectedInvoiceForPayment.id}`, {
@@ -212,14 +328,15 @@ export default function PurchaseInvoiceModule() {
       });
 
       await handleApiJson(res);
-
       setIsPaymentModalOpen(false);
       setSelectedInvoiceForPayment(null);
       await fetchInvoices();
-      alert('Pago registrado correctamente');
+      setSuccessMessage('Pago de proveedor registrado correctamente.');
     } catch (error: any) {
       console.error('Error paying supplier invoice:', error);
-      alert(error?.message || 'Error al registrar pago de proveedor');
+      setPaymentSubmitError(error?.message || 'No se pudo registrar el pago del proveedor.');
+    } finally {
+      setIsPayingInvoice(false);
     }
   };
 
@@ -228,32 +345,32 @@ export default function PurchaseInvoiceModule() {
     const isExistingValid = !isCreatingNewProduct && currentItem.product_id !== 0;
 
     if (!(isNewValid || isExistingValid)) {
-      alert('Seleccione un producto o cargue el nombre del producto nuevo');
+      setInvoiceSubmitError('Seleccione un producto o ingrese el nombre del producto nuevo.');
       return;
     }
 
     if (currentItem.cantidad <= 0) {
-      alert('La cantidad debe ser mayor a cero');
+      setInvoiceSubmitError('La cantidad debe ser mayor a cero.');
       return;
     }
 
     if (currentItem.costo_unitario < 0) {
-      alert('El costo unitario no puede ser negativo');
+      setInvoiceSubmitError('El costo unitario no puede ser negativo.');
       return;
     }
 
     const finalProductId = isCreatingNewProduct ? `new:${newProductName.trim()}` : currentItem.product_id;
 
-    setFormData((prev) => ({
-      ...prev,
-      items: [...prev.items, { ...currentItem, product_id: finalProductId }],
+    setFormData((previous) => ({
+      ...previous,
+      items: [...previous.items, { ...currentItem, product_id: finalProductId }],
     }));
-
+    setInvoiceSubmitError('');
     resetCurrentItem();
   };
 
   const handleRemoveItem = (index: number) => {
-    setFormData((prev) => ({ ...prev, items: prev.items.filter((_, i) => i !== index) }));
+    setFormData((previous) => ({ ...previous, items: previous.items.filter((_, itemIndex) => itemIndex !== index) }));
   };
 
   const getPendingItemsForSubmit = () => {
@@ -269,9 +386,8 @@ export default function PurchaseInvoiceModule() {
     return finalItems;
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
     if (isSubmittingInvoice) return;
 
     setInvoiceSubmitError('');
@@ -289,46 +405,38 @@ export default function PurchaseInvoiceModule() {
 
     const invoiceNumber = formData.numero_factura.trim();
     if (!invoiceNumber) {
-      setInvoiceSubmitError('Ingrese el numero de factura.');
+      setInvoiceSubmitError('Ingrese el número de factura.');
       return;
     }
 
     const total = finalItems.reduce((sum, item) => sum + item.cantidad * item.costo_unitario, 0);
-
     const costChanges = finalItems
       .filter((item) => typeof item.product_id === 'number')
       .map((item) => {
-        const product = products.find((p) => p.id === item.product_id);
+        const product = products.find((candidate) => candidate.id === item.product_id);
         if (!product) return null;
 
         const currentCost = Number(product.cost || 0);
         const newCost = Number(item.costo_unitario || 0);
-
         if (currentCost === newCost) return null;
 
-        return {
-          name: product.name,
-          currentCost,
-          newCost,
-        };
+        return { name: product.name, currentCost, newCost };
       })
       .filter(Boolean) as Array<{ name: string; currentCost: number; newCost: number }>;
 
     if (costChanges.length > 0) {
       const message = [
-        'Aviso: al guardar esta factura se actualizara el costo del producto al ultimo costo comprado.',
+        'Aviso: al guardar esta factura se actualizará el costo del producto al último costo comprado.',
         '',
         ...costChanges.map(
-          (change) =>
-            `${change.name}: costo actual $${change.currentCost.toLocaleString()} -> nuevo costo $${change.newCost.toLocaleString()}`
+          (change) => `${change.name}: costo actual ${formatCurrency(change.currentCost)} → nuevo costo ${formatCurrency(change.newCost)}`,
         ),
         '',
-        'La ganancia debe calcularse luego con metodo PEPS/FIFO segun los lotes de compra.',
-        'Desea continuar?',
+        'La ganancia continuará calculándose con método PEPS/FIFO según los lotes de compra.',
+        '¿Desea continuar?',
       ].join('\n');
 
-      const confirmed = window.confirm(message);
-      if (!confirmed) return;
+      if (!window.confirm(message)) return;
     }
 
     setIsSubmittingInvoice(true);
@@ -347,12 +455,10 @@ export default function PurchaseInvoiceModule() {
       });
 
       await handleApiJson(res);
-
       setIsModalOpen(false);
       resetForm();
       setInvoiceSubmitError('');
-      setInvoiceSuccessMessage(`Factura ${invoiceNumber} guardada correctamente.`);
-
+      setSuccessMessage(`Factura ${invoiceNumber} guardada correctamente.`);
       await Promise.all([fetchInvoices(), fetchProducts(), fetchProveedores()]);
     } catch (error: any) {
       console.error('Error submitting invoice:', error);
@@ -362,145 +468,527 @@ export default function PurchaseInvoiceModule() {
     }
   };
 
-  const filteredInvoices = invoices.filter((inv) => {
-    const numero = String(inv.numero_factura || '').toLowerCase();
-    const proveedor = String((inv as any).proveedor || '').toLowerCase();
-    const term = searchTerm.toLowerCase();
-    return numero.includes(term) || proveedor.includes(term);
-  });
+  const filteredInvoices = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
 
+    return invoices.filter((invoice) => {
+      const matchesSearch =
+        !term ||
+        String(invoice.numero_factura || '').toLowerCase().includes(term) ||
+        String((invoice as any).proveedor || '').toLowerCase().includes(term) ||
+        String((invoice as any).metodo_pago || '').toLowerCase().includes(term);
+
+      const paid = isInvoicePaid(invoice);
+      const matchesStatus = invoiceFilter === 'all' || (invoiceFilter === 'paid' ? paid : !paid);
+      return matchesSearch && matchesStatus;
+    });
+  }, [invoiceFilter, invoices, searchTerm]);
+
+  const providerSummaries = useMemo(() => {
+    return proveedores.map((provider) => {
+      const relatedInvoices = invoices.filter(
+        (invoice) =>
+          Number((invoice as any).proveedor_id) === Number(provider.id) ||
+          String((invoice as any).proveedor || '').trim().toLowerCase() === provider.nombre.trim().toLowerCase(),
+      );
+      const totalPurchased = relatedInvoices.reduce((sum, invoice) => sum + Number(invoice.total || 0), 0);
+      const pendingBalance = relatedInvoices.reduce((sum, invoice) => sum + getInvoiceBalance(invoice), 0);
+      const lastInvoice = [...relatedInvoices].sort(
+        (first, second) => new Date(String((second as any).fecha_compra || 0)).getTime() - new Date(String((first as any).fecha_compra || 0)).getTime(),
+      )[0];
+
+      return {
+        ...provider,
+        invoiceCount: relatedInvoices.length,
+        totalPurchased,
+        pendingBalance,
+        lastInvoiceDate: (lastInvoice as any)?.fecha_compra || '',
+      };
+    });
+  }, [invoices, proveedores]);
+
+  const filteredProviders = useMemo(() => {
+    const term = providerSearch.trim().toLowerCase();
+    if (!term) return providerSummaries;
+
+    return providerSummaries.filter((provider) =>
+      [provider.nombre, provider.cuit, provider.telefono, provider.email, provider.direccion]
+        .some((value) => String(value || '').toLowerCase().includes(term)),
+    );
+  }, [providerSearch, providerSummaries]);
+
+  const totalPurchases = invoices.reduce((sum, invoice) => sum + Number(invoice.total || 0), 0);
+  const totalPending = invoices.reduce((sum, invoice) => sum + getInvoiceBalance(invoice), 0);
+  const paidInvoices = invoices.filter(isInvoicePaid).length;
   const currentItemSubtotal = currentItem.cantidad > 0 && currentItem.costo_unitario >= 0
     ? currentItem.cantidad * currentItem.costo_unitario
     : 0;
-
   const totalInvoice = formData.items.reduce((sum, item) => sum + item.cantidad * item.costo_unitario, 0);
   const totalInvoiceWithCurrentItem = totalInvoice + currentItemSubtotal;
 
+  const getItemName = (item: InvoiceFormItem) => {
+    if (typeof item.product_id === 'string' && item.product_id.startsWith('new:')) {
+      return `${item.product_id.replace('new:', '')} (Nuevo)`;
+    }
+    return products.find((product) => product.id === item.product_id)?.name || 'Producto';
+  };
+
+  const openProviderInvoices = (provider: Provider) => {
+    setActiveView('invoices');
+    setInvoiceFilter('all');
+    setSearchTerm(provider.nombre);
+  };
+
   return (
-    <div className="p-4 sm:p-6 max-w-7xl mx-auto h-full w-full flex flex-col overflow-hidden">
-      {invoiceSuccessMessage && (
+    <div className="min-h-full w-full p-3 sm:p-5 xl:p-7">
+      {successMessage && (
         <div
           role="status"
           aria-live="polite"
-          className="fixed top-4 left-4 right-4 sm:left-auto sm:right-6 sm:max-w-md z-[80] flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-800 shadow-lg"
+          className="fixed left-3 right-3 top-3 z-[100] flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-900 shadow-xl sm:left-auto sm:right-6 sm:top-5 sm:w-full sm:max-w-md"
         >
-          <CheckCircle2 size={20} className="mt-0.5 shrink-0" />
-          <div className="flex-1">
-            <p className="font-bold">Factura guardada correctamente</p>
-            <p className="text-sm">{invoiceSuccessMessage}</p>
-          </div>
+          <CheckCircle2 size={20} className="mt-0.5 shrink-0" aria-hidden="true" />
+          <p className="min-w-0 flex-1 text-sm font-bold leading-5">{successMessage}</p>
           <button
             type="button"
-            onClick={() => setInvoiceSuccessMessage('')}
-            className="rounded-md p-1 text-emerald-700 hover:bg-emerald-100"
+            onClick={() => setSuccessMessage('')}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-emerald-700 hover:bg-emerald-100"
             aria-label="Cerrar mensaje"
             title="Cerrar mensaje"
           >
-            <X size={16} />
+            <X size={17} />
           </button>
         </div>
       )}
 
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6 sm:mb-8">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-zinc-900">Facturas de Compra</h1>
-          <p className="text-zinc-500 mt-1">Gestion de ingresos de mercaderia y costos PEPS</p>
-        </div>
-        {hasPermission('products', 'create') && (
-          <button
-            onClick={() => {
-              setInvoiceSubmitError('');
-              setIsModalOpen(true);
-            }}
-            className="w-full sm:w-auto flex items-center justify-center gap-2 bg-zinc-900 text-white px-5 sm:px-6 py-3 rounded-xl hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200 font-bold"
-          >
-            <FileText size={20} />
-            Registrar Factura
-          </button>
-        )}
-      </div>
+      <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-400" />
+        <div className="flex flex-col gap-5 p-4 sm:p-6 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex min-w-0 items-start gap-3 sm:gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-200 sm:h-14 sm:w-14">
+              <Receipt size={26} aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-600">Compras y proveedores</p>
+              <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">Facturas de compra</h1>
+              <p className="mt-1 max-w-2xl text-sm text-slate-500">
+                Gestioná ingresos de mercadería, costos PEPS, saldos y datos de proveedores.
+              </p>
+            </div>
+          </div>
 
-      <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden flex-1 flex flex-col">
-        <div className="p-4 border-b border-zinc-100 bg-zinc-50/50 flex gap-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
-            <input
-              type="text"
-              placeholder="Buscar por numero o proveedor..."
-              className="w-full pl-10 pr-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 focus:border-transparent outline-none transition-all"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+          <div className="grid w-full grid-cols-1 gap-2 min-[420px]:grid-cols-2 xl:w-auto">
+            <button
+              type="button"
+              onClick={() => void loadData(true)}
+              disabled={isRefreshing}
+              className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-black text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <RefreshCw size={17} className={isRefreshing ? 'animate-spin' : ''} aria-hidden="true" />
+              {isRefreshing ? 'Actualizando…' : 'Actualizar'}
+            </button>
+            {hasPermission('products', 'create') && (
+              <button
+                type="button"
+                onClick={() => openInvoiceForm()}
+                className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700"
+              >
+                <Plus size={18} aria-hidden="true" />
+                Registrar factura
+              </button>
+            )}
           </div>
         </div>
+      </section>
 
-        <div className="overflow-auto flex-1">
-          <table className="w-full min-w-[720px] text-left border-collapse">
-            <thead>
-              <tr className="bg-zinc-50/50 border-b border-zinc-100">
-                <th className="px-4 sm:px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Fecha</th>
-                <th className="px-4 sm:px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Nro. Factura</th>
-                <th className="px-4 sm:px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Proveedor</th>
-                <th className="px-4 sm:px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Total</th>
-                <th className="px-4 sm:px-6 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-widest text-right">Acciones</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {filteredInvoices.map((inv) => (
-                <tr key={inv.id} className="hover:bg-zinc-50 transition-colors group">
-                  <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center gap-2 text-zinc-600">
-                      <Calendar size={14} className="text-zinc-400" />
-                      <span className="text-sm">{(inv as any).fecha_compra}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 sm:px-6 py-4">
-                    <span className="text-sm font-bold text-zinc-900">{inv.numero_factura}</span>
-                  </td>
-                  <td className="px-4 sm:px-6 py-4">
-                    <div className="flex items-center gap-2 text-zinc-600">
-                      <User size={14} className="text-zinc-400" />
-                      <span className="text-sm">{(inv as any).proveedor}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 sm:px-6 py-4 text-right">
-                    <span className="text-sm font-black text-zinc-900 font-mono">
-                      ${(inv.total ?? 0).toLocaleString()}
-                    </span>
-                  </td>
-                  <td className="px-4 sm:px-6 py-4 text-right">
-                    <button
-                      onClick={() => fetchInvoiceDetails(inv.id)}
-                      className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors"
-                      title="Ver detalle"
-                    >
-                      <Eye size={18} />
-                    </button>
-                    {(inv as any).metodo_pago === 'Cta Cte' && (inv as any).estado_pago !== 'pagado' && (
-                      <button
-                        onClick={() => openPaymentModal(inv)}
-                        className="ml-2 px-3 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors"
-                        title="Registrar pago"
-                      >
-                        Pagar
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <section className="mt-4 grid grid-cols-1 gap-3 min-[440px]:grid-cols-2 xl:grid-cols-4">
+        {[
+          { label: 'Facturas registradas', value: invoices.length.toLocaleString('es-AR'), icon: FileText, tone: 'indigo' },
+          { label: 'Compras acumuladas', value: formatCurrency(totalPurchases), icon: CircleDollarSign, tone: 'blue' },
+          { label: 'Saldo pendiente', value: formatCurrency(totalPending), icon: WalletCards, tone: totalPending > 0 ? 'amber' : 'emerald' },
+          { label: 'Proveedores activos', value: proveedores.length.toLocaleString('es-AR'), icon: Building2, tone: 'slate' },
+        ].map((card) => {
+          const tones: Record<string, string> = {
+            indigo: 'bg-indigo-50 text-indigo-700 ring-indigo-100',
+            blue: 'bg-blue-50 text-blue-700 ring-blue-100',
+            amber: 'bg-amber-50 text-amber-700 ring-amber-100',
+            emerald: 'bg-emerald-50 text-emerald-700 ring-emerald-100',
+            slate: 'bg-slate-100 text-slate-700 ring-slate-200',
+          };
+          const Icon = card.icon;
+
+          return (
+            <article key={card.label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-black uppercase tracking-[0.12em] text-slate-400">{card.label}</p>
+                  <p className="mt-2 break-words text-xl font-black text-slate-950 sm:text-2xl">{card.value}</p>
+                </div>
+                <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ${tones[card.tone]}`}>
+                  <Icon size={19} aria-hidden="true" />
+                </div>
+              </div>
+            </article>
+          );
+        })}
+      </section>
+
+      <div className="mt-4 grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+        <button
+          type="button"
+          onClick={() => setActiveView('invoices')}
+          className={`flex min-h-11 items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-black transition ${
+            activeView === 'invoices' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          <FileText size={17} aria-hidden="true" />
+          Facturas
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveView('providers')}
+          className={`flex min-h-11 items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-black transition ${
+            activeView === 'providers' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          <Building2 size={17} aria-hidden="true" />
+          Proveedores
+        </button>
       </div>
 
-      {isModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start sm:items-center justify-center p-2 sm:p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-xl sm:rounded-2xl shadow-xl w-full max-w-4xl max-h-[95dvh] sm:max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200 my-2 sm:my-0">
-            <div className="p-4 sm:p-6 border-b border-zinc-100 flex justify-between items-center gap-4 bg-zinc-50/50">
-              <h2 className="text-lg sm:text-xl font-bold text-zinc-900 flex items-center gap-2">
-                <FileText className="text-zinc-400" />
-                Registrar Factura de Compra
+      {loadError && (
+        <div className="mt-4 flex flex-col gap-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-900 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <AlertCircle size={21} className="mt-0.5 shrink-0" aria-hidden="true" />
+            <div>
+              <p className="font-black">No se pudieron cargar los datos</p>
+              <p className="mt-1 text-sm text-red-700">{loadError}</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => void loadData()}
+            className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-red-700 px-4 py-2 text-sm font-black text-white hover:bg-red-800 sm:w-auto"
+          >
+            <RefreshCw size={17} aria-hidden="true" />
+            Reintentar
+          </button>
+        </div>
+      )}
+
+      {isLoading ? (
+        <section className="mt-4 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6" aria-busy="true">
+          <div className="flex items-center gap-3 text-slate-700">
+            <Loader2 size={22} className="animate-spin text-indigo-600" aria-hidden="true" />
+            <div>
+              <p className="font-black">Cargando compras y proveedores…</p>
+              <p className="text-sm text-slate-500">Estamos preparando la información del módulo.</p>
+            </div>
+          </div>
+          <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {[1, 2, 3, 4].map((item) => (
+              <div key={item} className="h-48 animate-pulse rounded-2xl bg-slate-100" />
+            ))}
+          </div>
+        </section>
+      ) : activeView === 'invoices' ? (
+        <section className="mt-4 rounded-3xl border border-slate-200 bg-white p-3 shadow-sm sm:p-5">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+            <div className="relative min-w-0">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={18} aria-hidden="true" />
+              <input
+                type="search"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="Buscar por factura, proveedor o medio de pago…"
+                className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
+              />
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                ['all', `Todas (${invoices.length})`],
+                ['pending', `Pendientes (${invoices.length - paidInvoices})`],
+                ['paid', `Pagadas (${paidInvoices})`],
+              ] as Array<[InvoiceFilter, string]>).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setInvoiceFilter(value)}
+                  className={`min-h-11 rounded-xl px-2 py-2 text-xs font-black transition sm:px-4 ${
+                    invoiceFilter === value
+                      ? 'bg-slate-950 text-white shadow-md'
+                      : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-500">
+            <p>
+              <span className="font-black text-slate-900">{filteredInvoices.length}</span>{' '}
+              {filteredInvoices.length === 1 ? 'factura visible' : 'facturas visibles'}
+            </p>
+            {(searchTerm || invoiceFilter !== 'all') && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchTerm('');
+                  setInvoiceFilter('all');
+                }}
+                className="min-h-10 rounded-xl px-3 text-sm font-black text-indigo-700 hover:bg-indigo-50"
+              >
+                Limpiar filtros
+              </button>
+            )}
+          </div>
+
+          {filteredInvoices.length === 0 ? (
+            <div className="mt-4 flex min-h-64 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
+              <FileText size={38} className="text-slate-300" aria-hidden="true" />
+              <h2 className="mt-4 text-lg font-black text-slate-800">
+                {invoices.length === 0 ? 'Todavía no hay facturas de compra' : 'No hay resultados para estos filtros'}
               </h2>
+              <p className="mt-1 max-w-md text-sm text-slate-500">
+                {invoices.length === 0
+                  ? 'Registrá la primera factura para incorporar mercadería y actualizar costos.'
+                  : 'Probá otro proveedor, número de factura o estado de pago.'}
+              </p>
+              {invoices.length === 0 && hasPermission('products', 'create') && (
+                <button
+                  type="button"
+                  onClick={() => openInvoiceForm()}
+                  className="mt-5 flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-black text-white hover:bg-indigo-700"
+                >
+                  <Plus size={18} aria-hidden="true" />
+                  Registrar factura
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="mt-4 grid grid-cols-1 gap-3 2xl:grid-cols-2">
+              {filteredInvoices.map((invoice) => {
+                const paid = isInvoicePaid(invoice);
+                const balance = getInvoiceBalance(invoice);
+
+                return (
+                  <article key={invoice.id} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-indigo-200 hover:shadow-md sm:p-5">
+                    <div className="flex min-w-0 flex-col gap-4 min-[540px]:flex-row min-[540px]:items-start min-[540px]:justify-between">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100">
+                          <Receipt size={20} aria-hidden="true" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h2 className="break-all text-base font-black text-slate-950">Factura {invoice.numero_factura}</h2>
+                            <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${paid ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                              {paid ? 'Pagada' : 'Pendiente'}
+                            </span>
+                          </div>
+                          <p className="mt-1 break-words text-sm font-bold text-slate-700">{(invoice as any).proveedor || 'Proveedor sin informar'}</p>
+                          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2 text-xs font-semibold text-slate-500">
+                            <span className="inline-flex items-center gap-1.5"><Calendar size={14} /> {formatDate((invoice as any).fecha_compra)}</span>
+                            <span className="inline-flex items-center gap-1.5"><CreditCard size={14} /> {getPaymentMethodLabel((invoice as any).metodo_pago)}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="min-[540px]:text-right">
+                        <p className="text-[10px] font-black uppercase tracking-[0.12em] text-slate-400">Total</p>
+                        <p className="mt-1 break-words text-xl font-black text-slate-950">{formatCurrency(invoice.total)}</p>
+                        {!paid && <p className="mt-1 text-xs font-black text-amber-700">Pendiente: {formatCurrency(balance)}</p>}
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={() => void fetchInvoiceDetails(invoice.id)}
+                        className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 hover:bg-slate-50"
+                        aria-label={`Ver detalle de factura ${invoice.numero_factura}`}
+                      >
+                        <Eye size={17} aria-hidden="true" />
+                        Ver detalle
+                      </button>
+                      {(invoice as any).metodo_pago === 'Cta Cte' && !paid ? (
+                        <button
+                          type="button"
+                          onClick={() => openPaymentModal(invoice)}
+                          className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-black text-white shadow-sm hover:bg-emerald-700"
+                          aria-label={`Registrar pago de factura ${invoice.numero_factura}`}
+                        >
+                          <WalletCards size={17} aria-hidden="true" />
+                          Registrar pago
+                        </button>
+                      ) : (
+                        <div className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-50 px-4 py-2 text-sm font-bold text-slate-500">
+                          <CheckCircle2 size={17} className="text-emerald-600" aria-hidden="true" />
+                          Sin acciones pendientes
+                        </div>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      ) : (
+        <section className="mt-4 rounded-3xl border border-slate-200 bg-white p-3 shadow-sm sm:p-5">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+            <div className="relative min-w-0">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={18} aria-hidden="true" />
+              <input
+                type="search"
+                value={providerSearch}
+                onChange={(event) => setProviderSearch(event.target.value)}
+                placeholder="Buscar por nombre, CUIT, teléfono, email o dirección…"
+                className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
+              />
+            </div>
+            {hasPermission('suppliers', 'create') && (
+              <button
+                type="button"
+                onClick={() => {
+                  setProviderSubmitError('');
+                  setIsProviderModalOpen(true);
+                }}
+                className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-black text-white hover:bg-indigo-700 lg:w-auto"
+              >
+                <Plus size={18} aria-hidden="true" />
+                Nuevo proveedor
+              </button>
+            )}
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-500">
+            <p><span className="font-black text-slate-900">{filteredProviders.length}</span> proveedores visibles</p>
+            {providerSearch && (
+              <button
+                type="button"
+                onClick={() => setProviderSearch('')}
+                className="min-h-10 rounded-xl px-3 text-sm font-black text-indigo-700 hover:bg-indigo-50"
+              >
+                Limpiar búsqueda
+              </button>
+            )}
+          </div>
+
+          {filteredProviders.length === 0 ? (
+            <div className="mt-4 flex min-h-64 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
+              <Building2 size={38} className="text-slate-300" aria-hidden="true" />
+              <h2 className="mt-4 text-lg font-black text-slate-800">
+                {proveedores.length === 0 ? 'Todavía no hay proveedores' : 'No hay proveedores que coincidan'}
+              </h2>
+              <p className="mt-1 max-w-md text-sm text-slate-500">
+                {proveedores.length === 0
+                  ? 'Creá el primer proveedor para comenzar a registrar facturas de compra.'
+                  : 'Probá buscar por otro nombre, CUIT o dato de contacto.'}
+              </p>
+            </div>
+          ) : (
+            <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-2">
+              {filteredProviders.map((provider) => (
+                <article key={provider.id} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-indigo-200 hover:shadow-md sm:p-5">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white">
+                      <Building2 size={21} aria-hidden="true" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="break-words text-lg font-black text-slate-950">{provider.nombre}</h2>
+                        <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-700">
+                          {provider.estado || 'activo'}
+                        </span>
+                      </div>
+                      {provider.cuit && <p className="mt-1 break-all text-xs font-bold text-slate-500">CUIT {provider.cuit}</p>}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-2 min-[480px]:grid-cols-2">
+                    {provider.telefono && (
+                      <div className="flex min-w-0 items-start gap-2 rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
+                        <Phone size={16} className="mt-0.5 shrink-0 text-slate-400" />
+                        <span className="break-all font-semibold">{provider.telefono}</span>
+                      </div>
+                    )}
+                    {provider.email && (
+                      <div className="flex min-w-0 items-start gap-2 rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
+                        <Mail size={16} className="mt-0.5 shrink-0 text-slate-400" />
+                        <span className="break-all font-semibold">{provider.email}</span>
+                      </div>
+                    )}
+                    {provider.direccion && (
+                      <div className="flex min-w-0 items-start gap-2 rounded-xl bg-slate-50 p-3 text-sm text-slate-700 min-[480px]:col-span-2">
+                        <MapPin size={16} className="mt-0.5 shrink-0 text-slate-400" />
+                        <span className="break-words font-semibold">{provider.direccion}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <div className="rounded-xl border border-slate-200 p-3">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Facturas</p>
+                      <p className="mt-1 text-lg font-black text-slate-950">{provider.invoiceCount}</p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 p-3">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Comprado</p>
+                      <p className="mt-1 break-words text-sm font-black text-slate-950">{formatCurrency(provider.totalPurchased)}</p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 p-3">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Pendiente</p>
+                      <p className={`mt-1 break-words text-sm font-black ${provider.pendingBalance > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                        {formatCurrency(provider.pendingBalance)}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 p-3">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Última compra</p>
+                      <p className="mt-1 text-xs font-black text-slate-700">{provider.lastInvoiceDate ? formatDate(provider.lastInvoiceDate) : 'Sin compras'}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => openProviderInvoices(provider)}
+                      className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-black text-slate-700 hover:bg-slate-50"
+                    >
+                      <Eye size={17} aria-hidden="true" />
+                      Ver facturas
+                    </button>
+                    {hasPermission('products', 'create') && (
+                      <button
+                        type="button"
+                        onClick={() => openInvoiceForm(provider.id)}
+                        className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-black text-white hover:bg-indigo-700"
+                      >
+                        <PackagePlus size={17} aria-hidden="true" />
+                        Registrar factura
+                      </button>
+                    )}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {isModalOpen && (
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/60 backdrop-blur-sm sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="purchase-invoice-title">
+          <div className="flex max-h-[100dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-h-[94dvh] sm:max-w-5xl sm:rounded-3xl">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-4 sm:px-6">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700">
+                  <FileText size={20} aria-hidden="true" />
+                </div>
+                <div className="min-w-0">
+                  <h2 id="purchase-invoice-title" className="truncate text-lg font-black text-slate-950 sm:text-xl">Registrar factura de compra</h2>
+                  <p className="text-xs text-slate-500">Proveedor, productos, cantidades y costos.</p>
+                </div>
+              </div>
               <button
                 type="button"
                 onClick={() => {
@@ -509,263 +997,252 @@ export default function PurchaseInvoiceModule() {
                   setIsModalOpen(false);
                 }}
                 disabled={isSubmittingInvoice}
-                className="text-zinc-400 hover:text-zinc-600 disabled:cursor-not-allowed disabled:opacity-40"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 disabled:opacity-40"
                 aria-label="Cerrar formulario de factura"
                 title="Cerrar formulario"
               >
-                <X size={24} />
+                <X size={22} />
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="flex-1 min-h-0 overflow-y-auto flex flex-col">
-              {invoiceSubmitError && (
-                <div
-                  role="alert"
-                  aria-live="assertive"
-                  className="mx-4 mt-4 sm:mx-6 sm:mt-6 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-800"
-                >
-                  <AlertCircle size={20} className="mt-0.5 shrink-0" />
-                  <div>
-                    <p className="font-bold">No se pudo guardar la factura</p>
-                    <p className="text-sm">{invoiceSubmitError}</p>
+            <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6">
+                {invoiceSubmitError && (
+                  <div role="alert" className="mb-4 flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-900">
+                    <AlertCircle size={20} className="mt-0.5 shrink-0" aria-hidden="true" />
+                    <div>
+                      <p className="font-black">Revisá la factura</p>
+                      <p className="mt-1 text-sm text-red-700">{invoiceSubmitError}</p>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              <div className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 border-b border-zinc-100 shrink-0">
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest">Proveedor</label>
-                    {hasPermission('suppliers', 'create') && (
-                      <button
-                        type="button"
-                        onClick={() => setIsProviderModalOpen(true)}
-                        className="text-xs font-bold text-emerald-600 hover:text-emerald-700"
-                      >
-                        + Crear proveedor
-                      </button>
-                    )}
+                <section className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-[0.14em] text-indigo-600">Datos principales</p>
+                      <p className="mt-1 text-sm text-slate-500">Identificá la compra y su forma de pago.</p>
+                    </div>
                   </div>
-                  <select
-                    required
-                    className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                    value={formData.proveedor_id}
-                    onChange={(e) => setFormData({ ...formData, proveedor_id: parseInt(e.target.value, 10) || 0 })}
-                  >
-                    <option value={0}>Seleccionar proveedor</option>
-                    {proveedores.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.nombre}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Nro. Factura</label>
-                  <input
-                    required
-                    type="text"
-                    className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                    value={formData.numero_factura}
-                    onChange={(e) => setFormData({ ...formData, numero_factura: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Fecha de compra</label>
-                  <input
-                    required
-                    type="date"
-                    className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                    value={formData.fecha_compra}
-                    onChange={(e) => setFormData({ ...formData, fecha_compra: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Metodo de pago</label>
-                  <select
-                    required
-                    className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                    value={formData.metodo_pago}
-                    onChange={(e) => setFormData({ ...formData, metodo_pago: e.target.value })}
-                  >
-                    <option value="efectivo">Efectivo</option>
-                    <option value="transferencia">Transferencia</option>
-                    <option value="mercado_pago">Mercado Pago</option>
-                    <option value="cheque">Cheque</option>
-                    <option value="Cta Cte">Cta Cte</option>
-                  </select>
-                </div>
-              </div>
 
-              <div className="shrink-0 flex flex-col p-4 sm:p-6">
-                <h3 className="text-sm font-bold text-zinc-900 mb-4">Productos en factura</h3>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-4 mb-4 bg-zinc-50 p-4 rounded-xl border border-zinc-200">
-                  <div className="sm:col-span-2 lg:col-span-6">
-                    <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Producto</label>
-                    {!isCreatingNewProduct ? (
+                  <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <label className="min-w-0">
+                      <span className="mb-2 flex items-center justify-between gap-2 text-[11px] font-black uppercase tracking-wider text-slate-500">
+                        Proveedor
+                        {hasPermission('suppliers', 'create') && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setProviderSubmitError('');
+                              setIsProviderModalOpen(true);
+                            }}
+                            className="normal-case tracking-normal text-indigo-700 hover:text-indigo-800"
+                          >
+                            + Nuevo
+                          </button>
+                        )}
+                      </span>
                       <select
-                        key={`purchase-product-select-${formData.items.length}`}
-                        className="w-full px-3 py-2 rounded-lg border border-zinc-200 outline-none focus:ring-2 focus:ring-zinc-900"
-                        value={String(currentItem.product_id)}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          if (val === 'new') {
-                            setIsCreatingNewProduct(true);
-                            setCurrentItem({ ...currentItem, product_id: 'new' });
-                            return;
-                          }
-                          const pid = parseInt(val, 10) || 0;
-                          const product = products.find((p) => p.id === pid);
-                          setCurrentItem({ ...currentItem, product_id: pid, costo_unitario: product?.cost || 0 });
-                        }}
+                        required
+                        value={formData.proveedor_id}
+                        onChange={(event) => setFormData({ ...formData, proveedor_id: Number(event.target.value) || 0 })}
+                        className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
                       >
-                        <option value="0">Seleccionar producto...</option>
-                        <option value="new" className="font-bold text-emerald-600">+ Crear nuevo producto...</option>
-                        {products.map((p) => (
-                          <option key={p.id} value={String(p.id)}>{p.name} ({p.code})</option>
-                        ))}
+                        <option value={0}>Seleccionar proveedor</option>
+                        {proveedores.map((provider) => <option key={provider.id} value={provider.id}>{provider.nombre}</option>)}
                       </select>
-                    ) : (
-                      <div className="flex gap-2">
-                        <input
-                          autoFocus
-                          type="text"
-                          placeholder="Nombre del nuevo producto..."
-                          className="flex-1 px-3 py-2 rounded-lg border border-emerald-200 outline-none focus:ring-2 focus:ring-emerald-500"
-                          value={newProductName}
-                          onChange={(e) => setNewProductName(e.target.value)}
-                        />
-                        <button type="button" onClick={resetCurrentItem} className="p-2 text-zinc-400 hover:text-zinc-600">
-                          <X size={16} />
-                        </button>
-                      </div>
-                    )}
+                    </label>
+
+                    <label className="min-w-0">
+                      <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Número de factura</span>
+                      <input
+                        required
+                        type="text"
+                        value={formData.numero_factura}
+                        onChange={(event) => setFormData({ ...formData, numero_factura: event.target.value })}
+                        className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                      />
+                    </label>
+
+                    <label className="min-w-0">
+                      <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Fecha de compra</span>
+                      <input
+                        required
+                        type="date"
+                        value={formData.fecha_compra}
+                        onChange={(event) => setFormData({ ...formData, fecha_compra: event.target.value })}
+                        className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                      />
+                    </label>
+
+                    <label className="min-w-0">
+                      <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Método de pago</span>
+                      <select
+                        required
+                        value={formData.metodo_pago}
+                        onChange={(event) => setFormData({ ...formData, metodo_pago: event.target.value })}
+                        className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                      >
+                        <option value="efectivo">Efectivo</option>
+                        <option value="transferencia">Transferencia</option>
+                        <option value="mercado_pago">Mercado Pago</option>
+                        <option value="cheque">Cheque</option>
+                        <option value="Cta Cte">Cuenta corriente</option>
+                      </select>
+                    </label>
                   </div>
-                  <div className="sm:col-span-1 lg:col-span-2">
-                    <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Cantidad</label>
-                    <input
-                      type="number"
-                      min="1"
-                      className="w-full px-3 py-2 rounded-lg border border-zinc-200 outline-none focus:ring-2 focus:ring-zinc-900"
-                      value={currentItem.cantidad}
-                      onChange={(e) => setCurrentItem({ ...currentItem, cantidad: parseInt(e.target.value, 10) || 0 })}
-                    />
+                </section>
+
+                <section className="mt-4 rounded-2xl border border-slate-200 p-4 sm:p-5">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-[0.14em] text-indigo-600">Productos</p>
+                      <p className="mt-1 text-sm text-slate-500">Agregá cada producto con su cantidad y costo unitario.</p>
+                    </div>
+                    <p className="text-sm font-black text-slate-900">Subtotal actual: {formatCurrency(currentItemSubtotal)}</p>
                   </div>
-                  <div className="sm:col-span-1 lg:col-span-3">
-                    <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-1">Costo unitario</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      className="w-full px-3 py-2 rounded-lg border border-zinc-200 outline-none focus:ring-2 focus:ring-zinc-900"
-                      value={currentItem.costo_unitario}
-                      onChange={(e) => setCurrentItem({ ...currentItem, costo_unitario: parseFloat(e.target.value) || 0 })}
-                    />
-                  </div>
-                  <div className="sm:col-span-2 lg:col-span-1 flex items-end">
+
+                  <div className="mt-4 grid grid-cols-1 gap-3 rounded-2xl bg-slate-50 p-3 sm:p-4 md:grid-cols-2 xl:grid-cols-[minmax(0,2fr)_minmax(100px,.6fr)_minmax(140px,.8fr)_auto] xl:items-end">
+                    <div className="min-w-0 md:col-span-2 xl:col-span-1">
+                      <label className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Producto</label>
+                      {!isCreatingNewProduct ? (
+                        <select
+                          key={`purchase-product-select-${formData.items.length}`}
+                          value={String(currentItem.product_id)}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            if (value === 'new') {
+                              setIsCreatingNewProduct(true);
+                              setCurrentItem({ ...currentItem, product_id: 'new' });
+                              return;
+                            }
+                            const productId = Number(value) || 0;
+                            const product = products.find((candidate) => candidate.id === productId);
+                            setCurrentItem({ ...currentItem, product_id: productId, costo_unitario: Number(product?.cost || 0) });
+                          }}
+                          className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                        >
+                          <option value="0">Seleccionar producto…</option>
+                          <option value="new">+ Crear producto nuevo…</option>
+                          {products.map((product) => <option key={product.id} value={product.id}>{product.name} ({product.code})</option>)}
+                        </select>
+                      ) : (
+                        <div className="flex min-w-0 gap-2">
+                          <input
+                            autoFocus
+                            type="text"
+                            value={newProductName}
+                            onChange={(event) => setNewProductName(event.target.value)}
+                            placeholder="Nombre del producto nuevo…"
+                            className="min-h-11 min-w-0 flex-1 rounded-xl border border-emerald-200 bg-white px-3 text-sm font-semibold outline-none focus:ring-4 focus:ring-emerald-100"
+                          />
+                          <button type="button" onClick={resetCurrentItem} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 hover:bg-slate-100" aria-label="Cancelar producto nuevo">
+                            <X size={18} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <label className="min-w-0">
+                      <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Cantidad</span>
+                      <input
+                        type="number"
+                        min="1"
+                        value={currentItem.cantidad}
+                        onChange={(event) => setCurrentItem({ ...currentItem, cantidad: Number(event.target.value) || 0 })}
+                        className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                      />
+                    </label>
+
+                    <label className="min-w-0">
+                      <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Costo unitario</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={currentItem.costo_unitario}
+                        onChange={(event) => setCurrentItem({ ...currentItem, costo_unitario: Number(event.target.value) || 0 })}
+                        className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                      />
+                    </label>
+
                     <button
                       type="button"
                       onClick={handleAddItem}
-                      title="Agregar producto a la factura"
-                      className="w-full h-11 bg-emerald-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-emerald-700 transition-colors shadow-sm font-bold text-sm"
+                      className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-black text-white hover:bg-emerald-700 xl:w-auto"
                     >
-                      <Plus size={18} />
-                      <span className="lg:hidden">Agregar producto</span>
+                      <Plus size={18} aria-hidden="true" />
+                      Agregar
                     </button>
                   </div>
 
-                  <div className="sm:col-span-2 lg:col-span-12 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 bg-white border border-zinc-100 rounded-lg px-3 py-2">
-                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Subtotal producto actual</span>
-                    <span className="text-base font-black text-zinc-900 font-mono">${currentItemSubtotal.toLocaleString()}</span>
-                  </div>
-                </div>
-
-                <div className="max-h-[260px] sm:max-h-[340px] overflow-auto border border-zinc-100 rounded-xl">
-                  <table className="w-full min-w-[640px] text-left">
-                    <thead className="sticky top-0 bg-white border-b border-zinc-100">
-                      <tr>
-                        <th className="px-4 py-2 text-[10px] font-bold text-zinc-400 uppercase">Producto</th>
-                        <th className="px-4 py-2 text-[10px] font-bold text-zinc-400 uppercase text-center">Cantidad</th>
-                        <th className="px-4 py-2 text-[10px] font-bold text-zinc-400 uppercase text-right">Costo unit.</th>
-                        <th className="px-4 py-2 text-[10px] font-bold text-zinc-400 uppercase text-right">Subtotal</th>
-                        <th className="px-4 py-2 text-[10px] font-bold text-zinc-400 uppercase text-right"></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-50">
-                      {formData.items.length === 0 && (
-                        <tr>
-                          <td colSpan={5} className="px-4 py-8 text-center text-sm text-zinc-400">
-                            Todavia no agregaste productos a la factura. Selecciona un producto y toca "Agregar producto".
-                          </td>
-                        </tr>
-                      )}
-                      {formData.items.map((item, index) => {
-                        const productName =
-                          typeof item.product_id === 'string' && item.product_id.startsWith('new:')
-                            ? `${item.product_id.replace('new:', '')} (Nuevo)`
-                            : products.find((p) => p.id === item.product_id)?.name || '';
-
-                        return (
-                          <tr key={index} className="hover:bg-zinc-50">
-                            <td className="px-4 py-2 text-sm text-zinc-900">{productName}</td>
-                            <td className="px-4 py-2 text-sm text-zinc-900 text-center">{item.cantidad}</td>
-                            <td className="px-4 py-2 text-sm text-zinc-900 text-right font-mono">${(item.costo_unitario ?? 0).toLocaleString()}</td>
-                            <td className="px-4 py-2 text-sm font-bold text-zinc-900 text-right font-mono">${((item.cantidad ?? 0) * (item.costo_unitario ?? 0)).toLocaleString()}</td>
-                            <td className="px-4 py-2 text-right">
-                              <button type="button" onClick={() => handleRemoveItem(index)} className="text-red-400 hover:text-red-600 p-1">
-                                <Trash2 size={16} />
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                  {formData.items.length === 0 ? (
+                    <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center">
+                      <PackagePlus size={32} className="mx-auto text-slate-300" aria-hidden="true" />
+                      <p className="mt-3 font-black text-slate-700">Todavía no agregaste productos</p>
+                      <p className="mt-1 text-sm text-slate-500">Seleccioná un producto, completá cantidad y costo, y tocá Agregar.</p>
+                    </div>
+                  ) : (
+                    <div className="mt-4 grid grid-cols-1 gap-2 lg:grid-cols-2">
+                      {formData.items.map((item, index) => (
+                        <article key={`${String(item.product_id)}-${index}`} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4">
+                          <div className="flex min-w-0 items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="break-words font-black text-slate-900">{getItemName(item)}</p>
+                              <p className="mt-1 text-xs font-semibold text-slate-500">Cantidad: {item.cantidad} · Costo: {formatCurrency(item.costo_unitario)}</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveItem(index)}
+                              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600 hover:bg-red-100"
+                              aria-label={`Quitar ${getItemName(item)}`}
+                              title="Quitar producto"
+                            >
+                              <Trash2 size={17} />
+                            </button>
+                          </div>
+                          <div className="mt-3 flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Subtotal</span>
+                            <span className="break-words text-base font-black text-slate-950">{formatCurrency(item.cantidad * item.costo_unitario)}</span>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </section>
               </div>
 
-              <div className="p-4 sm:p-6 bg-zinc-50 border-t border-zinc-100 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 shrink-0">
-                <div className="flex flex-col">
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Total agregado</span>
-                  <span className="text-2xl font-black text-zinc-900 font-mono">${(totalInvoice ?? 0).toLocaleString()}</span>
-                  {currentItemSubtotal > 0 && (
-                    <span className="text-xs font-bold text-emerald-600 mt-1">
-                      Total si agregas el producto actual: ${totalInvoiceWithCurrentItem.toLocaleString()}
-                    </span>
-                  )}
-                </div>
-                <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (isSubmittingInvoice) return;
-                      setInvoiceSubmitError('');
-                      setIsModalOpen(false);
-                    }}
-                    disabled={isSubmittingInvoice}
-                    className="w-full sm:w-auto px-6 py-2 rounded-xl border border-zinc-200 text-zinc-600 font-bold hover:bg-white transition-all disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Cancelar
-                  </button>
-                  {hasPermission('products', 'edit') && (
+              <div className="shrink-0 border-t border-slate-200 bg-white p-4 sm:p-5">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="min-w-0 rounded-2xl bg-slate-50 px-4 py-3">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Total agregado</p>
+                    <p className="mt-1 break-words text-2xl font-black text-slate-950">{formatCurrency(totalInvoice)}</p>
+                    {currentItemSubtotal > 0 && <p className="mt-1 text-xs font-black text-emerald-700">Con el producto actual: {formatCurrency(totalInvoiceWithCurrentItem)}</p>}
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2 lg:w-auto">
                     <button
-                      type="submit"
+                      type="button"
+                      onClick={() => {
+                        if (isSubmittingInvoice) return;
+                        setInvoiceSubmitError('');
+                        setIsModalOpen(false);
+                      }}
                       disabled={isSubmittingInvoice}
-                      className="w-full sm:w-auto px-8 py-2 rounded-xl bg-zinc-900 text-white font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200 flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="min-h-11 rounded-xl border border-slate-200 px-5 py-2 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                     >
-                      {isSubmittingInvoice ? (
-                        <>
-                          <Loader2 size={18} className="animate-spin" />
-                          Guardando factura...
-                        </>
-                      ) : (
-                        <>
-                          <Save size={18} />
-                          Guardar factura
-                        </>
-                      )}
+                      Cancelar
                     </button>
-                  )}
+                    {hasPermission('products', 'edit') && (
+                      <button
+                        type="submit"
+                        disabled={isSubmittingInvoice}
+                        className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-2 text-sm font-black text-white shadow-lg shadow-indigo-100 hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isSubmittingInvoice ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+                        {isSubmittingInvoice ? 'Guardando…' : 'Guardar factura'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </form>
@@ -774,46 +1251,57 @@ export default function PurchaseInvoiceModule() {
       )}
 
       {isProviderModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start sm:items-center justify-center p-2 sm:p-4 z-[60] overflow-y-auto">
-          <div className="bg-white rounded-xl sm:rounded-2xl shadow-xl w-full max-w-xl max-h-[95dvh] overflow-y-auto animate-in fade-in zoom-in duration-200 my-2 sm:my-0">
-            <div className="p-4 sm:p-6 border-b border-zinc-100 flex justify-between items-center gap-4 bg-zinc-50/50">
-              <h2 className="text-lg sm:text-xl font-bold text-zinc-900 flex items-center gap-2">
-                <User className="text-zinc-400" />
-                Crear proveedor
-              </h2>
-              <button onClick={() => setIsProviderModalOpen(false)} className="text-zinc-400 hover:text-zinc-600">
-                <X size={24} />
+        <div className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/65 backdrop-blur-sm sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="provider-form-title">
+          <div className="max-h-[100dvh] w-full overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-h-[92dvh] sm:max-w-xl sm:rounded-3xl">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-4 sm:px-6">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700"><Building2 size={20} /></div>
+                <div>
+                  <h2 id="provider-form-title" className="text-lg font-black text-slate-950">Crear proveedor</h2>
+                  <p className="text-xs text-slate-500">Datos básicos para compras y pagos.</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => !isCreatingProvider && setIsProviderModalOpen(false)} disabled={isCreatingProvider} className="flex h-11 w-11 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 disabled:opacity-40" aria-label="Cerrar formulario de proveedor">
+                <X size={21} />
               </button>
             </div>
 
-            <form onSubmit={handleCreateProvider} className="p-4 sm:p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Nombre</label>
-                <input required type="text" className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none transition-all" value={providerForm.nombre} onChange={(e) => setProviderForm({ ...providerForm, nombre: e.target.value })} />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">CUIT</label>
-                  <input type="text" className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none transition-all" value={providerForm.cuit} onChange={(e) => setProviderForm({ ...providerForm, cuit: e.target.value })} />
+            <form onSubmit={handleCreateProvider} className="max-h-[calc(100dvh-76px)] overflow-y-auto p-4 sm:p-6">
+              {providerSubmitError && (
+                <div role="alert" className="mb-4 flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-900">
+                  <AlertCircle size={20} className="mt-0.5 shrink-0" />
+                  <p className="text-sm font-bold">{providerSubmitError}</p>
                 </div>
-                <div>
-                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Telefono</label>
-                  <input type="text" className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none transition-all" value={providerForm.telefono} onChange={(e) => setProviderForm({ ...providerForm, telefono: e.target.value })} />
-                </div>
+              )}
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <label className="sm:col-span-2">
+                  <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Nombre *</span>
+                  <input required type="text" value={providerForm.nombre} onChange={(event) => setProviderForm({ ...providerForm, nombre: event.target.value })} className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" />
+                </label>
+                <label>
+                  <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">CUIT</span>
+                  <input type="text" inputMode="numeric" value={providerForm.cuit} onChange={(event) => setProviderForm({ ...providerForm, cuit: event.target.value })} className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" />
+                </label>
+                <label>
+                  <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Teléfono</span>
+                  <input type="tel" value={providerForm.telefono} onChange={(event) => setProviderForm({ ...providerForm, telefono: event.target.value })} className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" />
+                </label>
+                <label className="sm:col-span-2">
+                  <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Email</span>
+                  <input type="email" value={providerForm.email} onChange={(event) => setProviderForm({ ...providerForm, email: event.target.value })} className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" />
+                </label>
+                <label className="sm:col-span-2">
+                  <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Dirección</span>
+                  <input type="text" value={providerForm.direccion} onChange={(event) => setProviderForm({ ...providerForm, direccion: event.target.value })} className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" />
+                </label>
               </div>
-              <div>
-                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Email</label>
-                <input type="email" className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none transition-all" value={providerForm.email} onChange={(e) => setProviderForm({ ...providerForm, email: e.target.value })} />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Direccion</label>
-                <input type="text" className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none transition-all" value={providerForm.direccion} onChange={(e) => setProviderForm({ ...providerForm, direccion: e.target.value })} />
-              </div>
-              <div className="pt-4 flex flex-col sm:flex-row sm:justify-end gap-3">
-                <button type="button" onClick={() => setIsProviderModalOpen(false)} className="w-full sm:w-auto px-6 py-2 rounded-xl border border-zinc-200 text-zinc-600 font-bold hover:bg-zinc-50 transition-all">Cancelar</button>
-                <button type="submit" className="w-full sm:w-auto px-8 py-2 rounded-xl bg-zinc-900 text-white font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200 flex items-center justify-center gap-2">
-                  <Save size={18} />
-                  Crear proveedor
+
+              <div className="mt-6 grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+                <button type="button" onClick={() => setIsProviderModalOpen(false)} disabled={isCreatingProvider} className="min-h-11 rounded-xl border border-slate-200 px-5 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50">Cancelar</button>
+                <button type="submit" disabled={isCreatingProvider} className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 text-sm font-black text-white hover:bg-indigo-700 disabled:opacity-60">
+                  {isCreatingProvider ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+                  {isCreatingProvider ? 'Creando…' : 'Crear proveedor'}
                 </button>
               </div>
             </form>
@@ -822,68 +1310,50 @@ export default function PurchaseInvoiceModule() {
       )}
 
       {isPaymentModalOpen && selectedInvoiceForPayment && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start sm:items-center justify-center p-2 sm:p-4 z-[60] overflow-y-auto">
-          <div className="bg-white rounded-xl sm:rounded-2xl shadow-xl w-full max-w-md max-h-[95dvh] overflow-y-auto animate-in fade-in zoom-in duration-200 my-2 sm:my-0">
-            <div className="p-4 sm:p-6 border-b border-zinc-100 flex justify-between items-center gap-4 bg-zinc-50/50">
-              <div>
-                <h2 className="text-xl font-bold text-zinc-900">Registrar pago a proveedor</h2>
-                <p className="text-xs text-zinc-500">
-                  Factura Nro. {selectedInvoiceForPayment.numero_factura} - {(selectedInvoiceForPayment as any).proveedor}
-                </p>
+        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/65 backdrop-blur-sm sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="provider-payment-title">
+          <div className="w-full overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-w-md sm:rounded-3xl">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-4 sm:px-6">
+              <div className="min-w-0">
+                <h2 id="provider-payment-title" className="text-lg font-black text-slate-950">Registrar pago</h2>
+                <p className="truncate text-xs text-slate-500">Factura {selectedInvoiceForPayment.numero_factura} · {(selectedInvoiceForPayment as any).proveedor}</p>
               </div>
-              <button onClick={() => setIsPaymentModalOpen(false)} className="text-zinc-400 hover:text-zinc-600">
-                <X size={24} />
-              </button>
+              <button type="button" onClick={() => !isPayingInvoice && setIsPaymentModalOpen(false)} disabled={isPayingInvoice} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 disabled:opacity-40" aria-label="Cerrar registro de pago"><X size={21} /></button>
             </div>
 
-            <form onSubmit={handlePayInvoice} className="p-4 sm:p-6 space-y-4">
-              <div className="bg-zinc-50 border border-zinc-100 rounded-xl p-4">
-                <span className="block text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Saldo pendiente</span>
-                <span className="text-2xl font-black text-zinc-900 font-mono">
-                  ${Number((selectedInvoiceForPayment as any).saldo_pendiente ?? selectedInvoiceForPayment.total ?? 0).toLocaleString()}
-                </span>
+            <form onSubmit={handlePayInvoice} className="p-4 sm:p-6">
+              {paymentSubmitError && (
+                <div role="alert" className="mb-4 flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-900">
+                  <AlertCircle size={20} className="mt-0.5 shrink-0" />
+                  <p className="text-sm font-bold">{paymentSubmitError}</p>
+                </div>
+              )}
+
+              <div className="rounded-2xl bg-amber-50 p-4 ring-1 ring-amber-100">
+                <p className="text-[10px] font-black uppercase tracking-wider text-amber-700">Saldo pendiente</p>
+                <p className="mt-1 break-words text-2xl font-black text-slate-950">{formatCurrency(getInvoiceBalance(selectedInvoiceForPayment))}</p>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Metodo de pago</label>
-                <select
-                  required
-                  className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                  value={paymentForm.metodo_pago_real}
-                  onChange={(e) => setPaymentForm({ ...paymentForm, metodo_pago_real: e.target.value })}
-                >
-                  <option value="efectivo">Efectivo</option>
-                  <option value="transferencia">Transferencia</option>
-                  <option value="mercado_pago">Mercado Pago</option>
-                  <option value="cheque">Cheque</option>
-                </select>
+              <div className="mt-4 space-y-4">
+                <label className="block">
+                  <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Método de pago</span>
+                  <select required value={paymentForm.metodo_pago_real} onChange={(event) => setPaymentForm({ ...paymentForm, metodo_pago_real: event.target.value })} className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100">
+                    <option value="efectivo">Efectivo</option>
+                    <option value="transferencia">Transferencia</option>
+                    <option value="mercado_pago">Mercado Pago</option>
+                    <option value="cheque">Cheque</option>
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Fecha de pago</span>
+                  <input required type="date" value={paymentForm.fecha_pago} onChange={(event) => setPaymentForm({ ...paymentForm, fecha_pago: event.target.value })} className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" />
+                </label>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Fecha de pago</label>
-                <input
-                  required
-                  type="date"
-                  className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
-                  value={paymentForm.fecha_pago}
-                  onChange={(e) => setPaymentForm({ ...paymentForm, fecha_pago: e.target.value })}
-                />
-              </div>
-
-              <div className="pt-4 flex flex-col sm:flex-row sm:justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => setIsPaymentModalOpen(false)}
-                  className="w-full sm:w-auto px-6 py-2 rounded-xl border border-zinc-200 text-zinc-600 font-bold hover:bg-zinc-50 transition-all"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="w-full sm:w-auto px-8 py-2 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center justify-center gap-2"
-                >
-                  <Save size={18} />
-                  Registrar pago
+              <div className="mt-6 grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+                <button type="button" onClick={() => setIsPaymentModalOpen(false)} disabled={isPayingInvoice} className="min-h-11 rounded-xl border border-slate-200 px-5 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50">Cancelar</button>
+                <button type="submit" disabled={isPayingInvoice} className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-sm font-black text-white hover:bg-emerald-700 disabled:opacity-60">
+                  {isPayingInvoice ? <Loader2 size={18} className="animate-spin" /> : <WalletCards size={18} />}
+                  {isPayingInvoice ? 'Registrando…' : 'Registrar pago'}
                 </button>
               </div>
             </form>
@@ -891,62 +1361,80 @@ export default function PurchaseInvoiceModule() {
         </div>
       )}
 
-      {isViewModalOpen && selectedInvoice && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start sm:items-center justify-center p-2 sm:p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-xl sm:rounded-2xl shadow-xl w-full max-w-2xl max-h-[95dvh] overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200 my-2 sm:my-0">
-            <div className="p-4 sm:p-6 border-b border-zinc-100 flex justify-between items-center gap-4 bg-zinc-50/50">
-              <div>
-                <h2 className="text-xl font-bold text-zinc-900">Detalle de factura</h2>
-                <p className="text-xs text-zinc-500">Factura Nro. {selectedInvoice.numero_factura}</p>
+      {isViewModalOpen && (
+        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/65 backdrop-blur-sm sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="invoice-detail-title">
+          <div className="flex max-h-[100dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-h-[92dvh] sm:max-w-3xl sm:rounded-3xl">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-4 sm:px-6">
+              <div className="min-w-0">
+                <h2 id="invoice-detail-title" className="text-lg font-black text-slate-950">Detalle de factura</h2>
+                <p className="truncate text-xs text-slate-500">{selectedInvoice ? `Factura ${selectedInvoice.numero_factura}` : 'Cargando información…'}</p>
               </div>
-              <button onClick={() => setIsViewModalOpen(false)} className="text-zinc-400 hover:text-zinc-600"><X size={24} /></button>
+              <button type="button" onClick={() => setIsViewModalOpen(false)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100" aria-label="Cerrar detalle"><X size={21} /></button>
             </div>
-            <div className="p-4 sm:p-6 space-y-6 overflow-y-auto">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="bg-zinc-50 p-4 rounded-xl border border-zinc-100">
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Proveedor</span>
-                  <span className="text-sm font-bold text-zinc-900">{(selectedInvoice as any).proveedor}</span>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+              {detailLoading ? (
+                <div className="flex min-h-64 flex-col items-center justify-center text-center">
+                  <Loader2 size={30} className="animate-spin text-indigo-600" />
+                  <p className="mt-4 font-black text-slate-800">Cargando detalle de factura…</p>
                 </div>
-                <div className="bg-zinc-50 p-4 rounded-xl border border-zinc-100">
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Fecha</span>
-                  <span className="text-sm font-bold text-zinc-900">{(selectedInvoice as any).fecha_compra}</span>
+              ) : detailError ? (
+                <div className="flex min-h-64 flex-col items-center justify-center rounded-2xl border border-red-200 bg-red-50 p-5 text-center">
+                  <AlertCircle size={34} className="text-red-500" />
+                  <p className="mt-4 font-black text-red-900">No se pudo cargar el detalle</p>
+                  <p className="mt-1 text-sm text-red-700">{detailError}</p>
                 </div>
-              </div>
-              <div className="border border-zinc-100 rounded-xl overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead className="bg-zinc-50 border-b border-zinc-100">
-                    <tr>
-                      <th className="px-4 py-2 text-[10px] font-bold text-zinc-400 uppercase">Producto</th>
-                      <th className="px-4 py-2 text-[10px] font-bold text-zinc-400 uppercase text-center">Cant.</th>
-                      <th className="px-4 py-2 text-[10px] font-bold text-zinc-400 uppercase text-right">Costo</th>
-                      <th className="px-4 py-2 text-[10px] font-bold text-zinc-400 uppercase text-right">Restante</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-50">
-                    {(selectedInvoice as any).items?.map((item: any) => (
-                      <tr key={item.id}>
-                        <td className="px-4 py-2 text-sm text-zinc-900">{item.product_name}</td>
-                        <td className="px-4 py-2 text-sm text-zinc-900 text-center">{item.cantidad}</td>
-                        <td className="px-4 py-2 text-sm text-zinc-900 text-right font-mono">${(item.costo_unitario ?? 0).toLocaleString()}</td>
-                        <td className="px-4 py-2 text-sm text-right">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${item.cantidad_restante > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-zinc-100 text-zinc-400'}`}>
-                            {item.cantidad_restante}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="flex justify-end">
-                <div className="text-right">
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase block">Total factura</span>
-                  <span className="text-2xl font-black text-zinc-900 font-mono">${(selectedInvoice.total ?? 0).toLocaleString()}</span>
-                </div>
-              </div>
+              ) : selectedInvoice ? (
+                <>
+                  <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2">
+                    <div className="rounded-2xl bg-slate-50 p-4">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Proveedor</p>
+                      <p className="mt-1 break-words font-black text-slate-900">{(selectedInvoice as any).proveedor}</p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 p-4">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Fecha</p>
+                      <p className="mt-1 font-black text-slate-900">{formatDate((selectedInvoice as any).fecha_compra)}</p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 p-4">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Medio de pago</p>
+                      <p className="mt-1 font-black text-slate-900">{getPaymentMethodLabel((selectedInvoice as any).metodo_pago)}</p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 p-4">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Total factura</p>
+                      <p className="mt-1 break-words text-xl font-black text-slate-950">{formatCurrency(selectedInvoice.total)}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-5">
+                    <h3 className="text-sm font-black text-slate-900">Productos de la factura</h3>
+                    <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+                      {((selectedInvoice as any).items || []).map((item: any) => (
+                        <article key={item.id} className="min-w-0 rounded-2xl border border-slate-200 p-4">
+                          <p className="break-words font-black text-slate-900">{item.product_name}</p>
+                          <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                            <div className="rounded-xl bg-slate-50 p-2">
+                              <p className="text-[9px] font-black uppercase text-slate-400">Cantidad</p>
+                              <p className="mt-1 text-sm font-black text-slate-900">{item.cantidad}</p>
+                            </div>
+                            <div className="rounded-xl bg-slate-50 p-2">
+                              <p className="text-[9px] font-black uppercase text-slate-400">Costo</p>
+                              <p className="mt-1 break-words text-xs font-black text-slate-900">{formatCurrency(item.costo_unitario)}</p>
+                            </div>
+                            <div className="rounded-xl bg-slate-50 p-2">
+                              <p className="text-[9px] font-black uppercase text-slate-400">Restante</p>
+                              <p className={`mt-1 text-sm font-black ${Number(item.cantidad_restante) > 0 ? 'text-emerald-700' : 'text-slate-500'}`}>{item.cantidad_restante}</p>
+                            </div>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : null}
             </div>
-            <div className="p-4 sm:p-6 bg-zinc-50 border-t border-zinc-100 flex justify-end">
-              <button onClick={() => setIsViewModalOpen(false)} className="w-full sm:w-auto px-6 py-2 rounded-xl bg-zinc-900 text-white font-bold hover:bg-zinc-800 transition-all">Cerrar</button>
+
+            <div className="border-t border-slate-200 bg-white p-4 sm:px-6">
+              <button type="button" onClick={() => setIsViewModalOpen(false)} className="min-h-11 w-full rounded-xl bg-slate-950 px-5 text-sm font-black text-white hover:bg-slate-800 sm:ml-auto sm:block sm:w-auto">Cerrar</button>
             </div>
           </div>
         </div>
@@ -954,4 +1442,3 @@ export default function PurchaseInvoiceModule() {
     </div>
   );
 }
-
