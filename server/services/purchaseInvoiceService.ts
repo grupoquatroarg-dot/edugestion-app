@@ -10,7 +10,7 @@ type Queryable = {
 
 export const purchaseInvoiceBodySchema = z.object({
   proveedor_id: z.number(),
-  numero_factura: z.string().min(1, "Numero de factura requerido"),
+  numero_factura: z.string().min(1, "Número de factura requerido"),
   total: z.number().positive(),
   fecha: z.string().optional(),
   metodo_pago: z.string(),
@@ -26,7 +26,7 @@ export const purchaseInvoiceBodySchema = z.object({
 });
 
 export const purchaseInvoicePaymentSchema = z.object({
-  metodo_pago_real: z.string().min(1, "Metodo de pago requerido"),
+  metodo_pago_real: z.string().min(1, "Método de pago requerido"),
   fecha_pago: z.string().optional(),
 });
 
@@ -377,7 +377,7 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
         if (typeof item.product_id === "string" && item.product_id.startsWith("new:")) {
           const productName = item.product_id.replace("new:", "").trim();
           if (!productName) {
-            throw new AppError("Nombre de producto nuevo invalido.", 400);
+            throw new AppError("Nombre de producto nuevo inválido.", 400);
           }
           productId = createProductInSqlite(productName, item.costo_unitario);
         } else {
@@ -477,7 +477,7 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
       if (typeof item.product_id === "string" && item.product_id.startsWith("new:")) {
         const productName = item.product_id.replace("new:", "").trim();
         if (!productName) {
-          throw new AppError("Nombre de producto nuevo invalido.", 400);
+          throw new AppError("Nombre de producto nuevo inválido.", 400);
         }
         productId = await createProductInPg(client, productName, item.costo_unitario);
       } else {
@@ -550,7 +550,7 @@ export const payPurchaseInvoice = async (
   const paymentDate = normalizeBusinessDateForStorage(payload.fecha_pago);
 
   if (isCurrentAccount(payload.metodo_pago_real)) {
-    throw new AppError("El pago de una cuenta corriente debe registrarse con un metodo real de pago.", 400);
+    throw new AppError("El pago de una cuenta corriente debe registrarse con un método real de pago.", 400);
   }
 
   if (!isPostgresConfigured()) {
@@ -567,14 +567,14 @@ export const payPurchaseInvoice = async (
         .get(id) as any;
 
       if (!invoice) throw new AppError("Factura no encontrada", 404);
-      if (!isCurrentAccount(invoice.metodo_pago)) throw new AppError("Esta factura no esta en cuenta corriente.", 400);
+      if (!isCurrentAccount(invoice.metodo_pago)) throw new AppError("Esta factura no está en cuenta corriente.", 400);
 
       const total = toNumber(invoice.total);
       const montoPagadoActual = toNumber(invoice.monto_pagado);
       const saldo = Math.max(0, total - montoPagadoActual);
 
       if (saldo <= 0 || invoice.estado_pago === "pagado") {
-        throw new AppError("Esta factura ya esta pagada.", 400);
+        throw new AppError("Esta factura ya está pagada.", 400);
       }
 
       db.prepare(
@@ -629,14 +629,14 @@ export const payPurchaseInvoice = async (
     const invoice = invoiceResult.rows[0];
 
     if (!invoice) throw new AppError("Factura no encontrada", 404);
-    if (!isCurrentAccount(invoice.metodo_pago)) throw new AppError("Esta factura no esta en cuenta corriente.", 400);
+    if (!isCurrentAccount(invoice.metodo_pago)) throw new AppError("Esta factura no está en cuenta corriente.", 400);
 
     const total = toNumber(invoice.total);
     const montoPagadoActual = toNumber(invoice.monto_pagado);
     const saldo = Math.max(0, total - montoPagadoActual);
 
     if (saldo <= 0 || invoice.estado_pago === "pagado") {
-      throw new AppError("Esta factura ya esta pagada.", 400);
+      throw new AppError("Esta factura ya está pagada.", 400);
     }
 
     await client.query(

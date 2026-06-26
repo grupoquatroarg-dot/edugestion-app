@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
+    "check:encoding": "node scripts/check-encoding.mjs",
     "start": "tsx server.ts"
   },
   "dependencies": {

@@ -495,7 +495,7 @@ export default async function handler(req: any, res: any) {
               cantidad: toNumber(row.cantidad),
             })),
             porMetodoPago: salesByMethodResult.rows.map((row: any) => ({
-              name: row.name || "Sin metodo",
+              name: row.name || "Sin método",
               value: toNumber(row.value),
             })),
             listaVentas: salesListResult.rows.map((row: any) => ({
@@ -551,7 +551,7 @@ export default async function handler(req: any, res: any) {
             egresos: toNumber(financeStats.egresos),
             balance: toNumber(financeStats.ingresos) - toNumber(financeStats.egresos),
             egresosPorCategoria: expensesByCategoryResult.rows.map((row: any) => ({
-              name: row.name || "Sin categoria",
+              name: row.name || "Sin categoría",
               value: toNumber(row.value),
             })),
             flujoCaja: cashFlowResult.rows.map((row: any) => ({

@@ -15,7 +15,7 @@ const providerSchema = z.object({
   nombre: z.string().min(2, "El nombre debe tener al menos 2 caracteres"),
   cuit: z.string().optional(),
   telefono: z.string().optional(),
-  email: z.string().email("Email invalido").optional().or(z.literal("")),
+  email: z.string().email("Email inválido").optional().or(z.literal("")),
   direccion: z.string().optional(),
   estado: z.string().optional(),
 });
@@ -105,7 +105,7 @@ export default async function handler(req: any, res: any) {
     if (!user) return;
 
     const id = Number(req.query?.id);
-    if (!id) return sendError(res, "ID de factura invalido", 400);
+    if (!id) return sendError(res, "ID de factura inválido", 400);
 
     const parsed = purchaseInvoicePaymentSchema.safeParse(getRequestBody(req));
     if (!parsed.success) {

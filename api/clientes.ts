@@ -30,14 +30,14 @@ const clientSchema = z.object({
 
 const baseUserSchema = z.object({
   name: z.string().min(2, "Nombre demasiado corto"),
-  email: z.string().email("Email invalido"),
+  email: z.string().email("Email inválido"),
   role: z.enum(["administrador", "empleado", "vendedor", "operario"]),
   active: z.union([z.number(), z.boolean()]).optional(),
   avatar: z.string().optional(),
 });
 
 const createUserSchema = baseUserSchema.extend({
-  password: z.string().min(6, "La contrasena debe tener al menos 6 caracteres"),
+  password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres"),
 });
 
 const updateUserSchema = baseUserSchema.extend({
@@ -46,7 +46,7 @@ const updateUserSchema = baseUserSchema.extend({
     .optional()
     .refine(
       (value) => value === undefined || value === "" || value.length >= 6,
-      "La contrasena debe tener al menos 6 caracteres"
+      "La contraseña debe tener al menos 6 caracteres"
     ),
 });
 
@@ -228,7 +228,7 @@ const handleUsers = async (req: any, res: any) => {
       return sendSuccess(res, newUser, "Usuario creado exitosamente", 201);
     } catch (error: any) {
       if (error?.code === "SQLITE_CONSTRAINT" || error?.code === "23505") {
-        return sendError(res, "El email ya esta registrado", 400);
+        return sendError(res, "El email ya está registrado", 400);
       }
 
       return sendError(res, error?.message || "Error al crear usuario", error?.statusCode || 400, error?.errors || []);
@@ -236,7 +236,7 @@ const handleUsers = async (req: any, res: any) => {
   }
 
   if (req.method === "PUT") {
-    if (!id) return sendError(res, "ID de usuario invalido", 400);
+    if (!id) return sendError(res, "ID de usuario inválido", 400);
 
     const parsed = updateUserSchema.safeParse(getBody(req));
 
@@ -257,7 +257,7 @@ const handleUsers = async (req: any, res: any) => {
       return sendSuccess(res, updatedUser, "Usuario actualizado exitosamente");
     } catch (error: any) {
       if (error?.code === "SQLITE_CONSTRAINT" || error?.code === "23505") {
-        return sendError(res, "El email ya esta registrado", 400);
+        return sendError(res, "El email ya está registrado", 400);
       }
 
       return sendError(res, error?.message || "Error al actualizar usuario", error?.statusCode || 400, error?.errors || []);
@@ -272,7 +272,7 @@ const handleUserPermissions = async (req: any, res: any) => {
   if (!admin) return;
 
   const id = getId(req);
-  if (!id) return sendError(res, "ID de usuario invalido", 400);
+  if (!id) return sendError(res, "ID de usuario inválido", 400);
 
   if (req.method === "GET") {
     try {
@@ -523,7 +523,7 @@ const handleRoutes = async (req: any, res: any) => {
   if (endpoint === "route-item") {
     const user = await requireRoutePermission(req, res, "edit");
     if (!user) return;
-    if (!id) return sendError(res, "ID de item invalido", 400);
+    if (!id) return sendError(res, "ID de ítem inválido", 400);
     if (req.method !== "PATCH") return sendError(res, "Method not allowed", 405);
 
     const parsed = routeItemSchema.safeParse(getBody(req));
@@ -561,7 +561,7 @@ const handleRoutes = async (req: any, res: any) => {
   if (endpoint === "routes-reorder") {
     const user = await requireRoutePermission(req, res, "edit");
     if (!user) return;
-    if (!id) return sendError(res, "ID de ruta invalido", 400);
+    if (!id) return sendError(res, "ID de ruta inválido", 400);
     if (req.method !== "POST") return sendError(res, "Method not allowed", 405);
 
     const parsed = routeReorderSchema.safeParse(getBody(req));
@@ -703,7 +703,7 @@ const handleRoutes = async (req: any, res: any) => {
     if (req.method === "PATCH") {
       const user = await requireRoutePermission(req, res, "edit");
       if (!user) return;
-      if (!id) return sendError(res, "ID de ruta invalido", 400);
+      if (!id) return sendError(res, "ID de ruta inválido", 400);
 
       const parsed = routeStatusSchema.safeParse(getBody(req));
       if (!parsed.success) {
@@ -722,7 +722,7 @@ const handleRoutes = async (req: any, res: any) => {
     if (req.method === "DELETE") {
       const user = await requireRoutePermission(req, res, "delete");
       if (!user) return;
-      if (!id) return sendError(res, "ID de ruta invalido", 400);
+      if (!id) return sendError(res, "ID de ruta inválido", 400);
 
       await pool.query(`DELETE FROM routes WHERE id = $1`, [id]);
       return sendSuccess(res, null, "Ruta eliminada");
@@ -944,7 +944,7 @@ const handleChecklist = async (req: any, res: any) => {
   }
 
   if (endpoint === "checklist-template") {
-    if (!id) return sendError(res, "ID de plantilla invalido", 400);
+    if (!id) return sendError(res, "ID de plantilla inválido", 400);
 
     if (req.method === "GET") {
       const user = await requireChecklistPermission(req, res, "view");
@@ -1062,7 +1062,7 @@ const handleChecklist = async (req: any, res: any) => {
   if (endpoint === "checklist-template-status") {
     const user = await requireChecklistPermission(req, res, "edit");
     if (!user) return;
-    if (!id) return sendError(res, "ID de plantilla invalido", 400);
+    if (!id) return sendError(res, "ID de plantilla inválido", 400);
     if (req.method !== "PATCH") return sendError(res, "Method not allowed", 405);
 
     const parsed = checklistTemplateStatusSchema.safeParse(getBody(req));
@@ -1218,7 +1218,7 @@ const handleChecklist = async (req: any, res: any) => {
   }
 
   if (endpoint === "checklist") {
-    if (!id) return sendError(res, "ID de checklist invalido", 400);
+    if (!id) return sendError(res, "ID de checklist inválido", 400);
 
     if (req.method === "GET") {
       const user = await requireChecklistPermission(req, res, "view");
@@ -1295,7 +1295,7 @@ const handleChecklist = async (req: any, res: any) => {
   if (endpoint === "checklist-item") {
     const user = await requireChecklistPermission(req, res, "edit");
     if (!user) return;
-    if (!id) return sendError(res, "ID de item invalido", 400);
+    if (!id) return sendError(res, "ID de ítem inválido", 400);
     if (req.method !== "PATCH") return sendError(res, "Method not allowed", 405);
 
     const parsed = checklistItemUpdateSchema.safeParse(getBody(req));
@@ -1882,7 +1882,7 @@ const handleClientAccountAdmin = async (req: any, res: any) => {
   const id = getId(req);
 
   if (!id) {
-    return sendError(res, "ID de cliente invalido", 400);
+    return sendError(res, "ID de cliente inválido", 400);
   }
 
   if (endpoint === "client-payment") {
@@ -2312,7 +2312,7 @@ export default async function handler(req: any, res: any) {
     if (!user) return;
 
     if (!id) {
-      return sendError(res, "ID de cliente invalido", 400);
+      return sendError(res, "ID de cliente inválido", 400);
     }
 
     const parsed = clientSchema.safeParse(normalizeClientBody(getBody(req)));
@@ -2343,7 +2343,7 @@ export default async function handler(req: any, res: any) {
     if (!user) return;
 
     if (!id) {
-      return sendError(res, "ID de cliente invalido", 400);
+      return sendError(res, "ID de cliente inválido", 400);
     }
 
     try {

@@ -28,7 +28,7 @@ const saleSchema = z.object({
 
 const paymentSchema = z.object({
   monto: z.number().positive("El monto debe ser mayor a cero"),
-  metodo_pago: z.string().min(1, "Metodo de pago requerido"),
+  metodo_pago: z.string().min(1, "Método de pago requerido"),
   observaciones: z.string().optional(),
   fecha: z.string().optional(),
 });
@@ -319,7 +319,7 @@ const handleSupplierOrders = async (req: any, res: any) => {
   if (endpoint === "supplier-order" && req.method === "GET") {
     const user = await requirePermission(req, res, "suppliers", "view");
     if (!user) return;
-    if (!id) return sendError(res, "ID de pedido invalido", 400);
+    if (!id) return sendError(res, "ID de pedido inválido", 400);
 
     try {
       const orderResult = await pool.query(
@@ -401,7 +401,7 @@ const handleSupplierOrders = async (req: any, res: any) => {
   if (endpoint === "supplier-order-status" && req.method === "POST") {
     const user = await requirePermission(req, res, "suppliers", "edit");
     if (!user) return;
-    if (!id) return sendError(res, "ID de pedido invalido", 400);
+    if (!id) return sendError(res, "ID de pedido inválido", 400);
 
     const parsed = supplierOrderStatusSchema.safeParse(getBody(req));
     if (!parsed.success) {
@@ -436,7 +436,7 @@ const handleSupplierOrders = async (req: any, res: any) => {
   if (endpoint === "supplier-order-items" && req.method === "PUT") {
     const user = await requirePermission(req, res, "suppliers", "edit");
     if (!user) return;
-    if (!id) return sendError(res, "ID de pedido invalido", 400);
+    if (!id) return sendError(res, "ID de pedido inválido", 400);
 
     const parsed = supplierOrderItemsSchema.safeParse(getBody(req));
     if (!parsed.success) {
@@ -492,7 +492,7 @@ const handleSupplierOrders = async (req: any, res: any) => {
   if (endpoint === "supplier-order" && req.method === "DELETE") {
     const user = await requirePermission(req, res, "suppliers", "delete");
     if (!user) return;
-    if (!id) return sendError(res, "ID de pedido invalido", 400);
+    if (!id) return sendError(res, "ID de pedido inválido", 400);
 
     const client = await pool.connect();
     try {
@@ -515,7 +515,7 @@ const handleSupplierOrders = async (req: any, res: any) => {
   if (endpoint === "supplier-order-complete" && req.method === "POST") {
     const user = await requirePermission(req, res, "suppliers", "edit");
     if (!user) return;
-    if (!id) return sendError(res, "ID de pedido invalido", 400);
+    if (!id) return sendError(res, "ID de pedido inválido", 400);
 
     const parsed = supplierOrderCompleteSchema.safeParse(getBody(req));
     if (!parsed.success) {
@@ -1508,7 +1508,7 @@ export default async function handler(req: any, res: any) {
     const clienteId = id;
 
     if (!clienteId) {
-      return sendError(res, "ID de cliente invalido", 400);
+      return sendError(res, "ID de cliente inválido", 400);
     }
 
     const parsed = paymentSchema.safeParse(getBody(req));

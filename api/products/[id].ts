@@ -81,7 +81,7 @@ export default async function handler(req: any, res: any) {
   const id = getId(req);
 
   if (!id) {
-    return sendError(res, "ID de producto invalido", 400);
+    return sendError(res, "ID de producto inválido", 400);
   }
 
   if (req.method === "PUT") {

@@ -119,8 +119,8 @@ export default async function handler(req: any, res: any) {
     const amount = toNumber(body.monto);
 
     if (amount <= 0) return sendError(res, "El monto debe ser positivo", 400);
-    if (!body.descripcion || String(body.descripcion).trim().length < 3) return sendError(res, "La descripcion es muy corta", 400);
-    if (!body.categoria) return sendError(res, "La categoria es requerida", 400);
+    if (!body.descripcion || String(body.descripcion).trim().length < 3) return sendError(res, "La descripción es muy corta", 400);
+    if (!body.categoria) return sendError(res, "La categoría es requerida", 400);
     if (!body.forma_pago) return sendError(res, "La forma de pago es requerida", 400);
 
     try {
@@ -143,7 +143,7 @@ export default async function handler(req: any, res: any) {
     const chequeId = Number(req.query?.id);
     const body = getBody(req);
 
-    if (!Number.isFinite(chequeId) || chequeId <= 0) return sendError(res, "ID de cheque invalido", 400);
+    if (!Number.isFinite(chequeId) || chequeId <= 0) return sendError(res, "ID de cheque inválido", 400);
     if (!body.estado) return sendError(res, "Estado requerido", 400);
 
     try {
