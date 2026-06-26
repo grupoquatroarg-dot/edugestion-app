@@ -10,6 +10,8 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "check:encoding": "node scripts/check-encoding.mjs",
+    "check:audit": "tsx scripts/check-functional-audit.ts",
+    "validate:audit": "npm run check:encoding && npm run check:audit && npm run build",
     "start": "tsx server.ts"
   },
   "dependencies": {
