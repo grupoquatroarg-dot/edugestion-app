@@ -1602,14 +1602,14 @@ export default function SalesModule() {
 
       {/* Success Modal */}
       {showSuccessModal && lastSaleData && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="sale-success-title">
           <div className="flex max-h-[100dvh] w-full max-w-md flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl animate-in zoom-in-95 duration-300 sm:max-h-[95dvh] sm:rounded-[32px]">
             <div className="overflow-y-auto p-5 text-center sm:p-8">
               <div className="w-16 h-16 sm:w-24 sm:h-24 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6 sm:mb-8 shadow-inner">
                 <CheckCircle2 size={32} className="sm:hidden" />
                 <CheckCircle2 size={48} className="hidden sm:block" />
               </div>
-              <h3 className="text-2xl sm:text-3xl font-black text-zinc-900 mb-2 sm:mb-3 tracking-tight">¡Venta Exitosa!</h3>
+              <h3 id="sale-success-title" className="text-2xl sm:text-3xl font-black text-zinc-900 mb-2 sm:mb-3 tracking-tight">¡Venta Exitosa!</h3>
               <p className="text-zinc-500 mb-6 sm:mb-10 leading-relaxed text-sm sm:text-base">La operación <b>#{lastSaleData.numero_venta || lastSaleData.id}</b> ha sido procesada y registrada correctamente.</p>
               
               {lastSaleData.results?.some((r: any) => r.pending > 0) && (
@@ -1654,6 +1654,7 @@ export default function SalesModule() {
                 )}
                 <button 
                   onClick={() => setShowSuccessModal(false)}
+                  aria-label="Cerrar confirmación de venta"
                   className="w-full py-4 bg-zinc-100 text-zinc-900 rounded-2xl font-black uppercase tracking-widest hover:bg-zinc-200 transition-all"
                 >
                   Cerrar
@@ -1666,15 +1667,17 @@ export default function SalesModule() {
 
       {/* Sale Detail Modal (History) */}
       {selectedSale && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="sale-detail-title">
           <div className="flex max-h-[100dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl animate-in zoom-in-95 duration-300 sm:max-h-[95dvh] sm:rounded-[36px]">
             <div className="p-4 sm:p-8 border-b border-zinc-100 flex items-center justify-between bg-zinc-900 text-white shrink-0">
               <div>
-                <h3 className="text-lg sm:text-xl font-black uppercase tracking-tight">Detalle #{selectedSale.numero_venta || selectedSale.id}</h3>
+                <h3 id="sale-detail-title" className="text-lg sm:text-xl font-black uppercase tracking-tight">Detalle #{selectedSale.numero_venta || selectedSale.id}</h3>
                 <p className="text-[10px] sm:text-xs text-white/60 font-medium">{selectedSale.fecha ? formatBusinessDateTime(selectedSale.fecha) : ''}</p>
               </div>
               <button 
                 onClick={() => setSelectedSale(null)}
+                aria-label="Cerrar detalle de venta"
+                autoFocus
                 className="p-2 hover:bg-white/10 rounded-full transition-all"
               >
                 <X size={24} />
@@ -1772,15 +1775,17 @@ export default function SalesModule() {
       )}
       {/* Pending Sales Detail Modal (Saldos) */}
       {selectedCustomerForSaldos && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="pending-sales-title">
           <div className="flex max-h-[100dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl animate-in zoom-in-95 duration-300 sm:max-h-[95dvh] sm:rounded-[36px]">
             <div className="p-4 sm:p-8 border-b border-zinc-100 flex items-center justify-between bg-zinc-900 text-white shrink-0">
               <div>
-                <h3 className="text-lg sm:text-xl font-black tracking-tight">Ventas Pendientes</h3>
+                <h3 id="pending-sales-title" className="text-lg sm:text-xl font-black tracking-tight">Ventas Pendientes</h3>
                 <p className="text-[10px] sm:text-xs text-white/60 uppercase font-bold tracking-widest truncate max-w-[200px] sm:max-w-none">{selectedCustomerForSaldos.nombre}</p>
               </div>
               <button 
                 onClick={() => setSelectedCustomerForSaldos(null)}
+                aria-label="Cerrar panel de ventas pendientes"
+                autoFocus
                 className="p-2 sm:p-3 hover:bg-white/10 rounded-full transition-all"
               >
                 <X size={24} />
@@ -1846,6 +1851,7 @@ export default function SalesModule() {
                 </button>
                 <button 
                   onClick={() => setSelectedCustomerForSaldos(null)}
+                  aria-label="Cerrar panel de ventas pendientes"
                   className="px-6 sm:px-8 py-3 bg-zinc-900 text-white rounded-xl sm:rounded-2xl font-black uppercase tracking-widest hover:bg-zinc-800 transition-all shadow-xl shadow-zinc-200 text-sm"
                 >
                   Cerrar
@@ -1858,12 +1864,13 @@ export default function SalesModule() {
 
       {/* Quick Payment Modal */}
       {showQuickPaymentModal && selectedCustomerForSaldos && (
-        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="quick-payment-title">
           <div className="flex max-h-[100dvh] w-full max-w-md flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl animate-in zoom-in-95 duration-300 sm:max-h-[95dvh] sm:rounded-[32px]">
             <div className="flex shrink-0 items-center justify-between border-b border-emerald-500 bg-emerald-600 p-4 text-white sm:p-6">
-              <h3 className="text-xl font-black tracking-tight">Registrar Pago</h3>
+              <h3 id="quick-payment-title" className="text-xl font-black tracking-tight">Registrar Pago</h3>
               <button 
                 onClick={() => setShowQuickPaymentModal(false)}
+                aria-label="Cerrar modal de registro de pago"
                 className="p-2 hover:bg-white/10 rounded-full transition-all"
               >
                 <X size={24} />
@@ -1871,10 +1878,11 @@ export default function SalesModule() {
             </div>
             <form onSubmit={handleQuickPayment} className="space-y-5 overflow-y-auto p-4 sm:p-6">
               <div>
-                <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-2 tracking-widest">Monto a Cobrar</label>
+                <label htmlFor="quick-payment-amount" className="block text-[10px] font-bold text-zinc-400 uppercase mb-2 tracking-widest">Monto a Cobrar</label>
                 <div className="relative">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400 font-mono text-lg">$</span>
                   <input
+                    id="quick-payment-amount"
                     type="number"
                     step="0.01"
                     required
@@ -1889,8 +1897,8 @@ export default function SalesModule() {
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-2 tracking-widest">Método de Pago</label>
-                <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+                <p id="quick-payment-method-label" className="block text-[10px] font-bold text-zinc-400 uppercase mb-2 tracking-widest">Método de Pago</p>
+                <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2" role="group" aria-labelledby="quick-payment-method-label">
                   {paymentMethods.map((pm) => (
                     <button
                       key={pm.id}
@@ -1909,8 +1917,9 @@ export default function SalesModule() {
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-zinc-400 uppercase mb-2 tracking-widest">Observaciones (Opcional)</label>
+                <label htmlFor="quick-payment-notes" className="block text-[10px] font-bold text-zinc-400 uppercase mb-2 tracking-widest">Observaciones (Opcional)</label>
                 <textarea
+                  id="quick-payment-notes"
                   className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none text-sm resize-none"
                   rows={2}
                   placeholder="Ej: Pago parcial, entrega en efectivo..."

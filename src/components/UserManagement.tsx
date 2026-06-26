@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   Check,
@@ -113,6 +113,9 @@ export default function UserManagement() {
   const [permissionsError, setPermissionsError] = useState('');
   const [formError, setFormError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const userNameInputRef = useRef<HTMLInputElement | null>(null);
+  const permissionsTitleRef = useRef<HTMLHeadingElement | null>(null);
+  const modalTriggerRef = useRef<HTMLElement | null>(null);
 
   const [formData, setFormData] = useState<{
     name: string;
@@ -137,6 +140,26 @@ export default function UserManagement() {
     const timeout = window.setTimeout(() => setSuccessMessage(''), 4500);
     return () => window.clearTimeout(timeout);
   }, [successMessage]);
+
+  useEffect(() => {
+    if (!isModalOpen) return;
+    window.requestAnimationFrame(() => userNameInputRef.current?.focus());
+  }, [isModalOpen]);
+
+  useEffect(() => {
+    if (!isPermissionsModalOpen) return;
+    window.requestAnimationFrame(() => permissionsTitleRef.current?.focus());
+  }, [isPermissionsModalOpen]);
+
+  const rememberModalTrigger = () => {
+    modalTriggerRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+  };
+
+  const restoreModalTrigger = () => {
+    window.requestAnimationFrame(() => modalTriggerRef.current?.focus());
+  };
 
   const fetchUsers = async (initial = false) => {
     if (initial) setIsLoading(true);
@@ -189,6 +212,7 @@ export default function UserManagement() {
   }, [users]);
 
   const handleOpenModal = (user?: AccessUser) => {
+    rememberModalTrigger();
     if (user) {
       setEditingUser(user);
       setFormData({
@@ -217,6 +241,7 @@ export default function UserManagement() {
     if (isSubmitting) return;
     setIsModalOpen(false);
     setFormError('');
+    restoreModalTrigger();
   };
 
   const buildPermissions = (data: Record<string, UserPermission> = {}) =>
@@ -230,6 +255,7 @@ export default function UserManagement() {
     }, {});
 
   const handleOpenPermissionsModal = async (user: AccessUser) => {
+    if (!isPermissionsModalOpen) rememberModalTrigger();
     setEditingUser(user);
     setUserPermissions(buildPermissions());
     setPermissionsError('');
@@ -255,6 +281,7 @@ export default function UserManagement() {
     if (isSubmitting) return;
     setIsPermissionsModalOpen(false);
     setPermissionsError('');
+    restoreModalTrigger();
   };
 
   const handlePermissionChange = (moduleId: string, action: PermissionAction, value: boolean) => {
@@ -315,6 +342,7 @@ export default function UserManagement() {
       unwrapResponse(body);
       setIsPermissionsModalOpen(false);
       setSuccessMessage(`Permisos de ${editingUser.name} actualizados correctamente.`);
+      restoreModalTrigger();
     } catch (err: any) {
       setPermissionsError(err?.message || 'Error al guardar permisos.');
     } finally {
@@ -350,6 +378,7 @@ export default function UserManagement() {
       await fetchUsers(false);
       setIsModalOpen(false);
       setSuccessMessage(editingUser ? 'Usuario actualizado correctamente.' : 'Usuario creado correctamente.');
+      restoreModalTrigger();
     } catch (err: any) {
       setFormError(err?.message || 'Error al guardar usuario.');
     } finally {
@@ -634,7 +663,7 @@ export default function UserManagement() {
                 onClick={closeUserModal}
                 disabled={isSubmitting}
                 className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50"
-                aria-label="Cerrar formulario"
+                aria-label="Cerrar formulario de usuario"
               >
                 <X size={21} />
               </button>
@@ -663,6 +692,7 @@ export default function UserManagement() {
                     <label className="min-w-0 sm:col-span-2">
                       <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Nombre completo</span>
                       <input
+                        ref={userNameInputRef}
                         type="text"
                         required
                         value={formData.name}
@@ -779,7 +809,14 @@ export default function UserManagement() {
             <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 px-4 py-4 sm:px-6 sm:py-5">
               <div className="min-w-0">
                 <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-600">Control de acceso</p>
-                <h2 id="permissions-title" className="mt-1 break-words text-xl font-black text-slate-950 sm:text-2xl">Permisos de {editingUser.name}</h2>
+                <h2
+                  ref={permissionsTitleRef}
+                  id="permissions-title"
+                  tabIndex={-1}
+                  className="mt-1 break-words rounded-lg text-xl font-black text-slate-950 outline-none focus-visible:ring-4 focus-visible:ring-indigo-100 sm:text-2xl"
+                >
+                  Permisos de {editingUser.name}
+                </h2>
                 <p className="mt-1 break-all text-sm text-slate-500">{editingUser.email}</p>
               </div>
               <button
@@ -787,7 +824,7 @@ export default function UserManagement() {
                 onClick={closePermissionsModal}
                 disabled={isSubmitting}
                 className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50"
-                aria-label="Cerrar permisos"
+                aria-label="Cerrar panel de permisos"
               >
                 <X size={21} />
               </button>
@@ -835,13 +872,13 @@ export default function UserManagement() {
                         <p className="mt-1 text-sm text-slate-500">Aplicá un nivel general y después ajustá módulos puntuales.</p>
                       </div>
                       <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
-                        <button type="button" onClick={() => setAllPermissionPreset('none')} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-600 transition hover:bg-slate-100">
+                        <button type="button" onClick={() => setAllPermissionPreset('none')} aria-label="Aplicar sin acceso a todos los módulos" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-600 transition hover:bg-slate-100">
                           <XCircle size={16} /> Sin acceso
                         </button>
-                        <button type="button" onClick={() => setAllPermissionPreset('view')} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-2 text-xs font-black text-sky-700 transition hover:bg-sky-100">
+                        <button type="button" onClick={() => setAllPermissionPreset('view')} aria-label="Aplicar solo lectura a todos los módulos" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-2 text-xs font-black text-sky-700 transition hover:bg-sky-100">
                           <Eye size={16} /> Solo lectura
                         </button>
-                        <button type="button" onClick={() => setAllPermissionPreset('full')} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-black text-indigo-700 transition hover:bg-indigo-100">
+                        <button type="button" onClick={() => setAllPermissionPreset('full')} aria-label="Aplicar acceso completo a todos los módulos" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-black text-indigo-700 transition hover:bg-indigo-100">
                           <CheckCircle2 size={16} /> Acceso completo
                         </button>
                       </div>
@@ -866,17 +903,17 @@ export default function UserManagement() {
                               <p className="mt-1 text-xs leading-5 text-slate-500">{module.description}</p>
                             </div>
                             <div className="flex shrink-0 flex-wrap gap-1.5">
-                              <button type="button" onClick={() => setModulePermissionPreset(module.id, 'none')} className="min-h-9 rounded-xl border border-slate-200 px-2.5 text-[10px] font-black text-slate-500 hover:bg-slate-50">Ninguno</button>
-                              <button type="button" onClick={() => setModulePermissionPreset(module.id, 'view')} className="min-h-9 rounded-xl border border-sky-200 bg-sky-50 px-2.5 text-[10px] font-black text-sky-700 hover:bg-sky-100">Lectura</button>
-                              <button type="button" onClick={() => setModulePermissionPreset(module.id, 'full')} className="min-h-9 rounded-xl border border-indigo-200 bg-indigo-50 px-2.5 text-[10px] font-black text-indigo-700 hover:bg-indigo-100">Completo</button>
+                              <button type="button" onClick={() => setModulePermissionPreset(module.id, 'none')} aria-label={`${module.label} - Sin acceso`} className="min-h-9 rounded-xl border border-slate-200 px-2.5 text-[10px] font-black text-slate-500 hover:bg-slate-50">Ninguno</button>
+                              <button type="button" onClick={() => setModulePermissionPreset(module.id, 'view')} aria-label={`${module.label} - Solo lectura`} className="min-h-9 rounded-xl border border-sky-200 bg-sky-50 px-2.5 text-[10px] font-black text-sky-700 hover:bg-sky-100">Lectura</button>
+                              <button type="button" onClick={() => setModulePermissionPreset(module.id, 'full')} aria-label={`${module.label} - Acceso completo`} className="min-h-9 rounded-xl border border-indigo-200 bg-indigo-50 px-2.5 text-[10px] font-black text-indigo-700 hover:bg-indigo-100">Completo</button>
                             </div>
                           </div>
 
                           <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                            <PermissionToggle icon={<Eye size={16} />} label="Ver" checked={permission.can_view} onChange={(value) => handlePermissionChange(module.id, 'can_view', value)} />
-                            <PermissionToggle icon={<PlusCircle size={16} />} label="Crear" checked={permission.can_create} onChange={(value) => handlePermissionChange(module.id, 'can_create', value)} />
-                            <PermissionToggle icon={<PencilLine size={16} />} label="Editar" checked={permission.can_edit} onChange={(value) => handlePermissionChange(module.id, 'can_edit', value)} />
-                            <PermissionToggle icon={<Trash2 size={16} />} label="Eliminar" checked={permission.can_delete} onChange={(value) => handlePermissionChange(module.id, 'can_delete', value)} danger />
+                            <PermissionToggle icon={<Eye size={16} />} label="Ver" accessibleLabel={`${module.label} - Ver`} checked={permission.can_view} onChange={(value) => handlePermissionChange(module.id, 'can_view', value)} />
+                            <PermissionToggle icon={<PlusCircle size={16} />} label="Crear" accessibleLabel={`${module.label} - Crear`} checked={permission.can_create} onChange={(value) => handlePermissionChange(module.id, 'can_create', value)} />
+                            <PermissionToggle icon={<PencilLine size={16} />} label="Editar" accessibleLabel={`${module.label} - Editar`} checked={permission.can_edit} onChange={(value) => handlePermissionChange(module.id, 'can_edit', value)} />
+                            <PermissionToggle icon={<Trash2 size={16} />} label="Eliminar" accessibleLabel={`${module.label} - Eliminar`} checked={permission.can_delete} onChange={(value) => handlePermissionChange(module.id, 'can_delete', value)} danger />
                           </div>
                         </article>
                       );
@@ -891,6 +928,7 @@ export default function UserManagement() {
                 type="button"
                 onClick={closePermissionsModal}
                 disabled={isSubmitting}
+                aria-label={editingUser.role === 'administrador' ? 'Cerrar panel de permisos' : 'Cerrar panel de permisos sin guardar'}
                 className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-slate-200 px-5 py-3 text-sm font-black text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
               >
                 {editingUser.role === 'administrador' ? 'Cerrar' : 'Cancelar'}
@@ -946,12 +984,14 @@ function SummaryCard({
 function PermissionToggle({
   icon,
   label,
+  accessibleLabel,
   checked,
   onChange,
   danger = false,
 }: {
   icon: React.ReactNode;
   label: string;
+  accessibleLabel: string;
   checked: boolean;
   onChange: (value: boolean) => void;
   danger?: boolean;
@@ -968,6 +1008,7 @@ function PermissionToggle({
       </span>
       <input
         type="checkbox"
+        aria-label={accessibleLabel}
         checked={checked}
         onChange={(event) => onChange(event.target.checked)}
         className="sr-only"

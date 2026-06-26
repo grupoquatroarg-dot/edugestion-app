@@ -522,6 +522,7 @@ export default function CustomerModule() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                 <input
                   type="search"
+                  aria-label="Buscar clientes por nombre, razón social, CUIT, teléfono, email o localidad"
                   placeholder="Nombre, razón social, CUIT, teléfono, email o localidad..."
                   className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-10 text-sm outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-4 focus:ring-indigo-100"
                   value={searchTerm}
@@ -734,12 +735,12 @@ export default function CustomerModule() {
       </div>
 
       {isModalOpen && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="customer-form-title">
           <div className="flex max-h-[100dvh] w-full flex-col overflow-hidden rounded-t-3xl border border-slate-200 bg-white shadow-2xl animate-in fade-in zoom-in duration-200 sm:max-h-[92dvh] sm:max-w-3xl sm:rounded-3xl">
             <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 p-4 sm:p-6">
               <div className="min-w-0">
                 <p className="text-[10px] font-black uppercase tracking-[0.16em] text-indigo-600">Datos comerciales</p>
-                <h2 className="mt-1 break-words text-xl font-black text-slate-950 sm:text-2xl">
+                <h2 id="customer-form-title" className="mt-1 break-words text-xl font-black text-slate-950 sm:text-2xl">
                   {editingCliente ? 'Editar cliente' : 'Nuevo cliente'}
                 </h2>
               </div>
@@ -747,7 +748,7 @@ export default function CustomerModule() {
                 type="button"
                 onClick={closeModal}
                 className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
-                aria-label="Cerrar formulario"
+                aria-label="Cerrar formulario de cliente"
                 title="Cerrar"
               >
                 <X size={20} />
@@ -767,22 +768,22 @@ export default function CustomerModule() {
                       <input ref={customerNameInputRef} id="customer-name" required type="text" className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.nombre_apellido} onChange={(event) => setFormData({ ...formData, nombre_apellido: event.target.value })} />
                     </div>
                     <div>
-                      <label className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Razón social</label>
-                      <input type="text" className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.razon_social} onChange={(event) => setFormData({ ...formData, razon_social: event.target.value })} />
+                      <label htmlFor="customer-business-name" className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Razón social</label>
+                      <input id="customer-business-name" type="text" className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.razon_social} onChange={(event) => setFormData({ ...formData, razon_social: event.target.value })} />
                     </div>
                     <div>
-                      <label className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">CUIT / CUIL</label>
-                      <input type="text" className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.cuit} onChange={(event) => setFormData({ ...formData, cuit: event.target.value })} />
+                      <label htmlFor="customer-tax-id" className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">CUIT / CUIL</label>
+                      <input id="customer-tax-id" type="text" className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.cuit} onChange={(event) => setFormData({ ...formData, cuit: event.target.value })} />
                     </div>
                     <div>
-                      <label className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Email</label>
-                      <input type="email" className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.email} onChange={(event) => setFormData({ ...formData, email: event.target.value })} />
+                      <label htmlFor="customer-email" className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Email</label>
+                      <input id="customer-email" type="email" className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.email} onChange={(event) => setFormData({ ...formData, email: event.target.value })} />
                     </div>
                     <div className="sm:col-span-2">
-                      <label className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">WhatsApp / teléfono</label>
+                      <label htmlFor="customer-phone" className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">WhatsApp / teléfono</label>
                       <div className="flex min-w-0">
                         <div className="flex min-h-11 shrink-0 items-center rounded-l-xl border border-slate-200 bg-slate-100 px-3 text-sm font-black text-slate-700">+54 9</div>
-                        <input type="tel" inputMode="numeric" placeholder="3413111555" className="min-h-11 min-w-0 flex-1 rounded-r-xl border border-l-0 border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.telefono} onChange={(event) => setFormData({ ...formData, telefono: event.target.value.replace(/\D/g, '') })} />
+                        <input id="customer-phone" type="tel" inputMode="numeric" placeholder="3413111555" className="min-h-11 min-w-0 flex-1 rounded-r-xl border border-l-0 border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.telefono} onChange={(event) => setFormData({ ...formData, telefono: event.target.value.replace(/\D/g, '') })} />
                       </div>
                       <p className="mt-1.5 text-[10px] font-bold leading-4 text-slate-400">Ingresá código de área y celular, sin 0 ni 15. Ejemplo: 3413111555.</p>
                     </div>
@@ -796,23 +797,23 @@ export default function CustomerModule() {
                   </div>
                   <div className="grid grid-cols-1 gap-4 min-[480px]:grid-cols-2">
                     <div>
-                      <label className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Tipo de cliente</label>
-                      <select className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 font-bold outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.tipo_cliente} onChange={(event) => setFormData({ ...formData, tipo_cliente: event.target.value as any })}>
+                      <label htmlFor="customer-type" className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Tipo de cliente</label>
+                      <select id="customer-type" className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 font-bold outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.tipo_cliente} onChange={(event) => setFormData({ ...formData, tipo_cliente: event.target.value as any })}>
                         <option value="minorista">Minorista</option>
                         <option value="mayorista">Mayorista</option>
                       </select>
                     </div>
                     <div>
-                      <label className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Lista de precios</label>
-                      <select className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 font-bold outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.lista_precio} onChange={(event) => setFormData({ ...formData, lista_precio: event.target.value })}>
+                      <label htmlFor="customer-price-list" className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Lista de precios</label>
+                      <select id="customer-price-list" className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 font-bold outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.lista_precio} onChange={(event) => setFormData({ ...formData, lista_precio: event.target.value })}>
                         <option value="lista1">Lista 1 (Minorista)</option>
                         <option value="lista2">Lista 2 (Mayorista)</option>
                         <option value="lista3">Lista 3 (Especial)</option>
                       </select>
                     </div>
                     <div className="min-[480px]:col-span-2">
-                      <label className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Límite de crédito</label>
-                      <input type="number" className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.limite_credito} onChange={(event) => setFormData({ ...formData, limite_credito: parseFloat(event.target.value) || 0 })} />
+                      <label htmlFor="customer-credit-limit" className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Límite de crédito</label>
+                      <input id="customer-credit-limit" type="number" className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.limite_credito} onChange={(event) => setFormData({ ...formData, limite_credito: parseFloat(event.target.value) || 0 })} />
                     </div>
                   </div>
                 </section>
@@ -916,27 +917,27 @@ export default function CustomerModule() {
                       <p className="mt-1 text-xs leading-5 text-slate-500">Opcional. Permite consultar productos, pedidos, pagos y cuenta corriente.</p>
                     </div>
                   </div>
-                  <label className="mt-4 flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border border-cyan-100 bg-white px-3 py-2.5 text-sm font-bold text-slate-700">
-                    <input type="checkbox" checked={formData.portal_enabled} onChange={(event) => setFormData({ ...formData, portal_enabled: event.target.checked })} className="h-5 w-5 accent-cyan-600" />
+                  <label htmlFor="customer-portal-enabled" className="mt-4 flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border border-cyan-100 bg-white px-3 py-2.5 text-sm font-bold text-slate-700">
+                    <input id="customer-portal-enabled" type="checkbox" checked={formData.portal_enabled} onChange={(event) => setFormData({ ...formData, portal_enabled: event.target.checked })} className="h-5 w-5 accent-cyan-600" />
                     Habilitar acceso al portal
                   </label>
                   {formData.portal_enabled && (
                     <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <div>
-                        <label className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Usuario del portal</label>
-                        <input type="text" className="min-h-11 w-full rounded-xl border border-cyan-100 bg-white px-4 py-2.5 outline-none focus:ring-4 focus:ring-cyan-100" value={formData.portal_username} onChange={(event) => setFormData({ ...formData, portal_username: event.target.value })} placeholder="cliente123" />
+                        <label htmlFor="customer-portal-username" className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Usuario del portal</label>
+                        <input id="customer-portal-username" type="text" className="min-h-11 w-full rounded-xl border border-cyan-100 bg-white px-4 py-2.5 outline-none focus:ring-4 focus:ring-cyan-100" value={formData.portal_username} onChange={(event) => setFormData({ ...formData, portal_username: event.target.value })} placeholder="cliente123" />
                       </div>
                       <div>
-                        <label className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Contraseña del portal</label>
-                        <input type="password" className="min-h-11 w-full rounded-xl border border-cyan-100 bg-white px-4 py-2.5 outline-none focus:ring-4 focus:ring-cyan-100" value={formData.portal_password} onChange={(event) => setFormData({ ...formData, portal_password: event.target.value })} placeholder={editingCliente ? 'Dejar vacío para no cambiar' : 'Mínimo 6 caracteres'} />
+                        <label htmlFor="customer-portal-password" className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Contraseña del portal</label>
+                        <input id="customer-portal-password" type="password" className="min-h-11 w-full rounded-xl border border-cyan-100 bg-white px-4 py-2.5 outline-none focus:ring-4 focus:ring-cyan-100" value={formData.portal_password} onChange={(event) => setFormData({ ...formData, portal_password: event.target.value })} placeholder={editingCliente ? 'Dejar vacío para no cambiar' : 'Mínimo 6 caracteres'} />
                       </div>
                     </div>
                   )}
                 </section>
 
                 <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
-                  <label className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Observaciones</label>
-                  <textarea className="min-h-28 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.observaciones || ''} onChange={(event) => setFormData({ ...formData, observaciones: event.target.value })} placeholder="Notas internas, referencias o condiciones especiales..." />
+                  <label htmlFor="customer-notes" className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Observaciones</label>
+                  <textarea id="customer-notes" className="min-h-28 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.observaciones || ''} onChange={(event) => setFormData({ ...formData, observaciones: event.target.value })} placeholder="Notas internas, referencias o condiciones especiales..." />
                 </section>
               </div>
 

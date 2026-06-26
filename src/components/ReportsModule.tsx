@@ -476,18 +476,36 @@ export default function ReportsModule() {
   };
 
   const tabItems = [
-    { id: 'ventas', label: 'Ventas', description: 'Resumen general', icon: TrendingUp },
-    { id: 'ventas-periodo', label: 'Por período', description: 'Detalle y margen', icon: Calendar },
-    { id: 'ventas-cliente', label: 'Por cliente', description: 'Ranking y detalle', icon: Users },
-    { id: 'productos-vendidos', label: 'Más vendidos', description: 'Cantidad y facturación', icon: Package },
-    { id: 'rentabilidad-producto', label: 'Rentabilidad', description: 'Costo PEPS y margen', icon: PieChart },
-    { id: 'comisiones', label: 'Comisiones', description: 'Mayoristas', icon: DollarSign },
-    { id: 'cuentas-corrientes', label: 'Cuentas corrientes', description: 'Saldos pendientes', icon: Wallet },
-    { id: 'clientes', label: 'Clientes', description: 'Actividad comercial', icon: Users },
-    { id: 'productos', label: 'Productos', description: 'Familias y stock', icon: Package },
-    { id: 'deudas', label: 'Deudas', description: 'Mora y cobranza', icon: AlertTriangle },
-    { id: 'finanzas', label: 'Finanzas', description: 'Ingresos y egresos', icon: BarChart3 }
+    { id: 'ventas', label: 'Ventas', description: 'Resumen general', accessibleLabel: 'Reporte de ventas - resumen general', icon: TrendingUp },
+    { id: 'ventas-periodo', label: 'Por período', description: 'Detalle y margen', accessibleLabel: 'Reporte por período - detalle y margen', icon: Calendar },
+    { id: 'ventas-cliente', label: 'Por cliente', description: 'Ranking y detalle', accessibleLabel: 'Reporte por cliente - ranking y detalle', icon: Users },
+    { id: 'productos-vendidos', label: 'Más vendidos', description: 'Cantidad y facturación', accessibleLabel: 'Reporte de productos más vendidos - cantidad y facturación', icon: Package },
+    { id: 'rentabilidad-producto', label: 'Rentabilidad', description: 'Costo PEPS y margen', accessibleLabel: 'Reporte de rentabilidad por producto - costo PEPS y margen', icon: PieChart },
+    { id: 'comisiones', label: 'Comisiones', description: 'Mayoristas', accessibleLabel: 'Reporte de comisiones - ventas mayoristas', icon: DollarSign },
+    { id: 'cuentas-corrientes', label: 'Cuentas corrientes', description: 'Saldos pendientes', accessibleLabel: 'Reporte de cuentas corrientes - saldos pendientes', icon: Wallet },
+    { id: 'clientes', label: 'Clientes', description: 'Actividad comercial', accessibleLabel: 'Reporte de clientes - actividad comercial', icon: Users },
+    { id: 'productos', label: 'Productos', description: 'Familias y stock', accessibleLabel: 'Reporte de productos - familias y stock', icon: Package },
+    { id: 'deudas', label: 'Deudas', description: 'Mora y cobranza', accessibleLabel: 'Reporte de deudas - mora y cobranza', icon: AlertTriangle },
+    { id: 'finanzas', label: 'Finanzas', description: 'Ingresos y egresos', accessibleLabel: 'Reporte financiero - ingresos y egresos', icon: BarChart3 }
   ] as const;
+
+  const handleReportTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
+    const supportedKeys = ['ArrowRight', 'ArrowLeft', 'Home', 'End'];
+    if (!supportedKeys.includes(event.key)) return;
+
+    event.preventDefault();
+    let nextIndex = currentIndex;
+    if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabItems.length;
+    if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + tabItems.length) % tabItems.length;
+    if (event.key === 'Home') nextIndex = 0;
+    if (event.key === 'End') nextIndex = tabItems.length - 1;
+
+    const nextTab = tabItems[nextIndex];
+    setActiveTab(nextTab.id);
+    window.requestAnimationFrame(() => {
+      document.getElementById(`report-tab-${nextTab.id}`)?.focus();
+    });
+  };
 
   const toneClasses = {
     slate: 'border-slate-200 bg-white text-slate-950',
@@ -630,16 +648,20 @@ export default function ReportsModule() {
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6" role="tablist" aria-label="Tipos de reporte">
-            {tabItems.map((tab) => {
+            {tabItems.map((tab, index) => {
               const TabIcon = tab.icon;
               const selected = activeTab === tab.id;
               return (
                 <button
                   key={tab.id}
+                  id={`report-tab-${tab.id}`}
                   type="button"
                   role="tab"
                   aria-selected={selected}
+                  aria-label={tab.accessibleLabel}
+                  tabIndex={selected ? 0 : -1}
                   onClick={() => setActiveTab(tab.id)}
+                  onKeyDown={(event) => handleReportTabKeyDown(event, index)}
                   className={`min-w-0 rounded-2xl border p-3 text-left transition sm:p-4 ${
                     selected
                       ? 'border-indigo-200 bg-indigo-50 text-indigo-950 shadow-sm'
@@ -1409,7 +1431,7 @@ export default function ReportsModule() {
         <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-5" role="dialog" aria-modal="true" aria-labelledby="client-history-title">
           <button
             type="button"
-            aria-label="Cerrar historial"
+            aria-label="Cerrar historial de compras del cliente"
             className="absolute inset-0 cursor-default bg-slate-950/65 backdrop-blur-sm"
             onClick={() => setViewingClientSales(null)}
           />
@@ -1423,7 +1445,8 @@ export default function ReportsModule() {
                 type="button"
                 onClick={() => setViewingClientSales(null)}
                 className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:border-slate-400 hover:text-slate-950"
-                aria-label="Cerrar"
+                aria-label="Cerrar historial de compras del cliente"
+                autoFocus
               >
                 <ChevronRight className="rotate-180" size={20} />
               </button>

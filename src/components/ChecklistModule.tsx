@@ -1055,7 +1055,7 @@ export default function ChecklistModule() {
             <div className="relative border-b border-slate-200 bg-slate-50 p-5 pr-16 sm:p-6 sm:pr-16">
               <h2 className="text-xl font-black text-slate-900">{editingTemplateId ? 'Editar plantilla' : 'Nueva plantilla'}</h2>
               <p className="mt-1 text-sm text-slate-500">Definí el nombre, tipo y las tareas que se deben realizar.</p>
-              <button type="button" onClick={resetTemplateForm} disabled={savingTemplate} className="absolute right-4 top-4 flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 hover:bg-slate-100 disabled:opacity-50" aria-label="Cerrar formulario"><X size={21} /></button>
+              <button type="button" onClick={resetTemplateForm} disabled={savingTemplate} className="absolute right-4 top-4 flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 hover:bg-slate-100 disabled:opacity-50" aria-label="Cerrar formulario de plantilla de checklist"><X size={21} /></button>
             </div>
             <div className="flex-1 overflow-y-auto p-4 sm:p-6">
               <div className="grid gap-5 lg:grid-cols-2">

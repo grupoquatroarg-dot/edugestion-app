@@ -330,7 +330,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
               <div className="h-6 w-52 max-w-full animate-pulse rounded-lg bg-slate-200" />
               <div className="h-3 w-80 max-w-full animate-pulse rounded bg-slate-100" />
             </div>
-            <button type="button" onClick={onClose} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100" aria-label="Cerrar ficha" title="Cerrar">
+            <button type="button" onClick={onClose} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100" aria-label="Cerrar ficha del cliente" title="Cerrar">
               <X size={21} />
             </button>
           </div>
@@ -382,7 +382,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
               <ArrowLeft size={21} />
             </button>
             <p className="text-sm font-black text-slate-700">Ficha del cliente</p>
-            <button type="button" onClick={onClose} className="flex h-11 w-11 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100" aria-label="Cerrar ficha" title="Cerrar">
+            <button type="button" onClick={onClose} className="flex h-11 w-11 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100" aria-label="Cerrar ficha del cliente" title="Cerrar">
               <X size={21} />
             </button>
           </div>
@@ -475,7 +475,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
               </div>
             </div>
 
-            <button type="button" onClick={onClose} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" aria-label="Cerrar ficha" title="Cerrar">
+            <button type="button" onClick={onClose} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" aria-label="Cerrar ficha del cliente" title="Cerrar">
               <X size={21} />
             </button>
           </div>
@@ -847,7 +847,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                 <p className="text-[10px] font-black uppercase tracking-wider text-emerald-100">Cuenta corriente</p>
                 <h3 className="mt-1 text-lg font-black">Registrar pago</h3>
               </div>
-              <button type="button" onClick={() => setShowPaymentModal(false)} className="flex h-11 w-11 items-center justify-center rounded-xl hover:bg-white/10" aria-label="Cerrar pago" title="Cerrar">
+              <button type="button" onClick={() => setShowPaymentModal(false)} className="flex h-11 w-11 items-center justify-center rounded-xl hover:bg-white/10" aria-label="Cerrar registro de pago del cliente" title="Cerrar">
                 <X size={20} />
               </button>
             </div>
@@ -903,7 +903,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                 <h3 className="text-lg font-black">Detalle del movimiento</h3>
                 <p className="mt-1 text-xs text-slate-400">{formatMovementDate(selectedMovement)}</p>
               </div>
-              <button type="button" onClick={() => setSelectedMovement(null)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl hover:bg-white/10" aria-label="Cerrar detalle" title="Cerrar">
+              <button type="button" onClick={() => setSelectedMovement(null)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl hover:bg-white/10" aria-label="Cerrar detalle del movimiento" title="Cerrar">
                 <X size={20} />
               </button>
             </div>
@@ -950,7 +950,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                 <h3 className="break-words text-lg font-black">Venta #{selectedSale.numero_venta || selectedSale.id}</h3>
                 <p className="mt-1 text-xs text-slate-400">{formatDateTime(selectedSale.fecha)}</p>
               </div>
-              <button type="button" onClick={() => setSelectedSale(null)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl hover:bg-white/10" aria-label="Cerrar venta" title="Cerrar">
+              <button type="button" onClick={() => setSelectedSale(null)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl hover:bg-white/10" aria-label="Cerrar detalle de venta del cliente" title="Cerrar">
                 <X size={20} />
               </button>
             </div>
