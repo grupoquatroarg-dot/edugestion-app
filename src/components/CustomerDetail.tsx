@@ -24,10 +24,11 @@ import {
   Download,
   Filter,
   RotateCcw,
-  Search
+  Search,
+  Printer
 } from 'lucide-react';
 import { getSocket } from '../utils/socket';
-import { generateSaleReceipt } from '../utils/pdfGenerator';
+import { generateSaleReceipt, printSaleReceipt } from '../utils/pdfGenerator';
 import { unwrapResponse, apiFetch } from '../utils/api';
 import { formatBusinessDate, formatBusinessDateTime, getBusinessDateInputValue } from '../utils/businessDate';
 
@@ -56,6 +57,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
     search: ''
   });
   const [downloadingSaleId, setDownloadingSaleId] = useState<number | null>(null);
+  const [printingSaleId, setPrintingSaleId] = useState<number | null>(null);
   const [businessSettings, setBusinessSettings] = useState<Record<string, string>>({});
   const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -145,6 +147,21 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
       console.error("Error generating receipt:", error);
     } finally {
       setDownloadingSaleId(null);
+    }
+  };
+
+  const handlePrintReceipt = async (saleId: number) => {
+    try {
+      setPrintingSaleId(saleId);
+      const res = await apiFetch(`/api/sales?id=${saleId}`);
+      const body = await res.json();
+      const sale = unwrapResponse(body);
+      printSaleReceipt(sale, businessSettings);
+    } catch (error) {
+      console.error("Error printing receipt:", error);
+      alert("No se pudo preparar la impresión económica de la venta");
+    } finally {
+      setPrintingSaleId(null);
     }
   };
 
@@ -635,7 +652,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                             </dl>
                           </div>
 
-                          <div className="grid grid-cols-2 gap-2 border-t border-slate-100 bg-slate-50/80 p-3 sm:p-4">
+                          <div className="grid grid-cols-1 gap-2 border-t border-slate-100 bg-slate-50/80 p-3 min-[420px]:grid-cols-3 sm:p-4">
                             <button type="button" onClick={() => fetchSaleDetails(sale.id)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 text-xs font-black text-indigo-700 hover:bg-indigo-100">
                               <Eye size={16} />
                               Ver detalle
@@ -643,6 +660,10 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                             <button type="button" onClick={() => handleDownloadReceipt(sale.id)} disabled={downloadingSaleId === sale.id} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 text-xs font-black text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
                               {downloadingSaleId === sale.id ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-600 border-t-transparent" /> : <FileDown size={16} />}
                               PDF
+                            </button>
+                            <button type="button" onClick={() => handlePrintReceipt(sale.id)} disabled={printingSaleId === sale.id} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-3 text-xs font-black text-slate-700 hover:bg-slate-100 disabled:opacity-50">
+                              {printingSaleId === sale.id ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-600 border-t-transparent" /> : <Printer size={16} />}
+                              Imprimir
                             </button>
                           </div>
                         </article>
@@ -1009,6 +1030,10 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                 <button type="button" onClick={() => generateSaleReceipt(selectedSale, businessSettings)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 font-black text-white hover:bg-emerald-700">
                   <Download size={17} />
                   Descargar comprobante
+                </button>
+                <button type="button" onClick={() => printSaleReceipt(selectedSale, businessSettings)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-5 font-black text-slate-800 hover:bg-slate-100">
+                  <Printer size={17} />
+                  Imprimir económico
                 </button>
               </div>
             </div>

@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Clock, CheckCircle2, Package, AlertCircle, User, Trash2, Send, Download, Edit2, Plus, Minus, X, Search, Calendar, BarChart3, RefreshCw, FileText, Truck, FilterX, Loader2 } from 'lucide-react';
+import { Clock, CheckCircle2, Package, AlertCircle, User, Trash2, Send, Download, Edit2, Plus, Minus, X, Search, Calendar, BarChart3, RefreshCw, FileText, Truck, FilterX, Loader2, Printer } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { useAuth } from '../contexts/AuthContext';
 import { unwrapResponse, apiFetch } from '../utils/api';
 import { formatBusinessDateTime, getBusinessDateKey } from '../utils/businessDate';
+import { outputPdfDocument, type PdfOutputMode } from '../utils/pdfOutput';
 
 interface SupplierOrderItem {
   id: number;
@@ -180,11 +181,13 @@ export default function SupplierOrders() {
     }
   };
 
-  const generatePDF = (order: SupplierOrder) => {
-    const doc = new jsPDF();
+  const generatePDF = (order: SupplierOrder, mode: PdfOutputMode = 'download') => {
+    const isPrint = mode === 'print';
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const headerX = isPrint ? 20 : 60;
     
     // Business Logo
-    if (businessSettings.business_logo) {
+    if (!isPrint && businessSettings.business_logo) {
       try {
         doc.addImage(businessSettings.business_logo, 'PNG', 20, 10, 30, 30);
       } catch (e) {
@@ -193,36 +196,36 @@ export default function SupplierOrders() {
     }
 
     // Business Header Info
-    doc.setFontSize(14);
+    doc.setFontSize(isPrint ? 18 : 14);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(20, 20, 20);
-    doc.text(businessSettings.business_name || 'EDUGESTIÓN', 60, 20);
+    doc.text(businessSettings.business_name || 'EDUGESTIÓN', headerX, 20);
     
-    doc.setFontSize(8);
+    doc.setFontSize(isPrint ? 10 : 8);
     doc.setFont('helvetica', 'normal');
-    doc.setTextColor(100, 100, 100);
-    doc.text(`Razón Social: ${businessSettings.business_razon_social || '-'}`, 60, 25);
-    doc.text(`CUIT: ${businessSettings.business_cuit || '-'}`, 60, 29);
-    doc.text(`Dirección: ${businessSettings.business_address || '-'}, ${businessSettings.business_localidad || '-'}`, 60, 33);
-    doc.text(`Tel: ${businessSettings.business_phone || '-'} | Email: ${businessSettings.business_email || '-'}`, 60, 37);
+    doc.setTextColor(isPrint ? 0 : 100, isPrint ? 0 : 100, isPrint ? 0 : 100);
+    doc.text(`Razón Social: ${businessSettings.business_razon_social || '-'}`, headerX, 25);
+    doc.text(`CUIT: ${businessSettings.business_cuit || '-'}`, headerX, 29);
+    doc.text(`Dirección: ${businessSettings.business_address || '-'}, ${businessSettings.business_localidad || '-'}`, headerX, 33);
+    doc.text(`Tel: ${businessSettings.business_phone || '-'} | Email: ${businessSettings.business_email || '-'}`, headerX, 37);
 
     doc.setTextColor(0);
     doc.setDrawColor(200);
     doc.line(20, 45, 190, 45);
 
     // Title
-    doc.setFontSize(16);
+    doc.setFontSize(isPrint ? 20 : 16);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(20, 20, 20);
     doc.text('ORDEN DE COMPRA', 105, 55, { align: 'center' });
     
-    doc.setFontSize(10);
+    doc.setFontSize(isPrint ? 11 : 10);
     doc.setFont('helvetica', 'normal');
-    doc.setTextColor(100, 100, 100);
+    doc.setTextColor(isPrint ? 0 : 100, isPrint ? 0 : 100, isPrint ? 0 : 100);
     doc.text(`Pedido N°: ${(order.numero_pedido || order.id).toString().padStart(6, '0')}`, 20, 65);
     doc.text(`Fecha: ${order.fecha ? formatBusinessDateTime(order.fecha) : ''}`, 20, 70);
     
-    doc.setFontSize(12);
+    doc.setFontSize(isPrint ? 13 : 12);
     doc.setTextColor(20, 20, 20);
     doc.setFont('helvetica', 'bold');
     doc.text('DATOS DEL PEDIDO', 20, 85);
@@ -248,8 +251,18 @@ export default function SupplierOrders() {
       head: [['Producto', 'Proveedor', 'Cantidad', 'Código', 'Importe']],
       body: tableData,
       theme: 'grid',
-      headStyles: { fillColor: [20, 20, 20], textColor: [255, 255, 255], fontStyle: 'bold' },
-      styles: { fontSize: 9, cellPadding: 4 },
+      headStyles: isPrint
+        ? { fillColor: [255, 255, 255], textColor: [0, 0, 0], fontStyle: 'bold', lineColor: [70, 70, 70], lineWidth: 0.35 }
+        : { fillColor: [20, 20, 20], textColor: [255, 255, 255], fontStyle: 'bold' },
+      styles: {
+        fontSize: isPrint ? 11 : 9,
+        cellPadding: isPrint ? 4.5 : 4,
+        fillColor: [255, 255, 255],
+        textColor: [0, 0, 0],
+        lineColor: isPrint ? [110, 110, 110] : [200, 200, 200],
+        lineWidth: isPrint ? 0.25 : 0.1,
+      },
+      alternateRowStyles: { fillColor: [255, 255, 255] },
       columnStyles: {
         2: { halign: 'center' },
         3: { halign: 'right' },
@@ -259,35 +272,37 @@ export default function SupplierOrders() {
 
     const totalPedido = order.productos.reduce((sum, item) => sum + Number(item.importe || 0), 0);
     const finalTableY = (doc as any).lastAutoTable.finalY || 150;
-    doc.setFontSize(11);
+    doc.setFontSize(isPrint ? 14 : 11);
     doc.setFont('helvetica', 'bold');
     doc.text(`Total pedido proveedor: $${totalPedido.toFixed(2)}`, 190, finalTableY + 8, { align: 'right' });
 
     // Observations
     const finalY = (doc as any).lastAutoTable.finalY || 150;
     if (order.notes) {
-      doc.setFontSize(10);
+      doc.setFontSize(isPrint ? 12 : 10);
       doc.setFont('helvetica', 'bold');
       doc.text('Observaciones:', 20, finalY + 10);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(9);
+      doc.setFontSize(isPrint ? 11 : 9);
       const splitNotes = doc.splitTextToSize(order.notes, 170);
       doc.text(splitNotes, 20, finalY + 16);
     }
 
     // Footer
-    doc.setFontSize(8);
-    doc.setTextColor(150, 150, 150);
+    doc.setFontSize(isPrint ? 9 : 8);
+    doc.setTextColor(isPrint ? 0 : 150, isPrint ? 0 : 150, isPrint ? 0 : 150);
     doc.text(`Generado automáticamente por ${businessSettings.business_name || 'EDUGESTIÓN'}`, 105, 280, { align: 'center' });
 
-    doc.save(`Pedido_${order.id}_${order.cliente.replace(/\s+/g, '_')}.pdf`);
+    outputPdfDocument(doc, `Pedido_${order.id}_${order.cliente.replace(/\s+/g, '_')}.pdf`, mode);
   };
 
-  const generateRemitoPDF = (order: SupplierOrder) => {
-    const doc = new jsPDF();
+  const generateRemitoPDF = (order: SupplierOrder, mode: PdfOutputMode = 'download') => {
+    const isPrint = mode === 'print';
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const headerX = isPrint ? 20 : 60;
     
     // Business Logo
-    if (businessSettings.business_logo) {
+    if (!isPrint && businessSettings.business_logo) {
       try {
         doc.addImage(businessSettings.business_logo, 'PNG', 20, 10, 30, 30);
       } catch (e) {
@@ -296,36 +311,36 @@ export default function SupplierOrders() {
     }
 
     // Business Header Info
-    doc.setFontSize(14);
+    doc.setFontSize(isPrint ? 18 : 14);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(20, 20, 20);
-    doc.text(businessSettings.business_name || 'EDUGESTIÓN', 60, 20);
+    doc.text(businessSettings.business_name || 'EDUGESTIÓN', headerX, 20);
     
-    doc.setFontSize(8);
+    doc.setFontSize(isPrint ? 10 : 8);
     doc.setFont('helvetica', 'normal');
-    doc.setTextColor(100, 100, 100);
-    doc.text(`Razón Social: ${businessSettings.business_razon_social || '-'}`, 60, 25);
-    doc.text(`CUIT: ${businessSettings.business_cuit || '-'}`, 60, 29);
-    doc.text(`Dirección: ${businessSettings.business_address || '-'}, ${businessSettings.business_localidad || '-'}`, 60, 33);
-    doc.text(`Tel: ${businessSettings.business_phone || '-'} | Email: ${businessSettings.business_email || '-'}`, 60, 37);
+    doc.setTextColor(isPrint ? 0 : 100, isPrint ? 0 : 100, isPrint ? 0 : 100);
+    doc.text(`Razón Social: ${businessSettings.business_razon_social || '-'}`, headerX, 25);
+    doc.text(`CUIT: ${businessSettings.business_cuit || '-'}`, headerX, 29);
+    doc.text(`Dirección: ${businessSettings.business_address || '-'}, ${businessSettings.business_localidad || '-'}`, headerX, 33);
+    doc.text(`Tel: ${businessSettings.business_phone || '-'} | Email: ${businessSettings.business_email || '-'}`, headerX, 37);
 
     doc.setTextColor(0);
     doc.setDrawColor(200);
     doc.line(20, 45, 190, 45);
 
     // Title
-    doc.setFontSize(16);
+    doc.setFontSize(isPrint ? 20 : 16);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(20, 20, 20);
     doc.text('REMITO DE ENTREGA', 105, 55, { align: 'center' });
     
-    doc.setFontSize(10);
+    doc.setFontSize(isPrint ? 11 : 10);
     doc.setFont('helvetica', 'normal');
-    doc.setTextColor(100, 100, 100);
+    doc.setTextColor(isPrint ? 0 : 100, isPrint ? 0 : 100, isPrint ? 0 : 100);
     doc.text(`Remito N°: ${(order.numero_pedido || order.id).toString().padStart(6, '0')}`, 20, 65);
     doc.text(`Fecha: ${formatBusinessDateTime(new Date())}`, 20, 70);
     
-    doc.setFontSize(12);
+    doc.setFontSize(isPrint ? 13 : 12);
     doc.setTextColor(20, 20, 20);
     doc.setFont('helvetica', 'bold');
     doc.text('DATOS DEL CLIENTE', 20, 85);
@@ -344,8 +359,18 @@ export default function SupplierOrders() {
       head: [['Producto', 'Cantidad', 'Firma/Recibido']],
       body: tableData,
       theme: 'grid',
-      headStyles: { fillColor: [20, 20, 20], textColor: [255, 255, 255], fontStyle: 'bold' },
-      styles: { fontSize: 10, cellPadding: 5 },
+      headStyles: isPrint
+        ? { fillColor: [255, 255, 255], textColor: [0, 0, 0], fontStyle: 'bold', lineColor: [70, 70, 70], lineWidth: 0.35 }
+        : { fillColor: [20, 20, 20], textColor: [255, 255, 255], fontStyle: 'bold' },
+      styles: {
+        fontSize: isPrint ? 12 : 10,
+        cellPadding: isPrint ? 6 : 5,
+        fillColor: [255, 255, 255],
+        textColor: [0, 0, 0],
+        lineColor: isPrint ? [110, 110, 110] : [200, 200, 200],
+        lineWidth: isPrint ? 0.25 : 0.1,
+      },
+      alternateRowStyles: { fillColor: [255, 255, 255] },
       columnStyles: {
         1: { halign: 'center' },
         2: { halign: 'center' }
@@ -355,19 +380,19 @@ export default function SupplierOrders() {
     const finalY = (doc as any).lastAutoTable.finalY || 150;
 
     // Signature Area
-    doc.setFontSize(10);
+    doc.setFontSize(isPrint ? 12 : 10);
     doc.text('Firma del Cliente:', 20, finalY + 30);
     doc.line(55, finalY + 30, 120, finalY + 30);
     doc.text('Aclaración:', 20, finalY + 40);
     doc.line(45, finalY + 40, 120, finalY + 40);
 
     // Footer
-    doc.setFontSize(8);
-    doc.setTextColor(150, 150, 150);
+    doc.setFontSize(isPrint ? 9 : 8);
+    doc.setTextColor(isPrint ? 0 : 150, isPrint ? 0 : 150, isPrint ? 0 : 150);
     doc.text(`Este documento no es válido como factura.`, 105, 275, { align: 'center' });
     doc.text(`Generado por ${businessSettings.business_name || 'EDUGESTIÓN'}`, 105, 280, { align: 'center' });
 
-    doc.save(`Remito_${order.id}_${order.cliente.replace(/\s+/g, '_')}.pdf`);
+    outputPdfDocument(doc, `Remito_${order.id}_${order.cliente.replace(/\s+/g, '_')}.pdf`, mode);
   };
 
   const updateStatus = async (id: number, newStatus: string) => {
@@ -688,14 +713,16 @@ export default function SupplierOrders() {
     };
   }, [orders, reportDateFrom, reportDateTo]);
 
-  const generateSupplierReportPDF = () => {
-    const doc = new jsPDF();
+  const generateSupplierReportPDF = (mode: PdfOutputMode = 'download') => {
+    const isPrint = mode === 'print';
+    const doc = new jsPDF({ orientation: isPrint ? 'landscape' : 'portrait', unit: 'mm', format: 'a4' });
+    const pageWidth = doc.internal.pageSize.getWidth();
 
-    doc.setFontSize(16);
+    doc.setFontSize(isPrint ? 20 : 16);
     doc.setFont('helvetica', 'bold');
-    doc.text('REPORTE PEDIDOS A PROVEEDOR', 105, 18, { align: 'center' });
+    doc.text('REPORTE PEDIDOS A PROVEEDOR', pageWidth / 2, 18, { align: 'center' });
 
-    doc.setFontSize(9);
+    doc.setFontSize(isPrint ? 11 : 9);
     doc.setFont('helvetica', 'normal');
     doc.text(`Desde: ${reportDateFrom || 'Inicio'}  Hasta: ${reportDateTo || 'Hoy'}`, 14, 30);
     doc.text(`Pedidos incluidos: ${supplierReport.pedidos}`, 14, 36);
@@ -721,18 +748,28 @@ export default function SupplierOrders() {
         `$${row.ctaCte.toFixed(2)}`,
       ]),
       theme: 'grid',
-      headStyles: { fillColor: [20, 20, 20], textColor: [255, 255, 255] },
-      styles: { fontSize: supplierReport.paymentMethods.length > 3 ? 6 : 8 },
+      headStyles: isPrint
+        ? { fillColor: [255, 255, 255], textColor: [0, 0, 0], fontStyle: 'bold', lineColor: [70, 70, 70], lineWidth: 0.35 }
+        : { fillColor: [20, 20, 20], textColor: [255, 255, 255] },
+      styles: {
+        fontSize: isPrint ? (supplierReport.paymentMethods.length > 3 ? 8 : 10) : (supplierReport.paymentMethods.length > 3 ? 6 : 8),
+        cellPadding: isPrint ? 3 : 2,
+        fillColor: [255, 255, 255],
+        textColor: [0, 0, 0],
+        lineColor: isPrint ? [110, 110, 110] : [200, 200, 200],
+        lineWidth: isPrint ? 0.25 : 0.1,
+      },
+      alternateRowStyles: { fillColor: [255, 255, 255] },
     });
 
     const finalY = (doc as any).lastAutoTable?.finalY || 80;
-    doc.setFontSize(11);
+    doc.setFontSize(isPrint ? 13 : 11);
     doc.setFont('helvetica', 'bold');
     doc.text(`TOTAL GENERAL: $${supplierReport.total.toFixed(2)}`, 14, finalY + 12);
     doc.text(`COBRADO: $${supplierReport.cobrado.toFixed(2)}`, 14, finalY + 19);
     doc.text(`CTA CTE: $${supplierReport.ctaCte.toFixed(2)}`, 14, finalY + 26);
 
-    doc.save('Reporte_Pedidos_Proveedor.pdf');
+    outputPdfDocument(doc, 'Reporte_Pedidos_Proveedor.pdf', mode);
   };
 
   if (loading) {
@@ -1012,14 +1049,24 @@ export default function SupplierOrders() {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={generateSupplierReportPDF}
-              className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-5 py-3 text-xs font-black uppercase tracking-[0.12em] text-white transition hover:bg-slate-800 sm:w-auto"
-            >
-              <Download size={16} />
-              Descargar reporte
-            </button>
+            <div className="grid w-full grid-cols-1 gap-2 min-[420px]:grid-cols-2 sm:w-auto">
+              <button
+                type="button"
+                onClick={() => generateSupplierReportPDF('download')}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-950 px-5 py-3 text-xs font-black uppercase tracking-[0.12em] text-white transition hover:bg-slate-800"
+              >
+                <Download size={16} />
+                Descargar PDF
+              </button>
+              <button
+                type="button"
+                onClick={() => generateSupplierReportPDF('print')}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-5 py-3 text-xs font-black uppercase tracking-[0.12em] text-slate-800 transition hover:bg-slate-100"
+              >
+                <Printer size={16} />
+                Imprimir económico
+              </button>
+            </div>
           </div>
 
           <div className="mt-5 grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 xl:grid-cols-5">
@@ -1252,7 +1299,7 @@ export default function SupplierOrders() {
                   <div className="space-y-4 border-t border-slate-100 bg-slate-50/60 p-4 sm:p-5">
                     <div>
                       <p className="mb-2 text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">Documentos</p>
-                      <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+                      <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2 xl:grid-cols-4">
                         <button
                           type="button"
                           onClick={() => generatePDF(order)}
@@ -1261,15 +1308,33 @@ export default function SupplierOrders() {
                           <FileText size={15} />
                           PDF del pedido
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => generatePDF(order, 'print')}
+                          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 py-2 text-xs font-black text-slate-700 ring-1 ring-slate-300 transition hover:bg-slate-100"
+                        >
+                          <Printer size={15} />
+                          Imprimir pedido
+                        </button>
                         {order.estado === 'entregado' && (
-                          <button
-                            type="button"
-                            onClick={() => generateRemitoPDF(order)}
-                            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-50 px-4 py-2 text-xs font-black text-emerald-700 ring-1 ring-emerald-200 transition hover:bg-emerald-100"
-                          >
-                            <Truck size={15} />
-                            Remito de entrega
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => generateRemitoPDF(order)}
+                              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-50 px-4 py-2 text-xs font-black text-emerald-700 ring-1 ring-emerald-200 transition hover:bg-emerald-100"
+                            >
+                              <Truck size={15} />
+                              Remito de entrega
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => generateRemitoPDF(order, 'print')}
+                              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 py-2 text-xs font-black text-slate-700 ring-1 ring-slate-300 transition hover:bg-slate-100"
+                            >
+                              <Printer size={15} />
+                              Imprimir remito
+                            </button>
+                          </>
                         )}
                       </div>
                     </div>

@@ -96,3 +96,107 @@ button:not(:disabled),
     animation-iteration-count: 1 !important;
   }
 }
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 10mm;
+  }
+
+  html,
+  body,
+  #root {
+    width: auto !important;
+    min-width: 0 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+  }
+
+  body.printing-report * {
+    visibility: hidden !important;
+  }
+
+  body.printing-report .report-print-content,
+  body.printing-report .report-print-content * {
+    visibility: visible !important;
+  }
+
+  body.printing-report .report-print-content {
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  body.printing-report .report-print-content .print-hide {
+    display: none !important;
+  }
+
+  body.printing-report .report-print-content article,
+  body.printing-report .report-print-content section,
+  body.printing-report .report-print-content div,
+  body.printing-report .report-print-content header,
+  body.printing-report .report-print-content footer {
+    background: #ffffff !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  body.printing-report .report-print-content [class*='border'] {
+    border-color: #8a8a8a !important;
+  }
+
+  body.printing-report .report-print-content h1,
+  body.printing-report .report-print-content h2,
+  body.printing-report .report-print-content h3,
+  body.printing-report .report-print-content h4 {
+    color: #000000 !important;
+    break-after: avoid;
+  }
+
+  body.printing-report .report-print-content h2 {
+    font-size: 20pt !important;
+  }
+
+  body.printing-report .report-print-content h3 {
+    font-size: 16pt !important;
+  }
+
+  body.printing-report .report-print-content h4 {
+    font-size: 13pt !important;
+  }
+
+  body.printing-report .report-print-content p,
+  body.printing-report .report-print-content span,
+  body.printing-report .report-print-content li,
+  body.printing-report .report-print-content dt,
+  body.printing-report .report-print-content dd,
+  body.printing-report .report-print-content td,
+  body.printing-report .report-print-content th {
+    color: #000000 !important;
+    font-size: 10.5pt !important;
+    line-height: 1.35 !important;
+  }
+
+  body.printing-report .report-print-content article,
+  body.printing-report .report-print-content table,
+  body.printing-report .report-print-content tr,
+  body.printing-report .report-print-content .recharts-wrapper {
+    break-inside: avoid;
+  }
+
+  body.printing-report .report-print-content svg {
+    filter: grayscale(1) contrast(1.15);
+  }
+
+  body.printing-report .report-print-content * {
+    print-color-adjust: economy !important;
+    -webkit-print-color-adjust: economy !important;
+  }
+}

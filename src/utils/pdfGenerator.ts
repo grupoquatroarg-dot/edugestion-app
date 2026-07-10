@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { formatBusinessDate, getBusinessDateInputValue, getBusinessDateKey } from './businessDate';
+import { outputPdfDocument, type PdfOutputMode } from './pdfOutput';
 
 const formatCurrency = (value: any) => {
   const numberValue = Number(value || 0);
@@ -53,60 +54,69 @@ const getDiscountedUnitPrice = (item: any) => {
   return Number(item.precio_unitario_bonificado ?? item.precio_venta ?? getOriginalUnitPrice(item));
 };
 
-const buildSaleReceiptDoc = (sale: any, businessSettings: Record<string, string> = {}) => {
+const buildSaleReceiptDoc = (
+  sale: any,
+  businessSettings: Record<string, string> = {},
+  mode: PdfOutputMode = 'download'
+) => {
+  const isPrint = mode === 'print';
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
-  const margin = 12;
-
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = isPrint ? 10 : 12;
   const businessName = businessSettings.business_name || 'EDUGESTIÓN';
 
-  if (businessSettings.business_logo) {
+  if (!isPrint && businessSettings.business_logo) {
     try {
       doc.addImage(businessSettings.business_logo, 'PNG', margin, 9, 24, 24);
-    } catch (e) {
-      console.error('Error adding logo to PDF', e);
+    } catch (error) {
+      console.error('Error adding logo to PDF', error);
     }
   }
 
-  doc.setTextColor(24, 24, 27);
-  doc.setFontSize(15);
+  doc.setTextColor(0, 0, 0);
   doc.setFont('helvetica', 'bold');
-  doc.text(businessName, 42, 15);
+  doc.setFontSize(isPrint ? 18 : 15);
+  doc.text(businessName, isPrint ? margin : 42, isPrint ? 13 : 15);
 
-  doc.setFontSize(8);
   doc.setFont('helvetica', 'normal');
-  doc.setTextColor(82, 82, 91);
-  doc.text(`Razón Social: ${safeText(businessSettings.business_razon_social)}`, 42, 20);
-  doc.text(`CUIT: ${safeText(businessSettings.business_cuit)}`, 42, 24);
-  doc.text(`Dirección: ${safeText(businessSettings.business_address)}, ${safeText(businessSettings.business_localidad)}`, 42, 28);
-  doc.text(`Tel: ${safeText(businessSettings.business_phone)} | Email: ${safeText(businessSettings.business_email)}`, 42, 32);
+  doc.setFontSize(isPrint ? 10 : 8);
+  doc.setTextColor(isPrint ? 0 : 82, isPrint ? 0 : 82, isPrint ? 0 : 91);
+  const headerX = isPrint ? margin : 42;
+  const headerStartY = isPrint ? 19 : 20;
+  const headerStep = isPrint ? 5 : 4;
+  doc.text(`Razón Social: ${safeText(businessSettings.business_razon_social)}`, headerX, headerStartY);
+  doc.text(`CUIT: ${safeText(businessSettings.business_cuit)}`, headerX, headerStartY + headerStep);
+  doc.text(`Dirección: ${safeText(businessSettings.business_address)}, ${safeText(businessSettings.business_localidad)}`, headerX, headerStartY + headerStep * 2);
+  doc.text(`Tel: ${safeText(businessSettings.business_phone)} | Email: ${safeText(businessSettings.business_email)}`, headerX, headerStartY + headerStep * 3);
 
-  doc.setDrawColor(212, 212, 216);
-  doc.line(margin, 38, pageWidth - margin, 38);
+  const dividerY = isPrint ? 37 : 38;
+  doc.setDrawColor(isPrint ? 80 : 212, isPrint ? 80 : 212, isPrint ? 80 : 216);
+  doc.setLineWidth(isPrint ? 0.35 : 0.2);
+  doc.line(margin, dividerY, pageWidth - margin, dividerY);
 
-  doc.setTextColor(24, 24, 27);
-  doc.setFontSize(16);
+  doc.setTextColor(0, 0, 0);
   doc.setFont('helvetica', 'bold');
-  doc.text('COMPROBANTE DE VENTA', pageWidth / 2, 49, { align: 'center' });
+  doc.setFontSize(isPrint ? 20 : 16);
+  doc.text('COMPROBANTE DE VENTA', pageWidth / 2, isPrint ? 48 : 49, { align: 'center' });
 
-  doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Venta N°: ${safeText(sale.numero_venta || sale.id).toString().padStart(6, '0')}`, margin, 59);
-  doc.text(`Fecha: ${formatDate(sale.fecha)}`, margin, 64);
+  doc.setFontSize(isPrint ? 11 : 9);
+  doc.text(`Venta N°: ${safeText(sale.numero_venta || sale.id).toString().padStart(6, '0')}`, margin, isPrint ? 58 : 59);
+  doc.text(`Fecha: ${formatDate(sale.fecha)}`, margin, isPrint ? 64 : 64);
 
-  doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
-  doc.text('DATOS DEL CLIENTE', margin, 76);
+  doc.setFontSize(isPrint ? 13 : 11);
+  doc.text('DATOS DEL CLIENTE', margin, isPrint ? 76 : 76);
 
-  doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Cliente: ${safeText(sale.nombre_cliente)}`, margin, 83);
-  doc.text(`Localidad: ${safeText(sale.cliente_localidad || sale.localidad)}`, margin, 88);
-  doc.text(`Domicilio: ${safeText(sale.cliente_direccion || sale.direccion)}`, 120, 83);
-  doc.text(`Teléfono: ${safeText(sale.cliente_telefono || sale.telefono)}`, 120, 88);
+  doc.setFontSize(isPrint ? 11 : 9);
+  doc.text(`Cliente: ${safeText(sale.nombre_cliente)}`, margin, isPrint ? 84 : 83);
+  doc.text(`Localidad: ${safeText(sale.cliente_localidad || sale.localidad)}`, margin, isPrint ? 91 : 88);
+  doc.text(`Domicilio: ${safeText(sale.cliente_direccion || sale.direccion)}`, isPrint ? 118 : 120, isPrint ? 84 : 83);
+  doc.text(`Teléfono: ${safeText(sale.cliente_telefono || sale.telefono)}`, isPrint ? 118 : 120, isPrint ? 91 : 88);
 
   const items = Array.isArray(sale.items) ? sale.items : [];
-
   const tableRows = items.map((item: any) => {
     const cantidad = Number(item.cantidad || 0);
     const precioOriginal = getOriginalUnitPrice(item);
@@ -133,23 +143,37 @@ const buildSaleReceiptDoc = (sale: any, businessSettings: Record<string, string>
       'Importe',
     ]],
     body: tableRows.length > 0 ? tableRows : [['-', 'Sin productos', '-', '-', '-', '-']],
-    startY: 96,
+    startY: isPrint ? 99 : 96,
     theme: 'grid',
-    headStyles: {
-      fillColor: [24, 24, 27],
-      textColor: [255, 255, 255],
-      fontStyle: 'bold',
-      halign: 'center',
-    },
+    headStyles: isPrint
+      ? {
+          fillColor: [255, 255, 255],
+          textColor: [0, 0, 0],
+          fontStyle: 'bold',
+          halign: 'center',
+          lineColor: [70, 70, 70],
+          lineWidth: 0.35,
+        }
+      : {
+          fillColor: [24, 24, 27],
+          textColor: [255, 255, 255],
+          fontStyle: 'bold',
+          halign: 'center',
+        },
     styles: {
-      fontSize: 8,
-      cellPadding: 2.4,
+      fontSize: isPrint ? 10.5 : 8,
+      cellPadding: isPrint ? 3.2 : 2.4,
       valign: 'middle',
       overflow: 'linebreak',
+      textColor: [0, 0, 0],
+      lineColor: isPrint ? [110, 110, 110] : [200, 200, 200],
+      lineWidth: isPrint ? 0.25 : 0.1,
+      fillColor: [255, 255, 255],
     },
+    alternateRowStyles: { fillColor: [255, 255, 255] },
     columnStyles: {
       0: { halign: 'center', cellWidth: 20 },
-      1: { cellWidth: 110 },
+      1: { cellWidth: isPrint ? 104 : 110 },
       2: { halign: 'right', cellWidth: 34 },
       3: { halign: 'center', cellWidth: 32 },
       4: { halign: 'right', cellWidth: 42 },
@@ -158,56 +182,67 @@ const buildSaleReceiptDoc = (sale: any, businessSettings: Record<string, string>
     margin: { left: margin, right: margin },
   });
 
-  const finalY = ((doc as any).lastAutoTable?.finalY || 120) + 8;
-
+  const finalY = ((doc as any).lastAutoTable?.finalY || 120) + (isPrint ? 7 : 8);
   const totalCalculado = items.reduce((sum: number, item: any) => {
     const cantidad = Number(item.cantidad || 0);
     return sum + cantidad * getDiscountedUnitPrice(item);
   }, 0);
-
   const total = Number(sale.total ?? totalCalculado);
 
-  doc.setFontSize(9);
+  doc.setTextColor(0, 0, 0);
   doc.setFont('helvetica', 'normal');
-  doc.setTextColor(82, 82, 91);
+  doc.setFontSize(isPrint ? 11 : 9);
   doc.text(`Forma de pago: ${safeText(sale.metodo_pago).toUpperCase()}`, margin, finalY);
-  doc.text(`Pagado: ${formatCurrency(sale.monto_pagado)}`, margin, finalY + 6);
+  doc.text(`Pagado: ${formatCurrency(sale.monto_pagado)}`, margin, finalY + (isPrint ? 7 : 6));
 
   if (Number(sale.monto_pendiente || 0) > 0) {
-    doc.setTextColor(220, 38, 38);
     doc.setFont('helvetica', 'bold');
-    doc.text(`Saldo pendiente: ${formatCurrency(sale.monto_pendiente)}`, margin, finalY + 12);
+    doc.setTextColor(isPrint ? 0 : 220, isPrint ? 0 : 38, isPrint ? 0 : 38);
+    doc.text(`Saldo pendiente: ${formatCurrency(sale.monto_pendiente)}`, margin, finalY + (isPrint ? 14 : 12));
   }
 
-  const boxX = pageWidth - 86;
+  const boxX = pageWidth - (isPrint ? 90 : 86);
   const boxY = finalY - 6;
-  doc.setFillColor(24, 24, 27);
-  doc.roundedRect(boxX, boxY, 74, 24, 3, 3, 'F');
+  const boxWidth = isPrint ? 80 : 74;
+  const boxHeight = isPrint ? 28 : 24;
 
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(8);
+  if (isPrint) {
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.5);
+    doc.rect(boxX, boxY, boxWidth, boxHeight, 'S');
+    doc.setTextColor(0, 0, 0);
+  } else {
+    doc.setFillColor(24, 24, 27);
+    doc.roundedRect(boxX, boxY, boxWidth, boxHeight, 3, 3, 'F');
+    doc.setTextColor(255, 255, 255);
+  }
+
   doc.setFont('helvetica', 'bold');
-  doc.text('TOTAL OPERACIÓN', boxX + 5, boxY + 8);
+  doc.setFontSize(isPrint ? 11 : 8);
+  doc.text('TOTAL OPERACIÓN', boxX + 5, boxY + (isPrint ? 9 : 8));
+  doc.setFontSize(isPrint ? 17 : 14);
+  doc.text(formatCurrency(total), boxX + boxWidth - 5, boxY + (isPrint ? 21 : 18), { align: 'right' });
 
-  doc.setFontSize(14);
-  doc.setFont('helvetica', 'bold');
-  doc.text(formatCurrency(total), boxX + 69, boxY + 18, { align: 'right' });
-
-  doc.setTextColor(150);
-  doc.setFontSize(8);
+  doc.setTextColor(isPrint ? 0 : 150, isPrint ? 0 : 150, isPrint ? 0 : 150);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Gracias por su compra - ${businessName}`, pageWidth / 2, 195, { align: 'center' });
+  doc.setFontSize(isPrint ? 9 : 8);
+  doc.text(`Gracias por su compra - ${businessName}`, pageWidth / 2, pageHeight - 7, { align: 'center' });
 
   return doc;
 };
 
 export const generateSaleReceipt = (sale: any, businessSettings: Record<string, string> = {}) => {
-  const doc = buildSaleReceiptDoc(sale, businessSettings);
-  doc.save(getReceiptFileName(sale));
+  const doc = buildSaleReceiptDoc(sale, businessSettings, 'download');
+  outputPdfDocument(doc, getReceiptFileName(sale), 'download');
+};
+
+export const printSaleReceipt = (sale: any, businessSettings: Record<string, string> = {}) => {
+  const doc = buildSaleReceiptDoc(sale, businessSettings, 'print');
+  outputPdfDocument(doc, getReceiptFileName(sale), 'print');
 };
 
 export const createSaleReceiptPdfFile = (sale: any, businessSettings: Record<string, string> = {}) => {
-  const doc = buildSaleReceiptDoc(sale, businessSettings);
+  const doc = buildSaleReceiptDoc(sale, businessSettings, 'download');
   const blob = doc.output('blob');
   return new File([blob], getReceiptFileName(sale), { type: 'application/pdf' });
 };

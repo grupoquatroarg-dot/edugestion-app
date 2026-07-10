@@ -19,9 +19,10 @@ import {
   Wallet,
   Loader2,
   Filter,
+  Printer,
 } from 'lucide-react';
 import { unwrapResponse, apiFetch } from '../utils/api';
-import { generateCustomerOrderPdf } from '../utils/customerOrderPdf';
+import { generateCustomerOrderPdf, printCustomerOrderPdf } from '../utils/customerOrderPdf';
 import { formatBusinessDateTime, getBusinessDateInputValue, getBusinessDateKey } from '../utils/businessDate';
 
 const formatCurrency = (value: number) =>
@@ -629,6 +630,10 @@ export default function CustomerOrdersAdmin({
     generateCustomerOrderPdf(order);
   };
 
+  const printOrderPdf = (order: any) => {
+    printCustomerOrderPdf(order);
+  };
+
   const notifyOrderWhatsApp = async (order: any) => {
     const whatsappWindow = openWhatsAppPlaceholder();
 
@@ -1033,12 +1038,18 @@ export default function CustomerOrdersAdmin({
                   </div>
 
                   <div className="space-y-3">
-                    <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
                       <button
                         onClick={() => downloadOrderPdf(order)}
                         className="py-3 bg-zinc-100 text-zinc-700 rounded-xl font-black uppercase text-[10px] flex items-center justify-center gap-2"
                       >
                         <Download size={15} /> PDF
+                      </button>
+                      <button
+                        onClick={() => printOrderPdf(order)}
+                        className="py-3 bg-white text-zinc-800 border border-zinc-300 rounded-xl font-black uppercase text-[10px] flex items-center justify-center gap-2"
+                      >
+                        <Printer size={15} /> Imprimir
                       </button>
                       <button
                         onClick={() => notifyOrderWhatsApp(order)}

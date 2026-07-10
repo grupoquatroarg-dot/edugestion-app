@@ -18,7 +18,8 @@ import {
   TrendingDown,
   AlertTriangle,
   RefreshCw,
-  Loader2
+  Loader2,
+  Printer
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -569,13 +570,21 @@ export default function ReportsModule() {
     </div>
   );
 
-  const PrintButton = ({ label = 'Imprimir reporte' }: { label?: string }) => (
+  const handlePrintReport = () => {
+    const cleanup = () => document.body.classList.remove('printing-report');
+    document.body.classList.add('printing-report');
+    window.addEventListener('afterprint', cleanup, { once: true });
+    window.print();
+    window.setTimeout(cleanup, 2_000);
+  };
+
+  const PrintButton = ({ label = 'Imprimir versión económica' }: { label?: string }) => (
     <button
       type="button"
-      onClick={() => window.print()}
-      className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-black uppercase tracking-wider text-white transition hover:bg-indigo-700 sm:w-auto"
+      onClick={handlePrintReport}
+      className="print-hide inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-xs font-black uppercase tracking-wider text-slate-800 transition hover:bg-slate-100 sm:w-auto"
     >
-      <Download size={16} aria-hidden="true" />
+      <Printer size={16} aria-hidden="true" />
       {label}
     </button>
   );
@@ -705,7 +714,7 @@ export default function ReportsModule() {
             description="No se recibió información para este reporte. Probá actualizar o cambiar el período."
           />
         ) : (
-          <main className="space-y-6 pb-8 sm:space-y-8">
+          <main className="report-print-content space-y-6 pb-8 sm:space-y-8">
             {activeTab === 'comisiones' && commissionsData && (
               <section className="space-y-5">
                 <ReportHeading title="Comisiones" description="Ventas mayoristas y comisión generada en el período seleccionado.">

@@ -22,11 +22,12 @@ import {
   CreditCard,
   XCircle,
   MessageCircle,
-  Loader2
+  Loader2,
+  Printer
 } from 'lucide-react';
 import { Product } from '../types';
 import { getSocket } from '../utils/socket';
-import { generateSaleReceipt } from '../utils/pdfGenerator';
+import { generateSaleReceipt, printSaleReceipt } from '../utils/pdfGenerator';
 import CustomerDetail from './CustomerDetail';
 import CustomerOrdersAdmin from './CustomerOrdersAdmin';
 import { useAuth } from '../contexts/AuthContext';
@@ -123,6 +124,7 @@ export default function SalesModule() {
   const [salesHistory, setSalesHistory] = useState<any[]>([]);
   const [selectedSale, setSelectedSale] = useState<any>(null);
   const [downloadingSaleId, setDownloadingSaleId] = useState<number | null>(null);
+  const [printingSaleId, setPrintingSaleId] = useState<number | null>(null);
   const [whatsAppSendingSaleId, setWhatsAppSendingSaleId] = useState<number | null>(null);
   const [businessSettings, setBusinessSettings] = useState<Record<string, string>>({});
   const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
@@ -377,6 +379,21 @@ export default function SalesModule() {
       alert("No se pudo generar el PDF de la venta");
     } finally {
       setDownloadingSaleId(null);
+    }
+  };
+
+  const handlePrintReceipt = async (saleId: number) => {
+    try {
+      setPrintingSaleId(saleId);
+      const res = await apiFetch(`/api/sales?id=${saleId}`);
+      const body = await res.json();
+      const sale = unwrapResponse(body);
+      printSaleReceipt(sale, businessSettings);
+    } catch (error) {
+      console.error("Error printing receipt:", error);
+      alert("No se pudo preparar la impresión económica de la venta");
+    } finally {
+      setPrintingSaleId(null);
     }
   };
 
@@ -1430,7 +1447,7 @@ export default function SalesModule() {
                           <p className="text-xl font-black font-mono">${sale.total.toFixed(2)}</p>
                         </div>
 
-                        <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
+                        <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2 sm:grid-cols-4">
                           {hasPermission('sales', 'view') && (
                             <button
                               onClick={() => fetchSaleDetails(sale.id)}
@@ -1456,6 +1473,22 @@ export default function SalesModule() {
                                 <FileDown size={16} />
                               )}
                               <span>PDF</span>
+                            </button>
+                          )}
+                          {hasPermission('sales', 'view') && (
+                            <button
+                              onClick={() => handlePrintReceipt(sale.id)}
+                              disabled={printingSaleId === sale.id}
+                              className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 text-xs font-black text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                              title="Imprimir versión económica"
+                              aria-label={`Imprimir versión económica de la venta ${sale.numero_venta || sale.id}`}
+                            >
+                              {printingSaleId === sale.id ? (
+                                <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-600 border-t-transparent" />
+                              ) : (
+                                <Printer size={16} />
+                              )}
+                              <span>Imprimir</span>
                             </button>
                           )}
                           {hasPermission('sales', 'view') && (
@@ -1643,6 +1676,15 @@ export default function SalesModule() {
                   </button>
                 )}
                 {hasPermission('sales', 'view') && (
+                  <button
+                    onClick={() => printSaleReceipt(lastSaleData, businessSettings)}
+                    className="w-full py-4 bg-white text-slate-900 rounded-2xl border border-slate-300 font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-slate-50 transition-all"
+                  >
+                    <Printer size={20} />
+                    Imprimir económico
+                  </button>
+                )}
+                {hasPermission('sales', 'view') && (
                   <button 
                     onClick={() => handleSendReceiptWhatsApp(lastSaleData.id)}
                     disabled={whatsAppSendingSaleId === lastSaleData.id}
@@ -1751,6 +1793,15 @@ export default function SalesModule() {
                 >
                   <Download size={18} />
                   Descargar PDF
+                </button>
+              )}
+              {hasPermission('sales', 'view') && (
+                <button
+                  onClick={() => printSaleReceipt(selectedSale, businessSettings)}
+                  className="flex items-center justify-center gap-3 px-6 sm:px-8 py-3 bg-white text-slate-900 border border-slate-300 rounded-xl sm:rounded-2xl font-black uppercase tracking-widest hover:bg-slate-100 transition-all text-sm"
+                >
+                  <Printer size={18} />
+                  Imprimir económico
                 </button>
               )}
               {hasPermission('sales', 'view') && (
