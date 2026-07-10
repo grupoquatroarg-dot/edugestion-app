@@ -133,6 +133,11 @@ const buildSaleReceiptDoc = (
     ];
   });
 
+  const hasPendingBalance = Number(sale.monto_pendiente || 0) > 0;
+  const summaryReservedHeight = isPrint
+    ? (hasPendingBalance ? 43 : 38)
+    : (hasPendingBalance ? 39 : 35);
+
   autoTable(doc, {
     head: [[
       'Cantidad',
@@ -150,6 +155,8 @@ const buildSaleReceiptDoc = (
           fillColor: [255, 255, 255],
           textColor: [0, 0, 0],
           fontStyle: 'bold',
+          fontSize: 9.5,
+          cellPadding: 2.2,
           halign: 'center',
           lineColor: [70, 70, 70],
           lineWidth: 0.35,
@@ -158,6 +165,8 @@ const buildSaleReceiptDoc = (
           fillColor: [24, 24, 27],
           textColor: [255, 255, 255],
           fontStyle: 'bold',
+          fontSize: 8,
+          cellPadding: 2,
           halign: 'center',
         },
     styles: {
@@ -171,6 +180,9 @@ const buildSaleReceiptDoc = (
       fillColor: [255, 255, 255],
     },
     alternateRowStyles: { fillColor: [255, 255, 255] },
+    pageBreak: 'auto',
+    rowPageBreak: 'avoid',
+    showHead: 'everyPage',
     columnStyles: {
       0: { halign: 'center', cellWidth: 20 },
       1: { cellWidth: isPrint ? 104 : 110 },
@@ -179,10 +191,31 @@ const buildSaleReceiptDoc = (
       4: { halign: 'right', cellWidth: 42 },
       5: { halign: 'right', cellWidth: 32 },
     },
-    margin: { left: margin, right: margin },
+    margin: {
+      top: 16,
+      right: margin,
+      bottom: summaryReservedHeight,
+      left: margin,
+    },
   });
 
-  const finalY = ((doc as any).lastAutoTable?.finalY || 120) + (isPrint ? 7 : 8);
+  const summaryGap = isPrint ? 7 : 8;
+  let finalY = ((doc as any).lastAutoTable?.finalY || 120) + summaryGap;
+  const summaryBoxHeight = isPrint ? 28 : 24;
+  const pendingLineOffset = hasPendingBalance ? (isPrint ? 14 : 12) : 0;
+  const summaryBottomY = Math.max(
+    finalY + pendingLineOffset,
+    finalY - 6 + summaryBoxHeight
+  );
+  const lastUsableY = pageHeight - 14;
+
+  // Safety net: autoTable already reserves room for the summary on every page.
+  // If an unusually tall row still consumes that space, move the complete
+  // payment/total block to a new page instead of clipping it.
+  if (summaryBottomY > lastUsableY) {
+    doc.addPage();
+    finalY = isPrint ? 25 : 23;
+  }
   const totalCalculado = items.reduce((sum: number, item: any) => {
     const cantidad = Number(item.cantidad || 0);
     return sum + cantidad * getDiscountedUnitPrice(item);
@@ -195,7 +228,7 @@ const buildSaleReceiptDoc = (
   doc.text(`Forma de pago: ${safeText(sale.metodo_pago).toUpperCase()}`, margin, finalY);
   doc.text(`Pagado: ${formatCurrency(sale.monto_pagado)}`, margin, finalY + (isPrint ? 7 : 6));
 
-  if (Number(sale.monto_pendiente || 0) > 0) {
+  if (hasPendingBalance) {
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(isPrint ? 0 : 220, isPrint ? 0 : 38, isPrint ? 0 : 38);
     doc.text(`Saldo pendiente: ${formatCurrency(sale.monto_pendiente)}`, margin, finalY + (isPrint ? 14 : 12));
@@ -204,7 +237,7 @@ const buildSaleReceiptDoc = (
   const boxX = pageWidth - (isPrint ? 90 : 86);
   const boxY = finalY - 6;
   const boxWidth = isPrint ? 80 : 74;
-  const boxHeight = isPrint ? 28 : 24;
+  const boxHeight = summaryBoxHeight;
 
   if (isPrint) {
     doc.setDrawColor(0, 0, 0);
@@ -223,10 +256,36 @@ const buildSaleReceiptDoc = (
   doc.setFontSize(isPrint ? 17 : 14);
   doc.text(formatCurrency(total), boxX + boxWidth - 5, boxY + (isPrint ? 21 : 18), { align: 'right' });
 
-  doc.setTextColor(isPrint ? 0 : 150, isPrint ? 0 : 150, isPrint ? 0 : 150);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(isPrint ? 9 : 8);
-  doc.text(`Gracias por su compra - ${businessName}`, pageWidth / 2, pageHeight - 7, { align: 'center' });
+  const totalPages = doc.getNumberOfPages();
+  const saleNumber = safeText(sale.numero_venta || sale.id).toString().padStart(6, '0');
+
+  for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
+    doc.setPage(pageNumber);
+
+    if (pageNumber > 1) {
+      doc.setTextColor(0, 0, 0);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(isPrint ? 10 : 8);
+      doc.text(`COMPROBANTE DE VENTA - CONTINUACIÓN`, margin, 9);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Venta N° ${saleNumber} | Fecha ${formatDate(sale.fecha)}`, pageWidth - margin, 9, {
+        align: 'right',
+      });
+      doc.setDrawColor(isPrint ? 80 : 212, isPrint ? 80 : 212, isPrint ? 80 : 216);
+      doc.setLineWidth(isPrint ? 0.35 : 0.2);
+      doc.line(margin, 12, pageWidth - margin, 12);
+    }
+
+    doc.setTextColor(isPrint ? 0 : 150, isPrint ? 0 : 150, isPrint ? 0 : 150);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(isPrint ? 9 : 8);
+    doc.text(`Gracias por su compra - ${businessName}`, pageWidth / 2, pageHeight - 7, {
+      align: 'center',
+    });
+    doc.text(`Página ${pageNumber} de ${totalPages}`, pageWidth - margin, pageHeight - 7, {
+      align: 'right',
+    });
+  }
 
   return doc;
 };
