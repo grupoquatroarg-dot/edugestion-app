@@ -497,11 +497,54 @@ const handleSupplierOrders = async (req: any, res: any) => {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      await client.query(`DELETE FROM supplier_order_items WHERE order_id = $1`, [id]);
-      const result = await client.query(`DELETE FROM supplier_orders WHERE id = $1`, [id]);
-      await client.query("COMMIT");
 
-      if (!result.rowCount) return sendError(res, "Pedido no encontrado", 404);
+      const orderResult = await client.query(
+        `SELECT id, estado, sale_id, customer_order_id, stock_actualizado
+         FROM supplier_orders
+         WHERE id = $1
+         LIMIT 1
+         FOR UPDATE`,
+        [id]
+      );
+
+      if (!orderResult.rowCount) {
+        await client.query("ROLLBACK");
+        return sendError(res, "Pedido no encontrado", 404);
+      }
+
+      const order = orderResult.rows[0];
+      const stockUpdated = toNumber(order.stock_actualizado) === 1;
+
+      if (order.estado === "entregado" || stockUpdated) {
+        await client.query("ROLLBACK");
+        return sendError(
+          res,
+          "No se puede eliminar un pedido entregado porque ya actualizó stock, venta o movimientos relacionados.",
+          409
+        );
+      }
+
+      if (order.sale_id !== null && order.sale_id !== undefined) {
+        await client.query("ROLLBACK");
+        return sendError(
+          res,
+          "No se puede eliminar este pedido porque está vinculado a una venta. Primero deberá anularse la operación de origen.",
+          409
+        );
+      }
+
+      if (order.customer_order_id !== null && order.customer_order_id !== undefined) {
+        await client.query("ROLLBACK");
+        return sendError(
+          res,
+          "No se puede eliminar este pedido porque está vinculado a un pedido de cliente.",
+          409
+        );
+      }
+
+      await client.query(`DELETE FROM supplier_order_items WHERE order_id = $1`, [id]);
+      await client.query(`DELETE FROM supplier_orders WHERE id = $1`, [id]);
+      await client.query("COMMIT");
 
       return sendSuccess(res, null, "Pedido eliminado");
     } catch (error: any) {

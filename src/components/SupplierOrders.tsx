@@ -29,6 +29,7 @@ interface SupplierOrder {
   notes?: string;
   stock_actualizado?: number;
   sale_id?: number | null;
+  customer_order_id?: number | null;
   total_pedido?: number;
   cobrado_pedido?: number;
   cta_cte_pedido?: number;
@@ -431,6 +432,22 @@ export default function SupplierOrders() {
     } finally {
       setUpdatingOrderId(null);
     }
+  };
+
+  const getDeleteProtectionReason = (order: SupplierOrder) => {
+    if (order.estado === 'entregado' || Number(order.stock_actualizado || 0) === 1) {
+      return 'No se puede eliminar: el pedido ya fue entregado y actualizó operaciones relacionadas.';
+    }
+
+    if (order.sale_id) {
+      return 'No se puede eliminar: el pedido está vinculado a una venta.';
+    }
+
+    if (order.customer_order_id) {
+      return 'No se puede eliminar: el pedido está vinculado a un pedido de cliente.';
+    }
+
+    return '';
   };
 
   const deleteOrder = async (id: number) => {
@@ -1238,20 +1255,28 @@ export default function SupplierOrders() {
                             </button>
                           )}
 
-                          {hasPermission('suppliers', 'delete') && (
-                            <button
-                              type="button"
-                              onClick={() => setConfirmation({ type: 'delete', order })}
-                              disabled={deletingOrderId === order.id || updatingOrderId === order.id}
-                              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-red-50 px-4 py-2 text-xs font-black text-red-700 ring-1 ring-red-100 transition hover:bg-red-100 disabled:opacity-50"
-                              title="Eliminar pedido"
-                            >
-                              {deletingOrderId === order.id
-                                ? <Loader2 size={15} className="animate-spin" />
-                                : <Trash2 size={15} />}
-                              Eliminar
-                            </button>
-                          )}
+                          {hasPermission('suppliers', 'delete') && (() => {
+                            const deleteProtectionReason = getDeleteProtectionReason(order);
+                            const deleteDisabled = Boolean(deleteProtectionReason)
+                              || deletingOrderId === order.id
+                              || updatingOrderId === order.id;
+
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmation({ type: 'delete', order })}
+                                disabled={deleteDisabled}
+                                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-red-50 px-4 py-2 text-xs font-black text-red-700 ring-1 ring-red-100 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:ring-slate-200"
+                                title={deleteProtectionReason || 'Eliminar pedido'}
+                                aria-label={deleteProtectionReason || `Eliminar pedido ${order.numero_pedido || order.id}`}
+                              >
+                                {deletingOrderId === order.id
+                                  ? <Loader2 size={15} className="animate-spin" />
+                                  : <Trash2 size={15} />}
+                                {deleteProtectionReason ? 'Protegido' : 'Eliminar'}
+                              </button>
+                            );
+                          })()}
                         </div>
                       </div>
                     </div>
