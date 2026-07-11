@@ -433,6 +433,7 @@ const mapRoute = (row: any) => ({
   visited_customers: toNumber(row.visited_customers),
   sales_count: toNumber(row.sales_count),
   orders_count: toNumber(row.orders_count),
+  has_activity: row.has_activity === true || row.has_activity === 1 || row.has_activity === "true",
 });
 
 const getRouteItems = async (routeId: number) => {
@@ -602,7 +603,21 @@ const handleRoutes = async (req: any, res: any) => {
           COUNT(ri.id)::int AS total_customers,
           COALESCE(SUM(CASE WHEN COALESCE(ri.visitado, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS visited_customers,
           COALESCE(SUM(CASE WHEN COALESCE(ri.venta_registrada, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS sales_count,
-          COALESCE(SUM(CASE WHEN COALESCE(ri.pedido_generado, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS orders_count
+          COALESCE(SUM(CASE WHEN COALESCE(ri.pedido_generado, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS orders_count,
+          (
+            COALESCE(r.status, 'planificada') NOT IN ('planificada', 'pendiente')
+            OR COALESCE(BOOL_OR(
+              ri.id IS NOT NULL AND (
+                COALESCE(ri.visitado, 0) <> 0
+                OR COALESCE(ri.venta_registrada, 0) <> 0
+                OR COALESCE(ri.pedido_generado, 0) <> 0
+                OR COALESCE(ri.cobranza_realizada, 0) <> 0
+                OR COALESCE(ri.status, 'pendiente') <> 'pendiente'
+                OR ri.visited_at IS NOT NULL
+                OR NULLIF(BTRIM(COALESCE(ri.notes, '')), '') IS NOT NULL
+              )
+            ), FALSE)
+          ) AS has_activity
         FROM routes r
         LEFT JOIN route_items ri ON ri.route_id = r.id
         WHERE r.date::date = (now() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
@@ -630,7 +645,21 @@ const handleRoutes = async (req: any, res: any) => {
               COUNT(ri.id)::int AS total_customers,
               COALESCE(SUM(CASE WHEN COALESCE(ri.visitado, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS visited_customers,
               COALESCE(SUM(CASE WHEN COALESCE(ri.venta_registrada, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS sales_count,
-              COALESCE(SUM(CASE WHEN COALESCE(ri.pedido_generado, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS orders_count
+              COALESCE(SUM(CASE WHEN COALESCE(ri.pedido_generado, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS orders_count,
+          (
+            COALESCE(r.status, 'planificada') NOT IN ('planificada', 'pendiente')
+            OR COALESCE(BOOL_OR(
+              ri.id IS NOT NULL AND (
+                COALESCE(ri.visitado, 0) <> 0
+                OR COALESCE(ri.venta_registrada, 0) <> 0
+                OR COALESCE(ri.pedido_generado, 0) <> 0
+                OR COALESCE(ri.cobranza_realizada, 0) <> 0
+                OR COALESCE(ri.status, 'pendiente') <> 'pendiente'
+                OR ri.visited_at IS NOT NULL
+                OR NULLIF(BTRIM(COALESCE(ri.notes, '')), '') IS NOT NULL
+              )
+            ), FALSE)
+          ) AS has_activity
             FROM routes r
             LEFT JOIN route_items ri ON ri.route_id = r.id
             WHERE r.id = $1
@@ -651,7 +680,21 @@ const handleRoutes = async (req: any, res: any) => {
             COUNT(ri.id)::int AS total_customers,
             COALESCE(SUM(CASE WHEN COALESCE(ri.visitado, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS visited_customers,
             COALESCE(SUM(CASE WHEN COALESCE(ri.venta_registrada, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS sales_count,
-            COALESCE(SUM(CASE WHEN COALESCE(ri.pedido_generado, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS orders_count
+            COALESCE(SUM(CASE WHEN COALESCE(ri.pedido_generado, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS orders_count,
+          (
+            COALESCE(r.status, 'planificada') NOT IN ('planificada', 'pendiente')
+            OR COALESCE(BOOL_OR(
+              ri.id IS NOT NULL AND (
+                COALESCE(ri.visitado, 0) <> 0
+                OR COALESCE(ri.venta_registrada, 0) <> 0
+                OR COALESCE(ri.pedido_generado, 0) <> 0
+                OR COALESCE(ri.cobranza_realizada, 0) <> 0
+                OR COALESCE(ri.status, 'pendiente') <> 'pendiente'
+                OR ri.visited_at IS NOT NULL
+                OR NULLIF(BTRIM(COALESCE(ri.notes, '')), '') IS NOT NULL
+              )
+            ), FALSE)
+          ) AS has_activity
           FROM routes r
           LEFT JOIN route_items ri ON ri.route_id = r.id
           GROUP BY r.id
@@ -724,8 +767,66 @@ const handleRoutes = async (req: any, res: any) => {
       if (!user) return;
       if (!id) return sendError(res, "ID de ruta inválido", 400);
 
-      await pool.query(`DELETE FROM routes WHERE id = $1`, [id]);
-      return sendSuccess(res, null, "Ruta eliminada");
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+
+        const routeResult = await client.query(
+          `SELECT id, status FROM routes WHERE id = $1 FOR UPDATE`,
+          [id]
+        );
+        const route = routeResult.rows[0];
+        if (!route) {
+          await client.query("ROLLBACK");
+          return sendError(res, "Ruta no encontrada", 404);
+        }
+
+        const itemsResult = await client.query(
+          `
+            SELECT
+              status,
+              visitado,
+              venta_registrada,
+              pedido_generado,
+              cobranza_realizada,
+              notes,
+              visited_at
+            FROM route_items
+            WHERE route_id = $1
+            FOR UPDATE
+          `,
+          [id]
+        );
+
+        const routeStarted = !["planificada", "pendiente"].includes(String(route.status || "planificada"));
+        const itemHasActivity = itemsResult.rows.some((item: any) => (
+          toNumber(item.visitado) !== 0
+          || toNumber(item.venta_registrada) !== 0
+          || toNumber(item.pedido_generado) !== 0
+          || toNumber(item.cobranza_realizada) !== 0
+          || String(item.status || "pendiente") !== "pendiente"
+          || Boolean(item.visited_at)
+          || String(item.notes || "").trim().length > 0
+        ));
+
+        if (routeStarted || itemHasActivity) {
+          await client.query("ROLLBACK");
+          return sendError(
+            res,
+            "No se puede eliminar una ruta que ya fue iniciada o tiene visitas, ventas, pedidos, cobranzas o notas registradas. Debe conservarse para mantener el historial.",
+            409
+          );
+        }
+
+        await client.query(`DELETE FROM routes WHERE id = $1`, [id]);
+        await client.query("COMMIT");
+        return sendSuccess(res, null, "Ruta eliminada");
+      } catch (error: any) {
+        await client.query("ROLLBACK");
+        return sendError(res, error?.message || "Error al eliminar la ruta", 400);
+      } finally {
+        client.release();
+      }
     }
   }
 

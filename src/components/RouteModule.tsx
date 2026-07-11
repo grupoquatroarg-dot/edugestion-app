@@ -76,6 +76,7 @@ interface Route {
   visited_customers?: number;
   sales_count?: number;
   orders_count?: number;
+  has_activity?: boolean;
   items?: RouteItem[];
 }
 
@@ -1096,6 +1097,9 @@ export default function RouteModule() {
                   const total = Number(route.total_customers || 0);
                   const visited = Number(route.visited_customers || 0);
                   const percentage = total > 0 ? Math.round((visited / total) * 100) : 0;
+                  const deleteProtectionReason = route.has_activity
+                    ? 'No se puede eliminar: la ruta ya fue iniciada o tiene actividad registrada.'
+                    : null;
                   return (
                     <article key={route.id} className="min-w-0 rounded-[26px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
                       <div className="flex min-w-0 items-start justify-between gap-3">
@@ -1114,7 +1118,8 @@ export default function RouteModule() {
                       </div>
                       <div className="mt-4 grid grid-cols-2 gap-2">
                         <button type="button" onClick={() => { setSelectedRouteForDetail(route); setDetailError(null); }} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:border-indigo-300"><Eye size={16} />Ver detalle</button>
-                        {hasPermission('routes', 'delete') && <button type="button" onClick={() => setConfirmAction({ type: 'delete', routeId: route.id, routeName: route.name })} disabled={routeActionId === route.id} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 text-sm font-black text-rose-700 disabled:opacity-50">{routeActionId === route.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}Eliminar</button>}
+                        {hasPermission('routes', 'delete') && <button type="button" onClick={() => !deleteProtectionReason && setConfirmAction({ type: 'delete', routeId: route.id, routeName: route.name })} disabled={routeActionId === route.id || Boolean(deleteProtectionReason)} title={deleteProtectionReason || 'Eliminar ruta sin actividad'} aria-label={deleteProtectionReason || `Eliminar ruta ${route.name}`} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 text-sm font-black text-rose-700 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:opacity-100">{routeActionId === route.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}{deleteProtectionReason ? 'Protegida' : 'Eliminar'}</button>}
+                        {deleteProtectionReason && <p className="col-span-2 rounded-xl bg-slate-50 px-3 py-2 text-center text-[11px] font-semibold leading-5 text-slate-500">La ruta tiene actividad y debe conservarse como historial.</p>}
                       </div>
                     </article>
                   );
