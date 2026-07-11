@@ -3,6 +3,8 @@ import { salesRepository, SaleItem, Sale } from '../repositories/salesRepository
 import { getPostgresPool, isPostgresConfigured } from '../utils/postgres.js';
 import { AppError } from '../utils/response.js';
 import { normalizeBusinessDateForStorage } from '../utils/businessDate.js';
+import { saleTraceService } from './saleTraceService.js';
+import type { SaleStockAllocationInput } from './saleTraceService.js';
 
 type TransactionClient = {
   query: (text: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }>;
@@ -120,11 +122,16 @@ export const salesService = {
     try {
       await client.query('BEGIN');
 
-      const productIds = Array.from(new Set(normalizedItems.map((item: any) => item.product_id)));
+      const productIds: number[] = Array.from(
+        new Set<number>(normalizedItems.map((item: any) => Number(item.product_id)))
+      )
+        .sort((a, b) => a - b);
       const productResult = await client.query(
         `SELECT id, name, stock, cost
          FROM products
-         WHERE id = ANY($1::int[])`,
+         WHERE id = ANY($1::int[])
+         ORDER BY id ASC
+         FOR UPDATE`,
         [productIds]
       );
 
@@ -139,6 +146,12 @@ export const salesService = {
 
       let totalSaleCost = 0;
       const processedItems: SaleItem[] = [];
+      const stockConsumptionLines: Array<{
+        product_id: number;
+        cantidad: number;
+        costo_total: number;
+        allocations: Omit<SaleStockAllocationInput, 'stock_movement_id'>[];
+      }> = [];
       const supplierShortageMap = new Map<number, { product_id: number; cantidad: number; name: string; requested: number; available: number }>();
 
       for (const item of normalizedItems) {
@@ -170,13 +183,15 @@ export const salesService = {
 
         let itemCost = 0;
         let remainingToConsume = stockToConsume;
+        const lineAllocations: Omit<SaleStockAllocationInput, 'stock_movement_id'>[] = [];
 
         if (remainingToConsume > 0) {
           const fifoResult = await client.query(
             `SELECT id, cantidad_restante, costo_unitario
              FROM purchase_invoice_items
              WHERE product_id = $1 AND cantidad_restante > 0
-             ORDER BY id ASC`,
+             ORDER BY id ASC
+             FOR UPDATE`,
             [productId]
           );
 
@@ -185,7 +200,16 @@ export const salesService = {
 
             const availableInMove = toNumber(move.cantidad_restante);
             const consume = Math.min(remainingToConsume, availableInMove);
-            itemCost += consume * toNumber(move.costo_unitario);
+            const unitCost = toNumber(move.costo_unitario);
+            itemCost += consume * unitCost;
+
+            lineAllocations.push({
+              product_id: productId,
+              purchase_invoice_item_id: toNumber(move.id),
+              source_type: 'purchase_invoice_item',
+              cantidad: consume,
+              costo_unitario: unitCost,
+            });
 
             await client.query(
               `UPDATE purchase_invoice_items
@@ -198,7 +222,15 @@ export const salesService = {
           }
 
           if (remainingToConsume > 0) {
-            itemCost += remainingToConsume * toNumber(product?.cost);
+            const fallbackUnitCost = toNumber(product?.cost);
+            itemCost += remainingToConsume * fallbackUnitCost;
+            lineAllocations.push({
+              product_id: productId,
+              purchase_invoice_item_id: null,
+              source_type: 'product_cost',
+              cantidad: remainingToConsume,
+              costo_unitario: fallbackUnitCost,
+            });
           }
 
           await client.query(
@@ -208,20 +240,12 @@ export const salesService = {
             [stockToConsume, productId]
           );
 
-          await client.query(
-            `INSERT INTO stock_movimientos (product_id, cantidad, costo_unitario, cantidad_restante, descripcion, tipo_movimiento, motivo, usuario)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [
-              productId,
-              -stockToConsume,
-              stockToConsume > 0 ? itemCost / stockToConsume : 0,
-              0,
-              `Venta con stock disponible`,
-              'egreso',
-              'venta',
-              usuario || 'Sistema',
-            ]
-          );
+          stockConsumptionLines.push({
+            product_id: productId,
+            cantidad: stockToConsume,
+            costo_total: itemCost,
+            allocations: lineAllocations,
+          });
         }
 
         totalSaleCost += itemCost;
@@ -254,9 +278,49 @@ export const salesService = {
         notes,
         usuario,
         estado: montoPendiente > 0 ? 'Pendiente' : 'Pagada',
+        reversion_version: 1,
       };
 
       const saleId = await salesRepository.create(saleDataToInsert, processedItems, client);
+
+      for (const consumption of stockConsumptionLines) {
+        const stockMovementResult = await client.query(
+          `INSERT INTO stock_movimientos (
+             product_id,
+             cantidad,
+             costo_unitario,
+             cantidad_restante,
+             descripcion,
+             tipo_movimiento,
+             motivo,
+             usuario,
+             sale_id
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           RETURNING id`,
+          [
+            consumption.product_id,
+            -consumption.cantidad,
+            consumption.cantidad > 0 ? consumption.costo_total / consumption.cantidad : 0,
+            0,
+            `Venta con stock disponible`,
+            'egreso',
+            'venta',
+            usuario || 'Sistema',
+            saleId,
+          ]
+        );
+
+        const stockMovementId = toNumber(stockMovementResult.rows[0]?.id);
+        await saleTraceService.recordStockAllocations(
+          client,
+          saleId,
+          consumption.allocations.map((allocation) => ({
+            ...allocation,
+            stock_movement_id: stockMovementId,
+          }))
+        );
+      }
 
       let supplierOrderId: number | null = null;
       let supplierOrderNumber: number | null = null;
@@ -291,10 +355,17 @@ export const salesService = {
 
       if (realPayment > 0) {
         const nextPaymentNum = await getAndIncrementSetting(client, 'next_payment_number');
-        await client.query(
+        const movementResult = await client.query(
           `INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, cliente_id, venta_id, usuario, numero_pago)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           RETURNING id`,
           ['ingreso', 'venta', `Venta N° ${nextSaleNum}`, 'Ventas', metodo_pago, realPayment, cliente_id || null, saleId, usuario || 'Sistema', nextPaymentNum]
+        );
+
+        await saleTraceService.recordPaymentAllocations(
+          client,
+          toNumber(movementResult.rows[0]?.id),
+          [{ sale_id: saleId, monto: realPayment, allocation_type: 'initial_payment' }]
         );
       }
 
@@ -439,7 +510,8 @@ export const salesService = {
         `SELECT id, nombre_apellido, saldo_cta_cte
          FROM clientes
          WHERE id = $1
-         LIMIT 1`,
+         LIMIT 1
+         FOR UPDATE`,
         [clientId]
       );
 
@@ -462,7 +534,8 @@ export const salesService = {
         `SELECT id, numero_venta, monto_pagado, monto_pendiente
          FROM sales
          WHERE cliente_id = $1 AND monto_pendiente > 0
-         ORDER BY fecha ASC, id ASC`,
+         ORDER BY fecha ASC, id ASC
+         FOR UPDATE`,
         [clientId]
       );
 
@@ -514,9 +587,10 @@ export const salesService = {
         String(observaciones || '').trim(),
       ].filter(Boolean);
 
-      await client.query(
+      const movementResult = await client.query(
         `INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cliente_id, venta_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         RETURNING id`,
         [
           'ingreso',
           'cobranza',
@@ -530,6 +604,16 @@ export const salesService = {
           clientId,
           linkedSaleId,
         ]
+      );
+
+      await saleTraceService.recordPaymentAllocations(
+        client,
+        toNumber(movementResult.rows[0]?.id),
+        allocations.map((allocation) => ({
+          sale_id: allocation.id,
+          monto: allocation.amount,
+          allocation_type: 'client_payment' as const,
+        }))
       );
 
       const updatedCustomerResult = await client.query(

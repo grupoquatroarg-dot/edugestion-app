@@ -31,6 +31,10 @@ export interface Sale {
   notes?: string | null;
   usuario?: string | null;
   estado?: string | null;
+  reversion_version?: number;
+  anulada_at?: string | null;
+  anulada_por?: string | null;
+  anulacion_motivo?: string | null;
 }
 
 const toNumber = (value: any, fallback: number = 0) => {
@@ -57,6 +61,10 @@ const mapSale = (row: any) => {
     notes: row.notes ?? null,
     usuario: row.usuario ?? null,
     estado: row.estado ?? null,
+    reversion_version: toNumber(row.reversion_version),
+    anulada_at: row.anulada_at ?? null,
+    anulada_por: row.anulada_por ?? null,
+    anulacion_motivo: row.anulacion_motivo ?? null,
     cliente_localidad: row.cliente_localidad ?? row.localidad ?? null,
     cliente_direccion: row.cliente_direccion ?? row.direccion ?? null,
     cliente_telefono: row.cliente_telefono ?? row.telefono ?? null,
@@ -212,9 +220,9 @@ export const salesRepository = {
       .query(
         `INSERT INTO sales (
            numero_venta, total, costo_total, ganancia, cliente_id, nombre_cliente,
-           metodo_pago, monto_pagado, monto_pendiente, notes, usuario, estado
+           metodo_pago, monto_pagado, monto_pendiente, notes, usuario, estado, reversion_version
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          RETURNING id`,
         [
           saleData.numero_venta,
@@ -229,6 +237,7 @@ export const salesRepository = {
           saleData.notes || null,
           saleData.usuario || 'Sistema',
           saleData.estado || (saleData.monto_pendiente > 0 ? 'Pendiente' : 'Pagada'),
+          saleData.reversion_version ?? 1,
         ]
       )
       .then(async (insertSaleResult) => {

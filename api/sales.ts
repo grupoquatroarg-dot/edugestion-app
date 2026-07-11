@@ -6,6 +6,8 @@ import { verifyToken } from "../server/utils/jwt.js";
 import { sendError, sendSuccess } from "../server/utils/response.js";
 import { getPostgresPool } from "../server/utils/postgres.js";
 import { normalizeBusinessDateForStorage } from "../server/utils/businessDate.js";
+import { saleTraceService } from "../server/services/saleTraceService.js";
+import type { SaleStockAllocationInput } from "../server/services/saleTraceService.js";
 
 const saleSchema = z.object({
   cliente_id: z.number(),
@@ -578,6 +580,7 @@ const handleSupplierOrders = async (req: any, res: any) => {
           FROM supplier_orders
           WHERE id = $1
           LIMIT 1
+          FOR UPDATE
         `,
         [id]
       );
@@ -679,6 +682,7 @@ const handleSupplierOrders = async (req: any, res: any) => {
         bonificacion_valor?: number;
         precio_unitario_bonificado?: number;
       }> = [];
+      const supplierDeliveryAllocations: SaleStockAllocationInput[] = [];
 
       for (const item of itemResult.rows) {
         const productId = toNumber(item.product_id);
@@ -701,10 +705,21 @@ const handleSupplierOrders = async (req: any, res: any) => {
           precio_unitario_bonificado: precioVenta,
         });
 
-        await client.query(
+        const saleStockMovementResult = await client.query(
           `
-            INSERT INTO stock_movimientos (product_id, cantidad, costo_unitario, cantidad_restante, descripcion, tipo_movimiento, motivo, usuario)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO stock_movimientos (
+              product_id,
+              cantidad,
+              costo_unitario,
+              cantidad_restante,
+              descripcion,
+              tipo_movimiento,
+              motivo,
+              usuario,
+              sale_id
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING id
           `,
           [
             productId,
@@ -732,8 +747,18 @@ const handleSupplierOrders = async (req: any, res: any) => {
             "egreso",
             "venta",
             user.userName || "Sistema",
+            order.sale_id || null,
           ]
         );
+
+        supplierDeliveryAllocations.push({
+          product_id: productId,
+          cantidad,
+          costo_unitario: costoUnitario,
+          source_type: "supplier_delivery",
+          purchase_invoice_item_id: null,
+          stock_movement_id: toNumber(saleStockMovementResult.rows[0]?.id),
+        });
 
         if (order.sale_id) {
           await client.query(
@@ -754,6 +779,12 @@ const handleSupplierOrders = async (req: any, res: any) => {
       }
 
       if (order.sale_id) {
+        await saleTraceService.recordStockAllocations(
+          client,
+          toNumber(order.sale_id),
+          supplierDeliveryAllocations
+        );
+
         await client.query(
           `
             UPDATE sales
@@ -806,12 +837,30 @@ const handleSupplierOrders = async (req: any, res: any) => {
         client
       );
 
+      for (const allocation of supplierDeliveryAllocations) {
+        if (allocation.stock_movement_id) {
+          await client.query(
+            `UPDATE stock_movimientos
+             SET sale_id = $1
+             WHERE id = $2`,
+            [saleId, allocation.stock_movement_id]
+          );
+        }
+      }
+
+      await saleTraceService.recordStockAllocations(
+        client,
+        saleId,
+        supplierDeliveryAllocations
+      );
+
       if (montoPagado > 0) {
         const nextPaymentNum = await getAndIncrementSetting(client, "next_payment_number");
-        await client.query(
+        const movementResult = await client.query(
           `
             INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, cliente_id, venta_id, usuario, numero_pago)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            RETURNING id
           `,
           [
             "ingreso",
@@ -825,6 +874,12 @@ const handleSupplierOrders = async (req: any, res: any) => {
             user.userName || "Sistema",
             nextPaymentNum,
           ]
+        );
+
+        await saleTraceService.recordPaymentAllocations(
+          client,
+          toNumber(movementResult.rows[0]?.id),
+          [{ sale_id: saleId, monto: montoPagado, allocation_type: "initial_payment" }]
         );
       }
 
@@ -1492,6 +1547,16 @@ const handleCustomerOrders = async (req: any, res: any) => {
         );
 
         movementIds.push(toNumber(movementResult.rows[0]?.id));
+
+        await saleTraceService.recordPaymentAllocations(
+          client,
+          toNumber(movementResult.rows[0]?.id),
+          [{
+            sale_id: toNumber(sale.id),
+            monto: payment.monto,
+            allocation_type: "customer_order_payment",
+          }]
+        );
       }
 
       await client.query("COMMIT");
