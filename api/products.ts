@@ -5,6 +5,7 @@ import { UserRepository } from "../server/repositories/userRepository.js";
 import { getPostgresPool, isPostgresConfigured } from "../server/utils/postgres.js";
 import { AppError, sendError, sendSuccess } from "../server/utils/response.js";
 import { verifyToken } from "../server/utils/jwt.js";
+import type { TokenPayload } from "../server/utils/jwt.js";
 
 const productSchema = z.object({
   code: z.string().min(1, "El codigo es requerido"),
@@ -63,17 +64,23 @@ const permissionKeyByAction = {
   edit: "can_edit",
 } as const;
 
-const requireProductPermission = async (req: any, res: any, action: keyof typeof permissionKeyByAction) => {
+const requireProductPermission = async (
+  req: any,
+  res: any,
+  action: keyof typeof permissionKeyByAction
+): Promise<TokenPayload | null> => {
   const token = getBearerToken(req);
 
   if (!token) {
-    return sendError(res, "Unauthorized: Login required", 401);
+    sendError(res, "Unauthorized: Login required", 401);
+    return null;
   }
 
   const decoded = verifyToken(token);
 
   if (!decoded?.userId) {
-    return sendError(res, "Unauthorized: Login required", 401);
+    sendError(res, "Unauthorized: Login required", 401);
+    return null;
   }
 
   if (decoded.role === "administrador") {
@@ -85,7 +92,8 @@ const requireProductPermission = async (req: any, res: any, action: keyof typeof
   const permissionKey = permissionKeyByAction[action];
 
   if (!productPermissions?.[permissionKey]) {
-    return sendError(res, "Forbidden: No permission for products", 403);
+    sendError(res, "Forbidden: No permission for products", 403);
+    return null;
   }
 
   return decoded;
