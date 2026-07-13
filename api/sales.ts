@@ -705,6 +705,32 @@ const handleSupplierOrders = async (req: any, res: any) => {
           precio_unitario_bonificado: precioVenta,
         });
 
+        await client.query(
+          `
+            INSERT INTO stock_movimientos (
+              product_id,
+              cantidad,
+              costo_unitario,
+              cantidad_restante,
+              descripcion,
+              tipo_movimiento,
+              motivo,
+              usuario
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          `,
+          [
+            productId,
+            cantidad,
+            costoUnitario,
+            cantidad,
+            `Ingreso desde Pedido #${order.numero_pedido || order.id}`,
+            "ingreso",
+            "pedido_proveedor",
+            user.userName || "Sistema",
+          ]
+        );
+
         const saleStockMovementResult = await client.query(
           `
             INSERT INTO stock_movimientos (
@@ -720,23 +746,6 @@ const handleSupplierOrders = async (req: any, res: any) => {
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING id
-          `,
-          [
-            productId,
-            cantidad,
-            costoUnitario,
-            cantidad,
-            `Ingreso desde Pedido #${order.numero_pedido || order.id}`,
-            "ingreso",
-            "pedido_proveedor",
-            user.userName || "Sistema",
-          ]
-        );
-
-        await client.query(
-          `
-            INSERT INTO stock_movimientos (product_id, cantidad, costo_unitario, cantidad_restante, descripcion, tipo_movimiento, motivo, usuario)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
           `,
           [
             productId,
