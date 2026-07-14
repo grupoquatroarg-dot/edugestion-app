@@ -24,6 +24,25 @@ export const apiFetch = async (url: string, options: RequestInit = {}) => {
   };
 
   const response = await fetch(url, { ...defaultOptions, ...options });
+
+  if (!response.ok) {
+    const contentType = response.headers.get('content-type') || '';
+    const isJsonResponse = contentType.toLowerCase().includes('application/json');
+
+    if (!isJsonResponse) {
+      const rawMessage = (await response.text()).trim();
+      const isMissingVercelFunction =
+        response.status === 404 &&
+        (rawMessage.includes('The page could not be found') || rawMessage.includes('NOT_FOUND'));
+
+      throw new Error(
+        isMissingVercelFunction
+          ? 'La función solicitada no está disponible en el servidor. Actualizá la aplicación o contactá al administrador.'
+          : rawMessage || `Error HTTP ${response.status}`
+      );
+    }
+  }
+
   return response;
 };
 
