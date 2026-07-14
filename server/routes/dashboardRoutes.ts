@@ -31,8 +31,8 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
     if (!isPostgresConfigured()) {
       const cuentasCobrar = db.prepare("SELECT SUM(saldo_cta_cte) as total FROM clientes").get() as any;
       const cuentasPagar = db.prepare("SELECT SUM(total) as total FROM purchase_invoices WHERE metodo_pago = 'Cta Cte'").get() as any;
-      const gananciaMes = db.prepare("SELECT SUM(ganancia) as total FROM sales WHERE strftime('%Y-%m', fecha) = ?").get(currentMonth) as any;
-      const gananciaPrevMes = db.prepare("SELECT SUM(ganancia) as total FROM sales WHERE strftime('%Y-%m', fecha) = ?").get(prevMonth) as any;
+      const gananciaMes = db.prepare("SELECT SUM(ganancia) as total FROM sales WHERE COALESCE(estado, '') <> 'Anulada' AND strftime('%Y-%m', fecha) = ?").get(currentMonth) as any;
+      const gananciaPrevMes = db.prepare("SELECT SUM(ganancia) as total FROM sales WHERE COALESCE(estado, '') <> 'Anulada' AND strftime('%Y-%m', fecha) = ?").get(prevMonth) as any;
 
       const ventasMes = db.prepare(`
         SELECT
@@ -40,16 +40,16 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
           COUNT(*) as cantidad,
           AVG(total) as ticketPromedio
         FROM sales
-        WHERE strftime('%Y-%m', fecha) = ?
+        WHERE COALESCE(estado, '') <> 'Anulada' AND strftime('%Y-%m', fecha) = ?
       `).get(currentMonth) as any;
 
-      const ventasPrevMes = db.prepare("SELECT SUM(total) as total FROM sales WHERE strftime('%Y-%m', fecha) = ?").get(prevMonth) as any;
-      const ventasDia = db.prepare("SELECT SUM(total) as total FROM sales WHERE strftime('%Y-%m-%d', fecha) = ?").get(today) as any;
+      const ventasPrevMes = db.prepare("SELECT SUM(total) as total FROM sales WHERE COALESCE(estado, '') <> 'Anulada' AND strftime('%Y-%m', fecha) = ?").get(prevMonth) as any;
+      const ventasDia = db.prepare("SELECT SUM(total) as total FROM sales WHERE COALESCE(estado, '') <> 'Anulada' AND strftime('%Y-%m-%d', fecha) = ?").get(today) as any;
 
       const topClientes = db.prepare(`
         SELECT nombre_cliente, SUM(total) as total
         FROM sales
-        WHERE strftime('%Y-%m', fecha) = ?
+        WHERE COALESCE(estado, '') <> 'Anulada' AND strftime('%Y-%m', fecha) = ?
         GROUP BY cliente_id
         ORDER BY total DESC
         LIMIT 5
@@ -60,7 +60,7 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
         FROM sale_items si
         JOIN products p ON si.product_id = p.id
         JOIN sales s ON si.sale_id = s.id
-        WHERE strftime('%Y-%m', s.fecha) = ?
+        WHERE COALESCE(s.estado, '') <> 'Anulada' AND strftime('%Y-%m', s.fecha) = ?
         GROUP BY si.product_id
         ORDER BY total_qty DESC
         LIMIT 5
@@ -80,7 +80,7 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
         FROM sale_items si
         JOIN products p ON si.product_id = p.id
         JOIN sales s ON si.sale_id = s.id
-        WHERE strftime('%Y-%m', s.fecha) = ?
+        WHERE COALESCE(s.estado, '') <> 'Anulada' AND strftime('%Y-%m', s.fecha) = ?
         GROUP BY si.product_id
         ORDER BY ganancia DESC
         LIMIT 5
@@ -107,7 +107,8 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
           AND id IN (
             SELECT cliente_id
             FROM sales
-            WHERE metodo_pago = 'Cta Cte'
+            WHERE COALESCE(estado, '') <> 'Anulada'
+              AND metodo_pago = 'Cta Cte'
               AND date(fecha) <= date('now', '-7 days')
           )
       `).get() as any;
@@ -171,12 +172,14 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
       pool.query(`
         SELECT COALESCE(SUM(ganancia), 0) AS total
         FROM sales
-        WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
+        WHERE COALESCE(estado, '') <> 'Anulada'
+          AND TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
       `, [currentMonth]),
       pool.query(`
         SELECT COALESCE(SUM(ganancia), 0) AS total
         FROM sales
-        WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
+        WHERE COALESCE(estado, '') <> 'Anulada'
+          AND TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
       `, [prevMonth]),
       pool.query(`
         SELECT
@@ -184,17 +187,20 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
           COUNT(*)::int AS cantidad,
           COALESCE(AVG(total), 0) AS ticket_promedio
         FROM sales
-        WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
+        WHERE COALESCE(estado, '') <> 'Anulada'
+          AND TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
       `, [currentMonth]),
       pool.query(`
         SELECT COALESCE(SUM(total), 0) AS total
         FROM sales
-        WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
+        WHERE COALESCE(estado, '') <> 'Anulada'
+          AND TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
       `, [prevMonth]),
       pool.query(`
         SELECT COALESCE(SUM(total), 0) AS total
         FROM sales
-        WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD') = $1
+        WHERE COALESCE(estado, '') <> 'Anulada'
+          AND TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD') = $1
       `, [today]),
       pool.query(`
         SELECT
@@ -202,7 +208,8 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
           COALESCE(SUM(s.total), 0) AS total
         FROM sales s
         LEFT JOIN clientes c ON s.cliente_id = c.id
-        WHERE TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
+        WHERE COALESCE(s.estado, '') <> 'Anulada'
+          AND TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
         GROUP BY COALESCE(c.nombre_apellido, s.nombre_cliente, 'Sin nombre')
         ORDER BY total DESC
         LIMIT 5
@@ -214,7 +221,8 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
         FROM sale_items si
         JOIN products p ON si.product_id = p.id
         JOIN sales s ON si.sale_id = s.id
-        WHERE TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
+        WHERE COALESCE(s.estado, '') <> 'Anulada'
+          AND TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
         GROUP BY p.id, p.name
         ORDER BY total_qty DESC, p.name ASC
         LIMIT 5
@@ -233,7 +241,8 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
         FROM sale_items si
         JOIN products p ON si.product_id = p.id
         JOIN sales s ON si.sale_id = s.id
-        WHERE TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
+        WHERE COALESCE(s.estado, '') <> 'Anulada'
+          AND TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
         GROUP BY p.id, p.name
         ORDER BY ganancia DESC, p.name ASC
         LIMIT 5
@@ -258,6 +267,7 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
             SELECT 1
             FROM sales s
             WHERE s.cliente_id = c.id
+              AND COALESCE(s.estado, '') <> 'Anulada'
               AND s.metodo_pago = 'Cta Cte'
               AND DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') <= CURRENT_DATE - INTERVAL '7 days'
           )
@@ -327,7 +337,7 @@ router.get("/cuentas-cobrar", requirePermission("dashboard", "view"), async (req
           CAST((julianday('now') - julianday(MAX(s.fecha))) AS INTEGER) as dias_atraso
         FROM clientes c
         JOIN sales s ON c.id = s.cliente_id
-        WHERE c.saldo_cta_cte > 0 AND s.metodo_pago = 'Cta Cte'
+        WHERE c.saldo_cta_cte > 0 AND COALESCE(s.estado, '') <> 'Anulada' AND s.metodo_pago = 'Cta Cte'
       `;
 
       if (days > 0) {
@@ -351,6 +361,7 @@ router.get("/cuentas-cobrar", requirePermission("dashboard", "view"), async (req
         FROM clientes c
         JOIN sales s ON c.id = s.cliente_id
         WHERE c.saldo_cta_cte > 0
+          AND COALESCE(s.estado, '') <> 'Anulada'
           AND s.metodo_pago = 'Cta Cte'
           AND ($1::int = 0 OR DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') <= CURRENT_DATE - ($1::int * INTERVAL '1 day'))
         GROUP BY c.id, c.nombre_apellido, c.saldo_cta_cte
@@ -430,7 +441,7 @@ router.get("/ganancia-mes-detalle", requirePermission("dashboard", "view"), asyn
           costo_total as costo,
           ganancia
         FROM sales
-        WHERE strftime('%Y-%m', fecha) = ?
+        WHERE COALESCE(estado, '') <> 'Anulada' AND strftime('%Y-%m', fecha) = ?
         ORDER BY fecha DESC
       `).all(currentMonth);
       return sendSuccess(res, results);
@@ -446,7 +457,8 @@ router.get("/ganancia-mes-detalle", requirePermission("dashboard", "view"), asyn
           costo_total AS costo,
           ganancia
         FROM sales
-        WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
+        WHERE COALESCE(estado, '') <> 'Anulada'
+          AND TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
         ORDER BY fecha DESC, id DESC
       `,
       [currentMonth]
@@ -482,7 +494,7 @@ router.get("/ventas-mes-detalle", requirePermission("dashboard", "view"), async 
         FROM sales s
         JOIN sale_items si ON s.id = si.sale_id
         JOIN products p ON si.product_id = p.id
-        WHERE strftime('%Y-%m', s.fecha) = ?
+        WHERE COALESCE(s.estado, '') <> 'Anulada' AND strftime('%Y-%m', s.fecha) = ?
         GROUP BY s.id
         ORDER BY s.fecha DESC
       `).all(currentMonth);
@@ -502,7 +514,8 @@ router.get("/ventas-mes-detalle", requirePermission("dashboard", "view"), async 
         JOIN sale_items si ON s.id = si.sale_id
         JOIN products p ON si.product_id = p.id
         LEFT JOIN clientes c ON s.cliente_id = c.id
-        WHERE TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
+        WHERE COALESCE(s.estado, '') <> 'Anulada'
+          AND TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
         GROUP BY s.id, s.fecha, cliente, s.metodo_pago, s.total
         ORDER BY s.fecha DESC, s.id DESC
       `,
@@ -601,7 +614,7 @@ router.get("/deuda-vencida", requirePermission("dashboard", "view"), async (_req
           CAST((julianday('now') - julianday(MAX(s.fecha))) AS INTEGER) as dias_atraso
         FROM clientes c
         JOIN sales s ON c.id = s.cliente_id
-        WHERE c.saldo_cta_cte > 0 AND s.metodo_pago = 'Cta Cte'
+        WHERE c.saldo_cta_cte > 0 AND COALESCE(s.estado, '') <> 'Anulada' AND s.metodo_pago = 'Cta Cte'
         GROUP BY c.id
         HAVING dias_atraso > 7
         ORDER BY dias_atraso DESC
@@ -618,6 +631,7 @@ router.get("/deuda-vencida", requirePermission("dashboard", "view"), async (_req
       FROM clientes c
       JOIN sales s ON c.id = s.cliente_id
       WHERE c.saldo_cta_cte > 0
+        AND COALESCE(s.estado, '') <> 'Anulada'
         AND s.metodo_pago = 'Cta Cte'
       GROUP BY c.id, c.nombre_apellido, c.saldo_cta_cte
       HAVING (CURRENT_DATE - MAX(DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires'))) > 7

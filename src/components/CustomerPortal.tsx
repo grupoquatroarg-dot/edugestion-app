@@ -109,7 +109,8 @@ const formatDate = (value?: string | null) => {
   return new Date(value).toLocaleDateString('es-AR');
 };
 
-const getSalePaymentStatus = (sale: any): 'pending' | 'partial' | 'paid' => {
+const getSalePaymentStatus = (sale: any): 'pending' | 'partial' | 'paid' | 'cancelled' => {
+  if (String(sale?.estado || '').toLowerCase() === 'anulada') return 'cancelled';
   const paid = Number(sale?.monto_pagado || 0);
   const pending = Number(sale?.monto_pendiente || 0);
   if (pending <= 0) return 'paid';
@@ -119,6 +120,7 @@ const getSalePaymentStatus = (sale: any): 'pending' | 'partial' | 'paid' => {
 
 const getSalePaymentStatusLabel = (sale: any) => {
   const status = sale?.payment_status || getSalePaymentStatus(sale);
+  if (status === 'cancelled') return 'Anulada';
   if (status === 'partial') return 'Pago parcial';
   if (status === 'paid') return 'Pagada';
   return 'Pendiente';
@@ -126,6 +128,7 @@ const getSalePaymentStatusLabel = (sale: any) => {
 
 const getSalePaymentStatusClass = (sale: any) => {
   const status = sale?.payment_status || getSalePaymentStatus(sale);
+  if (status === 'cancelled') return 'bg-red-100 text-red-700';
   if (status === 'partial') return 'bg-amber-50 text-amber-700';
   if (status === 'paid') return 'bg-emerald-50 text-emerald-700';
   return 'bg-red-50 text-red-600';
@@ -240,7 +243,7 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
   const [submittingOrder, setSubmittingOrder] = useState(false);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [downloadingSaleId, setDownloadingSaleId] = useState<number | null>(null);
-  const [accountFilters, setAccountFilters] = useState({ dateFrom: '', dateTo: '', status: 'all' as 'all' | 'pending' | 'partial' | 'paid' });
+  const [accountFilters, setAccountFilters] = useState({ dateFrom: '', dateTo: '', status: 'all' as 'all' | 'pending' | 'partial' | 'paid' | 'cancelled' });
   const [portalError, setPortalError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [feedback, setFeedback] = useState<{
@@ -1420,7 +1423,7 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                     onChange={(event) =>
                       setAccountFilters({
                         ...accountFilters,
-                        status: event.target.value as 'all' | 'pending' | 'partial' | 'paid',
+                        status: event.target.value as 'all' | 'pending' | 'partial' | 'paid' | 'cancelled',
                       })
                     }
                     className="min-h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
@@ -1429,6 +1432,7 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                     <option value="pending">Pendientes de pago</option>
                     <option value="partial">Pagos parciales</option>
                     <option value="paid">Pagados</option>
+                    <option value="cancelled">Anuladas</option>
                   </select>
                 </div>
               </div>
@@ -1517,6 +1521,12 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                               Descuento: {formatCurrency(sale.descuento_total)}
                             </p>
                           )}
+                          {String(sale.estado || '').toLowerCase() === 'anulada' && (
+                            <div className="mt-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-bold text-red-700">
+                              <p>Venta anulada{sale.anulada_at ? ` el ${formatDate(sale.anulada_at)}` : ''}.</p>
+                              {sale.anulacion_motivo && <p className="mt-1">Motivo: {sale.anulacion_motivo}</p>}
+                            </div>
+                          )}
                         </div>
 
                         <div className="flex min-w-0 items-center justify-between gap-3 min-[460px]:justify-end">
@@ -1524,7 +1534,9 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                             <p className="break-words font-black text-slate-950">
                               {formatCurrency(sale.total)}
                             </p>
-                            {getSalePaymentStatus(sale) === 'paid' ? (
+                            {getSalePaymentStatus(sale) === 'cancelled' ? (
+                              <p className="mt-1 text-xs font-bold text-red-700">Anulada</p>
+                            ) : getSalePaymentStatus(sale) === 'paid' ? (
                               <p className="mt-1 text-xs font-bold text-emerald-700">
                                 Pagada · {formatCurrency(sale.monto_pagado)}
                               </p>

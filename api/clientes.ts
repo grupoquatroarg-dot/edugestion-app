@@ -353,7 +353,8 @@ const toNumber = (value: any, fallback: number = 0) => {
   return Number.isNaN(parsed) ? fallback : parsed;
 };
 
-const getSalePaymentStatus = (row: any): "pending" | "partial" | "paid" => {
+const getSalePaymentStatus = (row: any): "pending" | "partial" | "paid" | "cancelled" => {
+  if (String(row?.estado || "").toLowerCase() === "anulada") return "cancelled";
   const total = toNumber(row?.total);
   const paid = toNumber(row?.monto_pagado);
   const pending = toNumber(row?.monto_pendiente, Math.max(0, total - paid));
@@ -1492,7 +1493,7 @@ const handleChecklist = async (req: any, res: any) => {
             WHERE r.date::date = (now() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
           `
         ),
-        pool.query(`SELECT COALESCE(SUM(monto_pendiente), 0) AS total FROM sales WHERE estado <> 'Pagada'`),
+        pool.query(`SELECT COALESCE(SUM(monto_pendiente), 0) AS total FROM sales WHERE monto_pendiente > 0 AND COALESCE(estado, '') <> 'Anulada'`),
         pool.query(`SELECT COUNT(*)::int AS count FROM products WHERE stock <= stock_minimo AND eliminado = 0`),
         pool.query(`SELECT COUNT(*)::int AS count FROM supplier_orders WHERE estado = 'pendiente'`),
       ]);
@@ -1851,9 +1852,15 @@ const handleCustomerPortal = async (req: any, res: any) => {
          c.nombre_apellido AS nombre_cliente,
          c.telefono AS cliente_telefono,
          c.direccion AS cliente_direccion,
-         c.localidad AS cliente_localidad
+         c.localidad AS cliente_localidad,
+         sc.monto_pagado_original,
+         sc.monto_pendiente_original,
+         sc.motivo AS cancellation_motivo,
+         sc.anulada_por AS cancellation_anulada_por,
+         sc.anulada_at AS cancellation_anulada_at
        FROM sales s
        JOIN clientes c ON c.id = s.cliente_id
+       LEFT JOIN sale_cancellations sc ON sc.sale_id = s.id
        WHERE s.id = $1
          AND s.cliente_id = $2
        LIMIT 1`,
@@ -1916,6 +1923,9 @@ const handleCustomerPortal = async (req: any, res: any) => {
            s.monto_pendiente,
            s.estado,
            s.metodo_pago,
+           s.anulada_at,
+           s.anulada_por,
+           s.anulacion_motivo,
            co.numero_pedido,
            COALESCE((
              SELECT SUM(
@@ -2046,6 +2056,9 @@ const handleClientAccountAdmin = async (req: any, res: any) => {
              s.estado,
              s.metodo_pago,
              s.notes,
+             s.anulada_at,
+             s.anulada_por,
+             s.anulacion_motivo,
              co.numero_pedido,
              COALESCE((
                SELECT SUM(
@@ -2071,7 +2084,8 @@ const handleClientAccountAdmin = async (req: any, res: any) => {
              COALESCE(SUM(monto_pendiente), 0) AS total_pending,
              COALESCE(AVG(total), 0) AS average_ticket
            FROM sales
-           WHERE cliente_id = $1`,
+           WHERE cliente_id = $1
+             AND COALESCE(estado, '') <> 'Anulada'`,
           [id]
         ),
         pool.query(
@@ -2102,6 +2116,7 @@ const handleClientAccountAdmin = async (req: any, res: any) => {
            JOIN sales s ON s.id = si.sale_id
            JOIN products p ON p.id = si.product_id
            WHERE s.cliente_id = $1
+             AND COALESCE(s.estado, '') <> 'Anulada'
            GROUP BY p.id, p.name, p.company
            ORDER BY quantity DESC, amount DESC
            LIMIT 5`,
@@ -2180,6 +2195,9 @@ const handleClientAccountAdmin = async (req: any, res: any) => {
              s.estado,
              s.metodo_pago,
              s.notes,
+             s.anulada_at,
+             s.anulada_por,
+             s.anulacion_motivo,
              co.numero_pedido,
              COALESCE((
                SELECT SUM(
@@ -2222,26 +2240,32 @@ const handleClientAccountAdmin = async (req: any, res: any) => {
       }
 
       const cliente = clientResult.rows[0];
-      const saleOperations = salesResult.rows.map((row: any) => ({
-        id: `sale-${row.id}`,
-        source_id: toNumber(row.id),
-        operation_type: "venta",
-        fecha: row.fecha,
-        descripcion: `Venta N° ${row.numero_venta || row.id}${row.numero_pedido ? ` / Pedido #${row.numero_pedido}` : ""}`,
-        debe: toNumber(row.total),
-        haber: 0,
-        numero_venta: row.numero_venta,
-        numero_pedido: row.numero_pedido,
-        venta_id: toNumber(row.id),
-        metodo_pago: row.metodo_pago,
-        total: toNumber(row.total),
-        monto_pagado: toNumber(row.monto_pagado),
-        monto_pendiente: toNumber(row.monto_pendiente),
-        descuento_total: toNumber(row.descuento_total),
-        payment_status: getSalePaymentStatus(row),
-        estado: row.estado || (toNumber(row.monto_pendiente) > 0 ? "Pendiente" : "Pagada"),
-        notes: row.notes || null,
-      }));
+      const saleOperations = salesResult.rows.map((row: any) => {
+        const cancelled = String(row.estado || "").toLowerCase() === "anulada";
+        return {
+          id: `sale-${row.id}`,
+          source_id: toNumber(row.id),
+          operation_type: "venta",
+          fecha: row.fecha,
+          descripcion: `${cancelled ? "Venta anulada" : "Venta"} N° ${row.numero_venta || row.id}${row.numero_pedido ? ` / Pedido #${row.numero_pedido}` : ""}`,
+          debe: cancelled ? 0 : toNumber(row.total),
+          haber: 0,
+          numero_venta: row.numero_venta,
+          numero_pedido: row.numero_pedido,
+          venta_id: toNumber(row.id),
+          metodo_pago: row.metodo_pago,
+          total: toNumber(row.total),
+          monto_pagado: toNumber(row.monto_pagado),
+          monto_pendiente: toNumber(row.monto_pendiente),
+          descuento_total: toNumber(row.descuento_total),
+          payment_status: getSalePaymentStatus(row),
+          estado: row.estado || (toNumber(row.monto_pendiente) > 0 ? "Pendiente" : "Pagada"),
+          notes: row.notes || null,
+          anulada_at: row.anulada_at || null,
+          anulada_por: row.anulada_por || null,
+          anulacion_motivo: row.anulacion_motivo || null,
+        };
+      });
 
       const paymentOperations = movementsResult.rows.map((row: any) => {
         const isIncome = String(row.tipo || "").toLowerCase() === "ingreso";
@@ -2288,10 +2312,14 @@ const handleClientAccountAdmin = async (req: any, res: any) => {
         };
       });
 
-      const totalSales = saleOperations.reduce((sum: number, row: any) => sum + toNumber(row.total), 0);
-      const totalPayments = paymentOperations.reduce((sum: number, row: any) => sum + toNumber(row.haber), 0);
-      const totalPending = saleOperations.reduce((sum: number, row: any) => sum + toNumber(row.monto_pendiente), 0);
-      const totalDiscounts = saleOperations.reduce((sum: number, row: any) => sum + toNumber(row.descuento_total), 0);
+      const activeSaleOperations = saleOperations.filter((row: any) => String(row.estado || "").toLowerCase() !== "anulada");
+      const totalSales = activeSaleOperations.reduce((sum: number, row: any) => sum + toNumber(row.total), 0);
+      const totalPayments = paymentOperations.reduce(
+        (sum: number, row: any) => sum + toNumber(row.haber) - toNumber(row.debe),
+        0
+      );
+      const totalPending = activeSaleOperations.reduce((sum: number, row: any) => sum + toNumber(row.monto_pendiente), 0);
+      const totalDiscounts = activeSaleOperations.reduce((sum: number, row: any) => sum + toNumber(row.descuento_total), 0);
 
       return sendSuccess(res, {
         cliente: {

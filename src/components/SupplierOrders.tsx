@@ -24,7 +24,7 @@ interface SupplierOrder {
   numero_pedido: number;
   cliente: string;
   fecha: string;
-  estado: 'pendiente' | 'pedido_realizado' | 'auditar_pedido' | 'entregado';
+  estado: 'pendiente' | 'pedido_realizado' | 'auditar_pedido' | 'entregado' | 'cancelado';
   productos: SupplierOrderItem[];
   notes?: string;
   stock_actualizado?: number;
@@ -167,6 +167,8 @@ export default function SupplierOrders() {
         return 'bg-orange-50 text-orange-600 border-orange-200';
       case 'entregado':
         return 'bg-emerald-50 text-emerald-600 border-emerald-200';
+      case 'cancelado':
+        return 'bg-red-50 text-red-700 border-red-200';
       default:
         return 'bg-zinc-100 text-zinc-500 border-zinc-200';
     }
@@ -178,6 +180,7 @@ export default function SupplierOrders() {
       case 'pedido_realizado': return 'Pedido realizado';
       case 'auditar_pedido': return 'Auditar pedido';
       case 'entregado': return 'Entregado';
+      case 'cancelado': return 'Cancelado';
       default: return estado;
     }
   };
@@ -435,6 +438,10 @@ export default function SupplierOrders() {
   };
 
   const getDeleteProtectionReason = (order: SupplierOrder) => {
+    if (order.estado === 'cancelado') {
+      return 'No se puede eliminar: el pedido fue cancelado por una anulación y debe conservarse como historial.';
+    }
+
     if (order.estado === 'entregado' || Number(order.stock_actualizado || 0) === 1) {
       return 'No se puede eliminar: el pedido ya fue entregado y actualizó operaciones relacionadas.';
     }
@@ -1024,6 +1031,7 @@ export default function SupplierOrders() {
                 <option value="pedido_realizado">Pedido realizado</option>
                 <option value="auditar_pedido">Auditar pedido</option>
                 <option value="entregado">Entregado</option>
+                <option value="cancelado">Cancelado</option>
               </select>
             </label>
 
@@ -1231,7 +1239,7 @@ export default function SupplierOrders() {
                           <select
                             value={order.estado}
                             onChange={event => updateStatus(order.id, event.target.value)}
-                            disabled={order.estado === 'entregado' || !hasPermission('suppliers', 'edit') || updatingOrderId === order.id}
+                            disabled={['entregado', 'cancelado'].includes(order.estado) || !hasPermission('suppliers', 'edit') || updatingOrderId === order.id}
                             aria-label={`Cambiar estado del pedido ${order.numero_pedido || order.id}`}
                             className={`min-h-11 w-full rounded-xl border px-3 py-2 text-xs font-black uppercase tracking-wider outline-none transition ${getStatusStyles(order.estado)} disabled:cursor-not-allowed disabled:opacity-50`}
                           >
@@ -1239,6 +1247,7 @@ export default function SupplierOrders() {
                             <option value="pedido_realizado">Pedido realizado</option>
                             <option value="auditar_pedido">Auditar pedido</option>
                             {order.estado === 'entregado' && <option value="entregado">Entregado</option>}
+                            {order.estado === 'cancelado' && <option value="cancelado">Cancelado</option>}
                           </select>
                         </label>
 
@@ -1406,6 +1415,12 @@ export default function SupplierOrders() {
                         <div className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-black text-emerald-700">
                           <CheckCircle2 size={15} />
                           Entrega realizada
+                        </div>
+                      )}
+                      {order.estado === 'cancelado' && (
+                        <div className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-black text-red-700">
+                          <AlertCircle size={15} />
+                          Cancelado por anulación de venta
                         </div>
                       )}
                     </div>

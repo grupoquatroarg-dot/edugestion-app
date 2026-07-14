@@ -158,7 +158,7 @@ router.get("/checklist/summary", requireAuth, requirePermission('checklist', 'vi
   const routeClients = (db.prepare("SELECT COUNT(*) as count FROM route_items ri JOIN routes r ON ri.route_id = r.id WHERE r.date = ?").get(today) as any)?.count || 0;
   
   // Pending money (accounts receivable)
-  const pendingMoney = (db.prepare("SELECT SUM(monto_pendiente) as total FROM sales WHERE estado != 'Pagada'").get() as any)?.total || 0;
+  const pendingMoney = (db.prepare("SELECT SUM(monto_pendiente) as total FROM sales WHERE monto_pendiente > 0 AND COALESCE(estado, '') <> 'Anulada'").get() as any)?.total || 0;
   
   // Critical stock
   const criticalStock = (db.prepare("SELECT COUNT(*) as count FROM products WHERE stock <= stock_minimo AND active = 1").get() as any)?.count || 0;

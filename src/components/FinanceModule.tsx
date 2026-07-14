@@ -48,7 +48,7 @@ type Movimiento = {
   fecha: string;
   fecha_dia?: string;
   tipo: 'ingreso' | 'egreso';
-  origen: 'venta' | 'pago_cc' | 'egreso_manual' | 'ajuste' | 'compra' | 'cobranza';
+  origen: 'venta' | 'pago_cc' | 'egreso_manual' | 'ajuste' | 'compra' | 'cobranza' | 'anulacion_venta';
   cliente_id: number | null;
   venta_id: number | null;
   descripcion: string;
@@ -383,7 +383,8 @@ export default function FinanceModule() {
       venta: 'Venta',
       pago_cc: 'Pago de cuenta corriente',
       egreso_manual: 'Egreso manual',
-      ajuste: 'Ajuste'
+      ajuste: 'Ajuste',
+      anulacion_venta: 'Anulación de venta'
     };
 
     return labels[value || ''] || (value || 'Sin origen').replace(/_/g, ' ');
@@ -395,7 +396,8 @@ export default function FinanceModule() {
       depositado: 'Depositado',
       entregado_proveedor: 'Entregado a proveedor',
       cobrado: 'Cobrado',
-      rechazado: 'Rechazado'
+      rechazado: 'Rechazado',
+      anulado: 'Anulado'
     };
 
     return labels[value || ''] || (value || 'Sin estado').replace(/_/g, ' ');
@@ -406,6 +408,7 @@ export default function FinanceModule() {
     if (value === 'depositado') return 'border-blue-200 bg-blue-50 text-blue-700';
     if (value === 'cobrado') return 'border-slate-200 bg-slate-100 text-slate-700';
     if (value === 'rechazado') return 'border-red-200 bg-red-50 text-red-700';
+    if (value === 'anulado') return 'border-zinc-300 bg-zinc-100 text-zinc-600';
     return 'border-amber-200 bg-amber-50 text-amber-700';
   };
 
@@ -1024,6 +1027,7 @@ export default function FinanceModule() {
                         <option value="entregado_proveedor">Entregado a proveedor</option>
                         <option value="cobrado">Cobrado</option>
                         <option value="rechazado">Rechazado</option>
+                        <option value="anulado">Anulado</option>
                       </select>
                     </label>
                   </div>
@@ -1087,7 +1091,7 @@ export default function FinanceModule() {
                             <span className="sr-only">Cambiar estado del cheque</span>
                             <select
                               value={cheque.estado}
-                              disabled={updatingChequeId === cheque.id}
+                              disabled={updatingChequeId === cheque.id || cheque.estado === 'anulado'}
                               onChange={(event) => handleUpdateChequeStatus(cheque.id, event.target.value)}
                               className="min-h-11 w-full min-w-0 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs font-black uppercase tracking-wide text-slate-800 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
                               aria-label={`Cambiar estado del cheque ${cheque.numero_cheque}`}
@@ -1097,6 +1101,7 @@ export default function FinanceModule() {
                               <option value="entregado_proveedor">Entregado a proveedor</option>
                               <option value="cobrado">Cobrado</option>
                               <option value="rechazado">Rechazado</option>
+                              {cheque.estado === 'anulado' && <option value="anulado">Anulado</option>}
                             </select>
                           </label>
                         ) : (

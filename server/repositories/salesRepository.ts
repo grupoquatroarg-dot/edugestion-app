@@ -151,18 +151,45 @@ export const salesRepository = {
       .then(async (saleResult) => {
         if (!saleResult.rowCount) return null;
 
-        const itemsResult = await queryable.query(
-          `SELECT si.*, p.name AS product_name, p.company, p.codigo_unico
-           FROM sale_items si
-           JOIN products p ON si.product_id = p.id
-           WHERE si.sale_id = $1
-           ORDER BY si.id ASC`,
-          [id]
-        );
+        const [itemsResult, cancellationResult] = await Promise.all([
+          queryable.query(
+            `SELECT si.*, p.name AS product_name, p.company, p.codigo_unico
+             FROM sale_items si
+             JOIN products p ON si.product_id = p.id
+             WHERE si.sale_id = $1
+             ORDER BY si.id ASC`,
+            [id]
+          ),
+          queryable.query(
+            `SELECT id, motivo, anulada_por, anulada_at, estado_original,
+                    total_original, monto_pagado_original, monto_pendiente_original,
+                    costo_total_original, ganancia_original
+             FROM sale_cancellations
+             WHERE sale_id = $1
+             LIMIT 1`,
+            [id]
+          ),
+        ]);
+
+        const cancellation = cancellationResult.rows[0]
+          ? {
+              id: toNumber(cancellationResult.rows[0].id),
+              motivo: cancellationResult.rows[0].motivo,
+              anulada_por: cancellationResult.rows[0].anulada_por,
+              anulada_at: cancellationResult.rows[0].anulada_at,
+              estado_original: cancellationResult.rows[0].estado_original,
+              total_original: toNumber(cancellationResult.rows[0].total_original),
+              monto_pagado_original: toNumber(cancellationResult.rows[0].monto_pagado_original),
+              monto_pendiente_original: toNumber(cancellationResult.rows[0].monto_pendiente_original),
+              costo_total_original: toNumber(cancellationResult.rows[0].costo_total_original),
+              ganancia_original: toNumber(cancellationResult.rows[0].ganancia_original),
+            }
+          : null;
 
         return {
           ...mapSale(saleResult.rows[0]),
           items: itemsResult.rows.map(mapSaleItem),
+          cancellation,
         };
       });
   },

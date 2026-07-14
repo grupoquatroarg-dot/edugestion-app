@@ -126,6 +126,10 @@ export default function SalesModule() {
   const [downloadingSaleId, setDownloadingSaleId] = useState<number | null>(null);
   const [printingSaleId, setPrintingSaleId] = useState<number | null>(null);
   const [whatsAppSendingSaleId, setWhatsAppSendingSaleId] = useState<number | null>(null);
+  const [saleToCancel, setSaleToCancel] = useState<any>(null);
+  const [cancellationReason, setCancellationReason] = useState('');
+  const [cancellationError, setCancellationError] = useState('');
+  const [isCancellingSale, setIsCancellingSale] = useState(false);
   const [businessSettings, setBusinessSettings] = useState<Record<string, string>>({});
   const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
 
@@ -164,8 +168,15 @@ export default function SalesModule() {
     return matches.slice(0, 10);
   }, [clientes, clienteSearchTerm]);
 
+  const activeFilteredSalesHistory = useMemo(
+    () => filteredSalesHistory.filter(sale => String(sale.estado || '').toLowerCase() !== 'anulada'),
+    [filteredSalesHistory]
+  );
+
   const saldosSummary = useMemo(() => {
-    const pendingSales = salesHistory.filter(s => s.monto_pendiente > 0);
+    const pendingSales = salesHistory.filter(
+      s => s.monto_pendiente > 0 && String(s.estado || '').toLowerCase() !== 'anulada'
+    );
     const totalDebt = pendingSales.reduce((acc, s) => acc + s.monto_pendiente, 0);
     const uniqueCustomersWithDebt = new Set(pendingSales.map(s => s.cliente_id)).size;
     
@@ -180,7 +191,7 @@ export default function SalesModule() {
     const customerMap = new Map<number, any>();
     
     salesHistory.forEach(sale => {
-      if (sale.monto_pendiente > 0) {
+      if (sale.monto_pendiente > 0 && String(sale.estado || '').toLowerCase() !== 'anulada') {
         if (!customerMap.has(sale.cliente_id)) {
           customerMap.set(sale.cliente_id, {
             id: sale.cliente_id,
@@ -364,6 +375,56 @@ export default function SalesModule() {
       setSelectedSale(sale);
     } catch (error) {
       console.error("Error fetching sale details:", error);
+    }
+  };
+
+  const openCancellationModal = (sale: any) => {
+    setSaleToCancel(sale);
+    setCancellationReason('');
+    setCancellationError('');
+  };
+
+  const closeCancellationModal = () => {
+    if (isCancellingSale) return;
+    setSaleToCancel(null);
+    setCancellationReason('');
+    setCancellationError('');
+  };
+
+  const handleCancelSale = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!saleToCancel) return;
+
+    const motivo = cancellationReason.trim();
+    if (motivo.length < 3) {
+      setCancellationError('Ingresá un motivo de al menos 3 caracteres.');
+      return;
+    }
+
+    try {
+      setIsCancellingSale(true);
+      setCancellationError('');
+
+      const response = await apiFetch(`/api/sales?endpoint=sale-cancel&id=${saleToCancel.id}`, {
+        method: 'POST',
+        body: JSON.stringify({ motivo }),
+      });
+      const body = await response.json();
+      unwrapResponse(body);
+
+      await Promise.all([fetchSalesHistory(), fetchActiveProducts(), fetchClientes()]);
+      if (selectedSale?.id === saleToCancel.id) {
+        await fetchSaleDetails(saleToCancel.id);
+      }
+
+      setSaleToCancel(null);
+      setCancellationReason('');
+      alert(`La venta N° ${saleToCancel.numero_venta || saleToCancel.id} fue anulada correctamente.`);
+    } catch (error: any) {
+      console.error('Error cancelling sale:', error);
+      setCancellationError(error?.message || 'No se pudo anular la venta.');
+    } finally {
+      setIsCancellingSale(false);
     }
   };
 
@@ -1357,7 +1418,7 @@ export default function SalesModule() {
                   <div>
                     <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Total Ventas Filtradas</p>
                     <p className="break-all text-2xl font-black text-zinc-900 font-mono tracking-tighter sm:text-3xl">
-                      ${filteredSalesHistory.reduce((acc, sale) => acc + sale.total, 0).toFixed(2)}
+                      ${activeFilteredSalesHistory.reduce((acc, sale) => acc + sale.total, 0).toFixed(2)}
                     </p>
                     <p className="text-[10px] text-emerald-600 font-bold uppercase">Monto acumulado</p>
                   </div>
@@ -1369,8 +1430,8 @@ export default function SalesModule() {
                   </div>
                   <div>
                     <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Cantidad de Operaciones</p>
-                    <p className="break-all text-2xl font-black text-zinc-900 font-mono tracking-tighter sm:text-3xl">{filteredSalesHistory.length}</p>
-                    <p className="text-[10px] text-zinc-400 font-bold uppercase">Ventas encontradas</p>
+                    <p className="break-all text-2xl font-black text-zinc-900 font-mono tracking-tighter sm:text-3xl">{activeFilteredSalesHistory.length}</p>
+                    <p className="text-[10px] text-zinc-400 font-bold uppercase">Ventas vigentes encontradas</p>
                   </div>
                 </div>
               </div>
@@ -1421,7 +1482,11 @@ export default function SalesModule() {
                 {filteredSalesHistory.map((sale: any) => (
                   <article
                     key={sale.id}
-                    className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-indigo-200 hover:shadow-md sm:p-5"
+                    className={`rounded-2xl border p-4 shadow-sm transition sm:p-5 ${
+                      String(sale.estado || '').toLowerCase() === 'anulada'
+                        ? 'border-red-200 bg-red-50/60'
+                        : 'border-slate-200 bg-white hover:border-indigo-200 hover:shadow-md'
+                    }`}
                   >
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                       <div className="min-w-0">
@@ -1432,6 +1497,11 @@ export default function SalesModule() {
                           <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-black uppercase text-slate-600">
                             {sale.metodo_pago}
                           </span>
+                          {String(sale.estado || '').toLowerCase() === 'anulada' && (
+                            <span className="rounded-full border border-red-200 bg-red-100 px-2.5 py-1 text-[10px] font-black uppercase text-red-700">
+                              Anulada
+                            </span>
+                          )}
                         </div>
                         <h3 className="break-words text-base font-black text-slate-900">
                           {sale.nombre_cliente}
@@ -1439,15 +1509,22 @@ export default function SalesModule() {
                         <p className="mt-1 text-xs font-medium text-slate-500">
                           {formatBusinessDate(sale.fecha)} · {formatBusinessTime(sale.fecha)}
                         </p>
+                        {String(sale.estado || '').toLowerCase() === 'anulada' && (
+                          <p className="mt-2 text-xs font-bold text-red-700">
+                            Motivo: {sale.anulacion_motivo || 'Sin detalle'}
+                          </p>
+                        )}
                       </div>
 
                       <div className="flex flex-col gap-3 min-[420px]:flex-row min-[420px]:items-center lg:justify-end">
-                        <div className="rounded-2xl bg-slate-900 px-4 py-3 text-left text-white min-[420px]:text-right">
+                        <div className={`rounded-2xl px-4 py-3 text-left text-white min-[420px]:text-right ${
+                          String(sale.estado || '').toLowerCase() === 'anulada' ? 'bg-red-700' : 'bg-slate-900'
+                        }`}>
                           <p className="text-[9px] font-black uppercase tracking-widest text-white/50">Total</p>
                           <p className="text-xl font-black font-mono">${sale.total.toFixed(2)}</p>
                         </div>
 
-                        <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2 sm:grid-cols-4">
+                        <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2 sm:grid-cols-3 xl:grid-cols-5">
                           {hasPermission('sales', 'view') && (
                             <button
                               onClick={() => fetchSaleDetails(sale.id)}
@@ -1491,7 +1568,7 @@ export default function SalesModule() {
                               <span>Imprimir</span>
                             </button>
                           )}
-                          {hasPermission('sales', 'view') && (
+                          {hasPermission('sales', 'view') && String(sale.estado || '').toLowerCase() !== 'anulada' && (
                             <button
                               onClick={() => handleSendReceiptWhatsApp(sale.id)}
                               disabled={whatsAppSendingSaleId === sale.id}
@@ -1505,6 +1582,19 @@ export default function SalesModule() {
                                 <MessageCircle size={16} />
                               )}
                               <span>WhatsApp</span>
+                            </button>
+                          )}
+                          {hasPermission('sales', 'delete') && String(sale.estado || '').toLowerCase() !== 'anulada' && (
+                            <button
+                              type="button"
+                              onClick={() => openCancellationModal(sale)}
+                              disabled={Number(sale.reversion_version || 0) !== 1}
+                              className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 text-xs font-black text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                              title={Number(sale.reversion_version || 0) === 1 ? 'Anular venta' : 'Venta anterior sin trazabilidad reversible'}
+                              aria-label={`Anular venta ${sale.numero_venta || sale.id}`}
+                            >
+                              <XCircle size={16} />
+                              <span>{Number(sale.reversion_version || 0) === 1 ? 'Anular' : 'Sin trazabilidad'}</span>
                             </button>
                           )}
                         </div>
@@ -1708,6 +1798,58 @@ export default function SalesModule() {
       )}
 
       {/* Sale Detail Modal (History) */}
+      {saleToCancel && (
+        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="cancel-sale-title">
+          <form onSubmit={handleCancelSale} className="flex max-h-[100dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:max-h-[95dvh] sm:rounded-[32px]">
+            <div className="flex items-center justify-between border-b border-red-100 bg-red-700 p-5 text-white sm:p-6">
+              <div>
+                <h3 id="cancel-sale-title" className="text-lg font-black uppercase tracking-tight">Anular venta #{saleToCancel.numero_venta || saleToCancel.id}</h3>
+                <p className="mt-1 text-xs font-medium text-white/75">La operación conservará el historial y generará contramovimientos.</p>
+              </div>
+              <button type="button" onClick={closeCancellationModal} disabled={isCancellingSale} className="rounded-full p-2 hover:bg-white/10 disabled:opacity-50" aria-label="Cerrar anulación">
+                <X size={22} />
+              </button>
+            </div>
+            <div className="space-y-4 overflow-y-auto p-5 sm:p-6">
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                <p className="font-black">Esta acción no elimina la venta.</p>
+                <p className="mt-1">Restaurará stock y FIFO, revertirá pagos y saldo pendiente, y cancelará pedidos pendientes vinculados.</p>
+              </div>
+              <label className="block">
+                <span className="mb-2 block text-xs font-black uppercase tracking-widest text-slate-600">Motivo obligatorio</span>
+                <textarea
+                  autoFocus
+                  value={cancellationReason}
+                  onChange={(event) => {
+                    setCancellationReason(event.target.value);
+                    if (cancellationError) setCancellationError('');
+                  }}
+                  rows={4}
+                  maxLength={500}
+                  placeholder="Ejemplo: venta cargada por duplicado"
+                  className="w-full resize-none rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                  disabled={isCancellingSale}
+                />
+                <span className="mt-1 block text-right text-[10px] font-bold text-slate-400">{cancellationReason.length}/500</span>
+              </label>
+              {cancellationError && (
+                <div className="flex items-start gap-2 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">
+                  <AlertCircle size={18} className="mt-0.5 shrink-0" />
+                  <span>{cancellationError}</span>
+                </div>
+              )}
+            </div>
+            <div className="grid grid-cols-1 gap-3 border-t border-slate-100 bg-slate-50 p-5 sm:grid-cols-2 sm:p-6">
+              <button type="button" onClick={closeCancellationModal} disabled={isCancellingSale} className="min-h-12 rounded-2xl border border-slate-300 bg-white px-5 text-sm font-black uppercase tracking-widest text-slate-700 hover:bg-slate-100 disabled:opacity-50">Cancelar</button>
+              <button type="submit" disabled={isCancellingSale || cancellationReason.trim().length < 3} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-red-700 px-5 text-sm font-black uppercase tracking-widest text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50">
+                {isCancellingSale ? <Loader2 size={18} className="animate-spin" /> : <XCircle size={18} />}
+                {isCancellingSale ? 'Anulando…' : 'Confirmar anulación'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {selectedSale && (
         <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="sale-detail-title">
           <div className="flex max-h-[100dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl animate-in zoom-in-95 duration-300 sm:max-h-[95dvh] sm:rounded-[36px]">
@@ -1737,6 +1879,7 @@ export default function SalesModule() {
                   <div className="flex items-center gap-2">
                     <span className="text-xs sm:text-sm font-black text-zinc-900 uppercase">{selectedSale.metodo_pago}</span>
                     <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full border ${
+                      selectedSale.estado === 'Anulada' ? 'bg-red-100 text-red-700 border-red-200' :
                       selectedSale.estado === 'Pagada' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 
                       selectedSale.estado === 'Parcialmente Pagada' ? 'bg-amber-50 text-amber-600 border-amber-100' :
                       'bg-red-50 text-red-600 border-red-100'
@@ -1744,9 +1887,29 @@ export default function SalesModule() {
                       {selectedSale.estado}
                     </span>
                   </div>
-                  <p className="text-[10px] sm:text-xs text-zinc-500 font-bold mt-1">Pagado: ${selectedSale.monto_pagado.toFixed(2)}</p>
+                  <p className="text-[10px] sm:text-xs text-zinc-500 font-bold mt-1">Pagado: ${Number(selectedSale.cancellation?.monto_pagado_original ?? selectedSale.monto_pagado ?? 0).toFixed(2)}</p>
                 </div>
               </div>
+
+              {String(selectedSale.estado || '').toLowerCase() === 'anulada' && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 p-4 sm:p-5">
+                  <div className="flex items-start gap-3">
+                    <XCircle className="mt-0.5 shrink-0 text-red-700" size={20} />
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-widest text-red-700">Venta anulada</p>
+                      <p className="mt-2 text-sm font-bold text-red-900">Motivo: {selectedSale.anulacion_motivo || selectedSale.cancellation?.motivo || 'Sin detalle'}</p>
+                      <p className="mt-1 text-xs text-red-700">
+                        {selectedSale.anulada_at || selectedSale.cancellation?.anulada_at
+                          ? formatBusinessDateTime(selectedSale.anulada_at || selectedSale.cancellation?.anulada_at)
+                          : ''}
+                        {(selectedSale.anulada_por || selectedSale.cancellation?.anulada_por)
+                          ? ` · ${selectedSale.anulada_por || selectedSale.cancellation?.anulada_por}`
+                          : ''}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-4">
                 <h4 className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Productos Vendidos</h4>
@@ -1777,7 +1940,7 @@ export default function SalesModule() {
                   <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1">Total de la Operación</p>
                   <p className="text-3xl sm:text-4xl font-black font-mono tracking-tighter">${selectedSale.total.toFixed(2)}</p>
                 </div>
-                {selectedSale.monto_pendiente > 0 && (
+                {String(selectedSale.estado || '').toLowerCase() !== 'anulada' && selectedSale.monto_pendiente > 0 && (
                   <div className="sm:text-right">
                     <p className="text-[10px] font-bold text-red-400 uppercase tracking-widest mb-1">Saldo Pendiente</p>
                     <p className="text-xl sm:text-2xl font-black text-red-500 font-mono tracking-tighter">${selectedSale.monto_pendiente.toFixed(2)}</p>
@@ -1785,7 +1948,7 @@ export default function SalesModule() {
                 )}
               </div>
             </div>
-            <div className="p-4 sm:p-8 bg-zinc-50 border-t border-zinc-100 flex flex-col sm:flex-row gap-3 sm:justify-between sm:items-center shrink-0">
+            <div className="grid shrink-0 grid-cols-1 gap-3 border-t border-zinc-100 bg-zinc-50 p-4 sm:grid-cols-2 sm:p-8">
               {hasPermission('sales', 'view') && (
                 <button 
                   onClick={() => generateSaleReceipt(selectedSale, businessSettings)}
@@ -1804,7 +1967,7 @@ export default function SalesModule() {
                   Imprimir económico
                 </button>
               )}
-              {hasPermission('sales', 'view') && (
+              {hasPermission('sales', 'view') && String(selectedSale.estado || '').toLowerCase() !== 'anulada' && (
                 <button 
                   onClick={() => handleSendReceiptWhatsApp(selectedSale.id)}
                   disabled={whatsAppSendingSaleId === selectedSale.id}
@@ -1812,6 +1975,18 @@ export default function SalesModule() {
                 >
                   <MessageCircle size={18} />
                   {whatsAppSendingSaleId === selectedSale.id ? 'Preparando...' : 'WhatsApp'}
+                </button>
+              )}
+              {hasPermission('sales', 'delete') && String(selectedSale.estado || '').toLowerCase() !== 'anulada' && (
+                <button
+                  type="button"
+                  onClick={() => openCancellationModal(selectedSale)}
+                  disabled={Number(selectedSale.reversion_version || 0) !== 1}
+                  className="flex items-center justify-center gap-3 rounded-xl border border-red-200 bg-red-50 px-6 py-3 text-sm font-black uppercase tracking-widest text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 sm:rounded-2xl sm:px-8"
+                  title={Number(selectedSale.reversion_version || 0) === 1 ? 'Anular venta' : 'Venta anterior sin trazabilidad reversible'}
+                >
+                  <XCircle size={18} />
+                  {Number(selectedSale.reversion_version || 0) === 1 ? 'Anular venta' : 'Sin trazabilidad'}
                 </button>
               )}
               <button 

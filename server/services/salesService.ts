@@ -442,7 +442,7 @@ export const salesService = {
         }
 
         const pendingSales = db.prepare(
-          'SELECT id, numero_venta, monto_pagado, monto_pendiente FROM sales WHERE cliente_id = ? AND monto_pendiente > 0 ORDER BY fecha ASC, id ASC'
+          `SELECT id, numero_venta, monto_pagado, monto_pendiente FROM sales WHERE cliente_id = ? AND monto_pendiente > 0 AND COALESCE(estado, '') <> 'Anulada' ORDER BY fecha ASC, id ASC`
         ).all(clientId) as any[];
 
         if (pendingSales.length === 0) {
@@ -534,6 +534,7 @@ export const salesService = {
         `SELECT id, numero_venta, monto_pagado, monto_pendiente
          FROM sales
          WHERE cliente_id = $1 AND monto_pendiente > 0
+           AND COALESCE(estado, '') <> 'Anulada'
          ORDER BY fecha ASC, id ASC
          FOR UPDATE`,
         [clientId]

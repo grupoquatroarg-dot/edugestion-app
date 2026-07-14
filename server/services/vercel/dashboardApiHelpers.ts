@@ -91,12 +91,14 @@ export const getSummaryData = async (pool: any) => {
     pool.query(`
       SELECT COALESCE(SUM(ganancia), 0) AS total
       FROM sales
-      WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
+      WHERE COALESCE(estado, '') <> 'Anulada'
+        AND TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
     `, [currentMonth]),
     pool.query(`
       SELECT COALESCE(SUM(ganancia), 0) AS total
       FROM sales
-      WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
+      WHERE COALESCE(estado, '') <> 'Anulada'
+        AND TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
     `, [prevMonth]),
     pool.query(`
       SELECT
@@ -104,17 +106,20 @@ export const getSummaryData = async (pool: any) => {
         COUNT(*)::int AS cantidad,
         COALESCE(AVG(total), 0) AS ticket_promedio
       FROM sales
-      WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
+      WHERE COALESCE(estado, '') <> 'Anulada'
+        AND TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
     `, [currentMonth]),
     pool.query(`
       SELECT COALESCE(SUM(total), 0) AS total
       FROM sales
-      WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
+      WHERE COALESCE(estado, '') <> 'Anulada'
+        AND TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
     `, [prevMonth]),
     pool.query(`
       SELECT COALESCE(SUM(total), 0) AS total
       FROM sales
-      WHERE TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD') = $1
+      WHERE COALESCE(estado, '') <> 'Anulada'
+        AND TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD') = $1
     `, [today]),
     pool.query(`
       SELECT
@@ -122,7 +127,8 @@ export const getSummaryData = async (pool: any) => {
         COALESCE(SUM(s.total), 0) AS total
       FROM sales s
       LEFT JOIN clientes c ON s.cliente_id = c.id
-      WHERE TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
+      WHERE COALESCE(s.estado, '') <> 'Anulada'
+        AND TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
       GROUP BY COALESCE(c.nombre_apellido, s.nombre_cliente, 'Sin nombre')
       ORDER BY total DESC
       LIMIT 5
@@ -134,7 +140,8 @@ export const getSummaryData = async (pool: any) => {
       FROM sale_items si
       JOIN products p ON si.product_id = p.id
       JOIN sales s ON si.sale_id = s.id
-      WHERE TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
+      WHERE COALESCE(s.estado, '') <> 'Anulada'
+        AND TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
       GROUP BY p.id, p.name
       ORDER BY total_qty DESC, p.name ASC
       LIMIT 5
@@ -153,7 +160,8 @@ export const getSummaryData = async (pool: any) => {
       FROM sale_items si
       JOIN products p ON si.product_id = p.id
       JOIN sales s ON si.sale_id = s.id
-      WHERE TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
+      WHERE COALESCE(s.estado, '') <> 'Anulada'
+        AND TO_CHAR(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM') = $1
       GROUP BY p.id, p.name
       ORDER BY ganancia DESC, p.name ASC
       LIMIT 5
@@ -203,6 +211,7 @@ export const getSummaryData = async (pool: any) => {
           SELECT 1
           FROM sales s
           WHERE s.cliente_id = c.id
+            AND COALESCE(s.estado, '') <> 'Anulada'
             AND s.metodo_pago = 'Cta Cte'
             AND DATE(s.fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') <= CURRENT_DATE - INTERVAL '7 days'
         )

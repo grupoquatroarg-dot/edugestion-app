@@ -30,7 +30,7 @@ router.get("/", requirePermission('dashboard', 'view'), validate(reportParamsSch
       COUNT(*) as cantidad,
       AVG(total) as promedio
     FROM sales 
-    WHERE fecha BETWEEN ? AND ?
+    WHERE COALESCE(estado, '') <> 'Anulada' AND fecha BETWEEN ? AND ?
   `;
   const salesStatsParams: any[] = [fromDate, toDate];
   if (clienteId) {
@@ -42,7 +42,7 @@ router.get("/", requirePermission('dashboard', 'view'), validate(reportParamsSch
   let salesByDayQuery = `
     SELECT date(fecha) as fecha, SUM(total) as total, COUNT(*) as cantidad
     FROM sales
-    WHERE fecha BETWEEN ? AND ?
+    WHERE COALESCE(estado, '') <> 'Anulada' AND fecha BETWEEN ? AND ?
   `;
   const salesByDayParams: any[] = [fromDate, toDate];
   if (clienteId) {
@@ -55,7 +55,7 @@ router.get("/", requirePermission('dashboard', 'view'), validate(reportParamsSch
   let salesByMethodQuery = `
     SELECT metodo_pago as name, SUM(total) as value
     FROM sales
-    WHERE fecha BETWEEN ? AND ?
+    WHERE COALESCE(estado, '') <> 'Anulada' AND fecha BETWEEN ? AND ?
   `;
   const salesByMethodParams: any[] = [fromDate, toDate];
   if (clienteId) {
@@ -68,7 +68,7 @@ router.get("/", requirePermission('dashboard', 'view'), validate(reportParamsSch
   let salesListQuery = `
     SELECT id, fecha, nombre_cliente, total, metodo_pago
     FROM sales
-    WHERE fecha BETWEEN ? AND ?
+    WHERE COALESCE(estado, '') <> 'Anulada' AND fecha BETWEEN ? AND ?
   `;
   const salesListParams: any[] = [fromDate, toDate];
   if (clienteId) {
@@ -93,7 +93,7 @@ router.get("/", requirePermission('dashboard', 'view'), validate(reportParamsSch
   `).get(fromDate, toDate) as any;
 
   const activeClients = db.prepare(`
-    SELECT COUNT(DISTINCT cliente_id) as count FROM sales WHERE fecha BETWEEN ? AND ?
+    SELECT COUNT(DISTINCT cliente_id) as count FROM sales WHERE COALESCE(estado, '') <> 'Anulada' AND fecha BETWEEN ? AND ?
   `).get(fromDate, toDate) as any;
 
   const clientsWithDebt = db.prepare(`
@@ -109,7 +109,8 @@ router.get("/", requirePermission('dashboard', 'view'), validate(reportParamsSch
       MAX(s.fecha) as ultima_compra
     FROM sales s
     JOIN clientes c ON s.cliente_id = c.id
-    WHERE s.fecha BETWEEN ? AND ?
+    WHERE COALESCE(s.estado, '') <> 'Anulada'
+      AND s.fecha BETWEEN ? AND ?
     GROUP BY s.cliente_id
     ORDER BY total DESC
   `).all(fromDate, toDate);
@@ -131,7 +132,8 @@ router.get("/", requirePermission('dashboard', 'view'), validate(reportParamsSch
     FROM sale_items si
     JOIN sales s ON si.sale_id = s.id
     JOIN products p ON si.product_id = p.id
-    WHERE s.fecha BETWEEN ? AND ?
+    WHERE COALESCE(s.estado, '') <> 'Anulada'
+      AND s.fecha BETWEEN ? AND ?
     GROUP BY si.product_id
     ORDER BY cantidad DESC
   `).all(fromDate, toDate);
@@ -142,7 +144,8 @@ router.get("/", requirePermission('dashboard', 'view'), validate(reportParamsSch
     JOIN sales s ON si.sale_id = s.id
     JOIN products p ON si.product_id = p.id
     JOIN product_families f ON p.family_id = f.id
-    WHERE s.fecha BETWEEN ? AND ?
+    WHERE COALESCE(s.estado, '') <> 'Anulada'
+      AND s.fecha BETWEEN ? AND ?
     GROUP BY f.id
   `).all(fromDate, toDate);
 
@@ -165,8 +168,8 @@ router.get("/", requirePermission('dashboard', 'view'), validate(reportParamsSch
       c.id,
       c.nombre_apellido as nombre, 
       c.saldo_cta_cte as saldo,
-      (SELECT COUNT(*) FROM sales WHERE cliente_id = c.id AND monto_pendiente > 0) as ventas_pendientes,
-      (SELECT MIN(fecha) FROM sales WHERE cliente_id = c.id AND monto_pendiente > 0) as fecha_antigua
+      (SELECT COUNT(*) FROM sales WHERE cliente_id = c.id AND monto_pendiente > 0 AND COALESCE(estado, '') <> 'Anulada') as ventas_pendientes,
+      (SELECT MIN(fecha) FROM sales WHERE cliente_id = c.id AND monto_pendiente > 0 AND COALESCE(estado, '') <> 'Anulada') as fecha_antigua
     FROM clientes c
     WHERE c.saldo_cta_cte > 0
     ORDER BY c.saldo_cta_cte DESC
@@ -230,7 +233,8 @@ router.get("/commissions", requirePermission('dashboard', 'view'), validate(repo
       (s.total * ? / 100) as comision_generada
     FROM sales s
     JOIN clientes c ON s.cliente_id = c.id
-    WHERE s.fecha BETWEEN ? AND ?
+    WHERE COALESCE(s.estado, '') <> 'Anulada'
+      AND s.fecha BETWEEN ? AND ?
       AND c.tipo_cliente = 'mayorista'
     ORDER BY s.fecha DESC
   `).all(commissionPct, commissionPct, from + ' 00:00:00', to + ' 23:59:59');
@@ -264,7 +268,8 @@ router.get("/sales-period", requirePermission('dashboard', 'view'), validate(rep
     FROM sales s
     JOIN sale_items si ON s.id = si.sale_id
     JOIN products p ON si.product_id = p.id
-    WHERE s.fecha BETWEEN ? AND ?
+    WHERE COALESCE(s.estado, '') <> 'Anulada'
+      AND s.fecha BETWEEN ? AND ?
   `;
   const params: any[] = [fromDate, toDate];
 
@@ -285,7 +290,7 @@ router.get("/sales-period", requirePermission('dashboard', 'view'), validate(rep
       COUNT(*) as cantidad_ventas,
       AVG(total) as ticket_promedio
     FROM sales
-    WHERE fecha BETWEEN ? AND ?
+    WHERE COALESCE(estado, '') <> 'Anulada' AND fecha BETWEEN ? AND ?
   `;
   const summaryParams: any[] = [fromDate, toDate];
 

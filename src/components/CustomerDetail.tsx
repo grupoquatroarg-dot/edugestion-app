@@ -278,11 +278,11 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
       if (movementFilters.type !== 'all' && movement.operation_type !== movementFilters.type) return false;
 
       if (movementFilters.status === 'pending') {
-        if (movement.operation_type !== 'venta' || Number(movement.monto_pendiente || 0) <= 0) return false;
+        if (movement.operation_type !== 'venta' || String(movement.estado || '').toLowerCase() === 'anulada' || Number(movement.monto_pendiente || 0) <= 0) return false;
       }
 
       if (movementFilters.status === 'paid') {
-        const isPaidSale = movement.operation_type === 'venta' && Number(movement.monto_pendiente || 0) <= 0;
+        const isPaidSale = movement.operation_type === 'venta' && String(movement.estado || '').toLowerCase() !== 'anulada' && Number(movement.monto_pendiente || 0) <= 0;
         const isPayment = movement.operation_type === 'pago';
         if (!isPaidSale && !isPayment) return false;
       }
@@ -615,6 +615,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                   <div className="grid min-w-0 gap-3 xl:grid-cols-2">
                     {sales.map((sale: any) => {
                       const pending = Number(sale.monto_pendiente || 0);
+                      const cancelled = String(sale.estado || '').toLowerCase() === 'anulada';
                       return (
                         <article key={sale.id} className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                           <div className="p-4 sm:p-5">
@@ -623,12 +624,17 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                                 <div className="flex flex-wrap items-center gap-2">
                                   <p className="font-mono text-sm font-black text-slate-950">Venta #{sale.numero_venta || sale.id}</p>
                                   <span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase tracking-wider ${
-                                    pending > 0 ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'
+                                    cancelled ? 'bg-red-100 text-red-700' : pending > 0 ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'
                                   }`}>
-                                    {pending > 0 ? 'Pendiente' : 'Pagada'}
+                                    {cancelled ? 'Anulada' : pending > 0 ? 'Pendiente' : 'Pagada'}
                                   </span>
                                 </div>
                                 <p className="mt-1 text-xs text-slate-500">{formatDateTime(sale.fecha)}</p>
+                                {cancelled && (
+                                  <p className="mt-2 text-xs font-bold text-red-700">
+                                    Motivo: {sale.anulacion_motivo || 'Sin detalle'}
+                                  </p>
+                                )}
                               </div>
                               <div className="rounded-2xl bg-slate-950 px-4 py-3 text-left text-white min-[460px]:text-right">
                                 <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">Total</p>
@@ -1010,6 +1016,22 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                   ))}
                 </div>
               </div>
+
+              {String(selectedSale.estado || '').toLowerCase() === 'anulada' && (
+                <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle size={20} />
+                    <span className="text-sm font-black">Venta anulada</span>
+                  </div>
+                  <p className="mt-2 text-sm font-bold">Motivo: {selectedSale.anulacion_motivo || selectedSale.cancellation?.motivo || 'Sin detalle'}</p>
+                  {(selectedSale.anulada_at || selectedSale.cancellation?.anulada_at) && (
+                    <p className="mt-1 text-xs font-semibold">Fecha: {formatDateTime(selectedSale.anulada_at || selectedSale.cancellation?.anulada_at)}</p>
+                  )}
+                  {(selectedSale.anulada_por || selectedSale.cancellation?.anulada_por) && (
+                    <p className="mt-1 text-xs font-semibold">Usuario: {selectedSale.anulada_por || selectedSale.cancellation?.anulada_por}</p>
+                  )}
+                </div>
+              )}
 
               {Number(selectedSale.monto_pendiente || 0) > 0 && (
                 <div className="mt-5 flex flex-col gap-2 rounded-2xl border border-red-100 bg-red-50 p-4 min-[430px]:flex-row min-[430px]:items-center min-[430px]:justify-between">

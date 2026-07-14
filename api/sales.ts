@@ -8,6 +8,7 @@ import { getPostgresPool } from "../server/utils/postgres.js";
 import { normalizeBusinessDateForStorage } from "../server/utils/businessDate.js";
 import { saleTraceService } from "../server/services/saleTraceService.js";
 import type { SaleStockAllocationInput } from "../server/services/saleTraceService.js";
+import { saleCancellationService } from "../server/services/saleCancellationService.js";
 
 const saleSchema = z.object({
   cliente_id: z.number(),
@@ -26,6 +27,10 @@ const saleSchema = z.object({
     precio_unitario_bonificado: z.number().nonnegative().optional(),
   })).min(1, "Debe incluir al menos un producto"),
   total: z.number().nonnegative(),
+});
+
+const saleCancellationSchema = z.object({
+  motivo: z.string().trim().min(3, "El motivo de anulación es obligatorio").max(500, "El motivo es demasiado extenso"),
 });
 
 const paymentSchema = z.object({
@@ -422,12 +427,12 @@ const handleSupplierOrders = async (req: any, res: any) => {
         `
           UPDATE supplier_orders
           SET estado = $1
-          WHERE id = $2 AND estado <> 'entregado'
+          WHERE id = $2 AND estado NOT IN ('entregado', 'cancelado')
         `,
         [parsed.data.estado, id]
       );
 
-      if (!result.rowCount) return sendError(res, "Pedido no encontrado o ya entregado", 404);
+      if (!result.rowCount) return sendError(res, "Pedido no encontrado, entregado o cancelado", 404);
 
       return sendSuccess(res, null, "Estado actualizado");
     } catch (error: any) {
@@ -462,9 +467,9 @@ const handleSupplierOrders = async (req: any, res: any) => {
         return sendError(res, "Pedido no encontrado", 404);
       }
 
-      if (orderResult.rows[0]?.estado === "entregado") {
+      if (["entregado", "cancelado"].includes(String(orderResult.rows[0]?.estado))) {
         await client.query("ROLLBACK");
-        return sendError(res, "No se puede editar un pedido entregado", 400);
+        return sendError(res, "No se puede editar un pedido entregado o cancelado", 409);
       }
 
       await client.query(`DELETE FROM supplier_order_items WHERE order_id = $1`, [id]);
@@ -517,11 +522,11 @@ const handleSupplierOrders = async (req: any, res: any) => {
       const order = orderResult.rows[0];
       const stockUpdated = toNumber(order.stock_actualizado) === 1;
 
-      if (order.estado === "entregado" || stockUpdated) {
+      if (["entregado", "cancelado"].includes(String(order.estado)) || stockUpdated) {
         await client.query("ROLLBACK");
         return sendError(
           res,
-          "No se puede eliminar un pedido entregado porque ya actualizó stock, venta o movimientos relacionados.",
+          "No se puede eliminar un pedido entregado o cancelado porque debe conservarse su historial.",
           409
         );
       }
@@ -1493,6 +1498,11 @@ const handleCustomerOrders = async (req: any, res: any) => {
       }
 
       const sale = saleResult.rows[0];
+
+      if (String(sale.estado || '').toLowerCase() === 'anulada') {
+        throw new Error("La venta asociada al pedido fue anulada");
+      }
+
       const pendingAmount = Math.round(toNumber(sale.monto_pendiente) * 100) / 100;
       const customerBalance = Math.round(toNumber(order.saldo_cliente) * 100) / 100;
 
@@ -1616,6 +1626,45 @@ export default async function handler(req: any, res: any) {
     ].includes(endpoint)
   ) {
     return handleSupplierOrders(req, res);
+  }
+
+  if (req.method === "POST" && endpoint === "sale-cancel") {
+    const user = await requirePermission(req, res, "sales", "delete");
+    if (!user) return;
+
+    if (!id) {
+      return sendError(res, "ID de venta inválido", 400);
+    }
+
+    const parsed = saleCancellationSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(
+        res,
+        "Validation failed",
+        400,
+        parsed.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        }))
+      );
+    }
+
+    try {
+      const result = await saleCancellationService.cancelSale({
+        saleId: id,
+        motivo: parsed.data.motivo,
+        usuario: user.userName || "Sistema",
+      });
+
+      return sendSuccess(res, result, "Venta anulada correctamente");
+    } catch (error: any) {
+      return sendError(
+        res,
+        error?.message || "No se pudo anular la venta",
+        error?.statusCode || 400,
+        error?.errors || []
+      );
+    }
   }
 
   if (req.method === "POST" && endpoint === "client-payment") {

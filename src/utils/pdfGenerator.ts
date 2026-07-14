@@ -33,7 +33,8 @@ const getReceiptFileName = (sale: any) => {
     ? getBusinessDateKey(sale.fecha) || getBusinessDateInputValue()
     : getBusinessDateInputValue();
 
-  return `${clientName}_${dateText}.pdf`;
+  const statusSuffix = String(sale.estado || '').toLowerCase() === 'anulada' ? '_ANULADA' : '';
+  return `${clientName}_${dateText}${statusSuffix}.pdf`;
 };
 
 const getDiscountText = (item: any) => {
@@ -65,6 +66,10 @@ const buildSaleReceiptDoc = (
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = isPrint ? 10 : 12;
   const businessName = businessSettings.business_name || 'EDUGESTIÓN';
+  const isCancelled = String(sale.estado || '').toLowerCase() === 'anulada';
+  const cancellation = sale.cancellation || {};
+  const receiptPaidAmount = Number(cancellation.monto_pagado_original ?? sale.monto_pagado_original ?? sale.monto_pagado ?? 0);
+  const receiptPendingAmount = Number(cancellation.monto_pendiente_original ?? sale.monto_pendiente_original ?? sale.monto_pendiente ?? 0);
 
   if (!isPrint && businessSettings.business_logo) {
     try {
@@ -98,12 +103,25 @@ const buildSaleReceiptDoc = (
   doc.setTextColor(0, 0, 0);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(isPrint ? 20 : 16);
-  doc.text('COMPROBANTE DE VENTA', pageWidth / 2, isPrint ? 48 : 49, { align: 'center' });
+  doc.text(isCancelled ? 'COMPROBANTE DE VENTA - ANULADO' : 'COMPROBANTE DE VENTA', pageWidth / 2, isPrint ? 48 : 49, { align: 'center' });
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(isPrint ? 11 : 9);
   doc.text(`Venta N°: ${safeText(sale.numero_venta || sale.id).toString().padStart(6, '0')}`, margin, isPrint ? 58 : 59);
   doc.text(`Fecha: ${formatDate(sale.fecha)}`, margin, isPrint ? 64 : 64);
+
+  if (isCancelled) {
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(isPrint ? 0 : 185, isPrint ? 0 : 28, isPrint ? 0 : 28);
+    doc.text(`ANULADA: ${safeText(sale.anulacion_motivo || cancellation.motivo)}`, 105, isPrint ? 58 : 59);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(isPrint ? 9 : 8);
+    doc.text(
+      `${formatDate(sale.anulada_at || cancellation.anulada_at)} · ${safeText(sale.anulada_por || cancellation.anulada_por)}`,
+      105,
+      isPrint ? 64 : 64
+    );
+  }
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(isPrint ? 13 : 11);
@@ -133,7 +151,7 @@ const buildSaleReceiptDoc = (
     ];
   });
 
-  const hasPendingBalance = Number(sale.monto_pendiente || 0) > 0;
+  const hasPendingBalance = !isCancelled && receiptPendingAmount > 0;
   const summaryReservedHeight = isPrint
     ? (hasPendingBalance ? 43 : 38)
     : (hasPendingBalance ? 39 : 35);
@@ -226,12 +244,12 @@ const buildSaleReceiptDoc = (
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(isPrint ? 11 : 9);
   doc.text(`Forma de pago: ${safeText(sale.metodo_pago).toUpperCase()}`, margin, finalY);
-  doc.text(`Pagado: ${formatCurrency(sale.monto_pagado)}`, margin, finalY + (isPrint ? 7 : 6));
+  doc.text(`Pagado: ${formatCurrency(receiptPaidAmount)}`, margin, finalY + (isPrint ? 7 : 6));
 
   if (hasPendingBalance) {
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(isPrint ? 0 : 220, isPrint ? 0 : 38, isPrint ? 0 : 38);
-    doc.text(`Saldo pendiente: ${formatCurrency(sale.monto_pendiente)}`, margin, finalY + (isPrint ? 14 : 12));
+    doc.text(`Saldo pendiente: ${formatCurrency(receiptPendingAmount)}`, margin, finalY + (isPrint ? 14 : 12));
   }
 
   const boxX = pageWidth - (isPrint ? 90 : 86);
@@ -266,7 +284,7 @@ const buildSaleReceiptDoc = (
       doc.setTextColor(0, 0, 0);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(isPrint ? 10 : 8);
-      doc.text(`COMPROBANTE DE VENTA - CONTINUACIÓN`, margin, 9);
+      doc.text(isCancelled ? 'COMPROBANTE ANULADO - CONTINUACIÓN' : 'COMPROBANTE DE VENTA - CONTINUACIÓN', margin, 9);
       doc.setFont('helvetica', 'normal');
       doc.text(`Venta N° ${saleNumber} | Fecha ${formatDate(sale.fecha)}`, pageWidth - margin, 9, {
         align: 'right',
@@ -279,7 +297,7 @@ const buildSaleReceiptDoc = (
     doc.setTextColor(isPrint ? 0 : 150, isPrint ? 0 : 150, isPrint ? 0 : 150);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(isPrint ? 9 : 8);
-    doc.text(`Gracias por su compra - ${businessName}`, pageWidth / 2, pageHeight - 7, {
+    doc.text(isCancelled ? `Comprobante anulado - ${businessName}` : `Gracias por su compra - ${businessName}`, pageWidth / 2, pageHeight - 7, {
       align: 'center',
     });
     doc.text(`Página ${pageNumber} de ${totalPages}`, pageWidth - margin, pageHeight - 7, {
