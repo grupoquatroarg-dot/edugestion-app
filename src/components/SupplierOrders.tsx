@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Clock, CheckCircle2, Package, AlertCircle, User, Trash2, Send, Download, Edit2, Plus, Minus, X, Search, Calendar, BarChart3, RefreshCw, FileText, Truck, FilterX, Loader2, Printer } from 'lucide-react';
+import { Clock, CheckCircle2, Package, AlertCircle, User, Ban, Trash2, Send, Download, Edit2, Plus, Minus, X, Search, Calendar, BarChart3, RefreshCw, FileText, Truck, FilterX, Loader2, Printer } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { useAuth } from '../contexts/AuthContext';
@@ -37,6 +37,13 @@ interface SupplierOrder {
   sale_monto_pagado?: number;
   sale_monto_pendiente?: number;
   sale_metodo_pago?: string;
+  sale_estado?: string | null;
+  customer_order_estado?: string | null;
+  cancelled_at?: string | null;
+  cancelled_by?: string | null;
+  cancel_reason?: string | null;
+  cancellation_source?: string | null;
+  cancelled_from_status?: string | null;
 }
 
 export default function SupplierOrders() {
@@ -48,10 +55,11 @@ export default function SupplierOrders() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [updatingOrderId, setUpdatingOrderId] = useState<number | null>(null);
-  const [deletingOrderId, setDeletingOrderId] = useState<number | null>(null);
+  const [cancellingOrderId, setCancellingOrderId] = useState<number | null>(null);
   const [savingChanges, setSavingChanges] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [confirmation, setConfirmation] = useState<{ type: 'delete' | 'complete'; order: SupplierOrder } | null>(null);
+  const [confirmation, setConfirmation] = useState<{ type: 'cancel' | 'complete'; order: SupplierOrder } | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
   const [editError, setEditError] = useState('');
   
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -221,21 +229,34 @@ export default function SupplierOrders() {
     doc.setFontSize(isPrint ? 20 : 16);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(20, 20, 20);
-    doc.text('ORDEN DE COMPRA', 105, 55, { align: 'center' });
+    doc.text(order.estado === 'cancelado' ? 'ORDEN DE COMPRA - ANULADA' : 'ORDEN DE COMPRA', 105, 55, { align: 'center' });
     
     doc.setFontSize(isPrint ? 11 : 10);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(isPrint ? 0 : 100, isPrint ? 0 : 100, isPrint ? 0 : 100);
     doc.text(`Pedido N°: ${(order.numero_pedido || order.id).toString().padStart(6, '0')}`, 20, 65);
     doc.text(`Fecha: ${order.fecha ? formatBusinessDateTime(order.fecha) : ''}`, 20, 70);
-    
+
+    if (order.estado === 'cancelado') {
+      doc.setTextColor(180, 30, 30);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`Motivo: ${order.cancel_reason || 'Pedido anulado'}`, 20, 76);
+      doc.setFont('helvetica', 'normal');
+      doc.text(
+        `Anulado por: ${order.cancelled_by || 'Sistema'}${order.cancelled_at ? ` - ${formatBusinessDateTime(order.cancelled_at)}` : ''}`,
+        20,
+        81
+      );
+      doc.setTextColor(20, 20, 20);
+    }
+
     doc.setFontSize(isPrint ? 13 : 12);
     doc.setTextColor(20, 20, 20);
     doc.setFont('helvetica', 'bold');
-    doc.text('DATOS DEL PEDIDO', 20, 85);
+    doc.text('DATOS DEL PEDIDO', 20, order.estado === 'cancelado' ? 92 : 85);
     doc.setFont('helvetica', 'normal');
-    doc.text(`Cliente/Destino: ${order.cliente}`, 20, 92);
-    
+    doc.text(`Cliente/Destino: ${order.cliente}`, 20, order.estado === 'cancelado' ? 99 : 92);
+
     // If there's a common supplier for all items, we could show it here, 
     // but since it's per item, it's already in the table.
     // However, the user specifically asked for "Proveedor" in the list of things to include.
@@ -251,7 +272,7 @@ export default function SupplierOrders() {
     ]);
 
     autoTable(doc, {
-      startY: 100,
+      startY: order.estado === 'cancelado' ? 107 : 100,
       head: [['Producto', 'Proveedor', 'Cantidad', 'Código', 'Importe']],
       body: tableData,
       theme: 'grid',
@@ -297,7 +318,11 @@ export default function SupplierOrders() {
     doc.setTextColor(isPrint ? 0 : 150, isPrint ? 0 : 150, isPrint ? 0 : 150);
     doc.text(`Generado automáticamente por ${businessSettings.business_name || 'EDUGESTIÓN'}`, 105, 280, { align: 'center' });
 
-    outputPdfDocument(doc, `Pedido_${order.id}_${order.cliente.replace(/\s+/g, '_')}.pdf`, mode);
+    outputPdfDocument(
+      doc,
+      `Pedido_${order.id}_${order.cliente.replace(/\s+/g, '_')}${order.estado === 'cancelado' ? '_ANULADO' : ''}.pdf`,
+      mode
+    );
   };
 
   const generateRemitoPDF = (order: SupplierOrder, mode: PdfOutputMode = 'download') => {
@@ -437,48 +462,60 @@ export default function SupplierOrders() {
     }
   };
 
-  const getDeleteProtectionReason = (order: SupplierOrder) => {
+  const getCancelProtectionReason = (order: SupplierOrder) => {
     if (order.estado === 'cancelado') {
-      return 'No se puede eliminar: el pedido fue cancelado por una anulación y debe conservarse como historial.';
+      return 'El pedido ya fue anulado y debe conservarse como historial.';
     }
 
     if (order.estado === 'entregado' || Number(order.stock_actualizado || 0) === 1) {
-      return 'No se puede eliminar: el pedido ya fue entregado y actualizó operaciones relacionadas.';
+      return 'No se puede anular: el pedido ya fue entregado o actualizó stock.';
     }
 
-    if (order.sale_id) {
-      return 'No se puede eliminar: el pedido está vinculado a una venta.';
+    if (order.sale_id && String(order.sale_estado || '').toLowerCase() !== 'anulada') {
+      return 'No se puede anular: está vinculado a una venta activa. Primero debe anularse la venta.';
     }
 
-    if (order.customer_order_id) {
-      return 'No se puede eliminar: el pedido está vinculado a un pedido de cliente.';
+    if (
+      order.customer_order_id &&
+      !['cancelado', 'rechazado'].includes(String(order.customer_order_estado || '').toLowerCase())
+    ) {
+      return 'No se puede anular: está vinculado a un pedido de cliente activo.';
     }
 
     return '';
   };
 
-  const deleteOrder = async (id: number) => {
-    setDeletingOrderId(id);
+  const cancelOrder = async (order: SupplierOrder) => {
+    const normalizedReason = cancelReason.trim();
+
+    if (normalizedReason.length < 3) {
+      setFeedback({ type: 'error', message: 'El motivo de anulación es obligatorio.' });
+      return;
+    }
+
+    setCancellingOrderId(order.id);
     setFeedback(null);
 
     try {
-      const res = await apiFetch(`/api/sales?endpoint=supplier-order&id=${id}`, {
-        method: 'DELETE'
+      const res = await apiFetch(`/api/sales?endpoint=supplier-order-cancel&id=${order.id}`, {
+        method: 'POST',
+        body: JSON.stringify({ motivo: normalizedReason })
       });
 
       await unwrapResponse(res);
 
-      setOrders(prev => prev.filter(o => o.id !== id));
-      setFeedback({ type: 'success', message: 'Pedido eliminado correctamente.' });
+      setFeedback({ type: 'success', message: 'Pedido anulado correctamente.' });
       setConfirmation(null);
+      setCancelReason('');
+      await fetchOrders();
     } catch (error) {
-      console.error("Error deleting order:", error);
+      console.error("Error cancelling order:", error);
       setFeedback({
         type: 'error',
-        message: error instanceof Error ? error.message : 'No se pudo eliminar el pedido.'
+        message: error instanceof Error ? error.message : 'No se pudo anular el pedido.'
       });
     } finally {
-      setDeletingOrderId(null);
+      setCancellingOrderId(null);
     }
   };
 
@@ -871,7 +908,7 @@ export default function SupplierOrders() {
   const confirmationBusy = Boolean(
     confirmation && (
       updatingOrderId === confirmation.order.id ||
-      deletingOrderId === confirmation.order.id
+      cancellingOrderId === confirmation.order.id
     )
   );
 
@@ -1265,24 +1302,27 @@ export default function SupplierOrders() {
                           )}
 
                           {hasPermission('suppliers', 'delete') && (() => {
-                            const deleteProtectionReason = getDeleteProtectionReason(order);
-                            const deleteDisabled = Boolean(deleteProtectionReason)
-                              || deletingOrderId === order.id
+                            const cancelProtectionReason = getCancelProtectionReason(order);
+                            const cancelDisabled = Boolean(cancelProtectionReason)
+                              || cancellingOrderId === order.id
                               || updatingOrderId === order.id;
 
                             return (
                               <button
                                 type="button"
-                                onClick={() => setConfirmation({ type: 'delete', order })}
-                                disabled={deleteDisabled}
+                                onClick={() => {
+                                  setCancelReason('');
+                                  setConfirmation({ type: 'cancel', order });
+                                }}
+                                disabled={cancelDisabled}
                                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-red-50 px-4 py-2 text-xs font-black text-red-700 ring-1 ring-red-100 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:ring-slate-200"
-                                title={deleteProtectionReason || 'Eliminar pedido'}
-                                aria-label={deleteProtectionReason || `Eliminar pedido ${order.numero_pedido || order.id}`}
+                                title={cancelProtectionReason || 'Anular pedido'}
+                                aria-label={cancelProtectionReason || `Anular pedido ${order.numero_pedido || order.id}`}
                               >
-                                {deletingOrderId === order.id
+                                {cancellingOrderId === order.id
                                   ? <Loader2 size={15} className="animate-spin" />
-                                  : <Trash2 size={15} />}
-                                {deleteProtectionReason ? 'Protegido' : 'Eliminar'}
+                                  : <Ban size={15} />}
+                                {cancelProtectionReason ? 'Protegido' : 'Anular'}
                               </button>
                             );
                           })()}
@@ -1295,6 +1335,19 @@ export default function SupplierOrders() {
                     <div className="border-b border-slate-100 bg-amber-50/60 px-4 py-3 sm:px-5">
                       <p className="text-[9px] font-black uppercase tracking-[0.14em] text-amber-600">Observaciones</p>
                       <p className="mt-1 break-words text-sm text-amber-900">{order.notes}</p>
+                    </div>
+                  )}
+
+                  {order.estado === 'cancelado' && (
+                    <div className="border-b border-red-100 bg-red-50 px-4 py-4 sm:px-5">
+                      <p className="text-[9px] font-black uppercase tracking-[0.14em] text-red-600">Pedido anulado</p>
+                      <p className="mt-1 break-words text-sm font-bold text-red-900">
+                        {order.cancel_reason || 'Pedido cancelado por una operación relacionada.'}
+                      </p>
+                      <p className="mt-2 text-xs text-red-700">
+                        {order.cancelled_by ? `Por ${order.cancelled_by}` : 'Por el sistema'}
+                        {order.cancelled_at ? ` · ${formatBusinessDateTime(order.cancelled_at)}` : ''}
+                      </p>
                     </div>
                   )}
 
@@ -1420,7 +1473,7 @@ export default function SupplierOrders() {
                       {order.estado === 'cancelado' && (
                         <div className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-black text-red-700">
                           <AlertCircle size={15} />
-                          Cancelado por anulación de venta
+                          Pedido anulado
                         </div>
                       )}
                     </div>
@@ -1632,21 +1685,41 @@ export default function SupplierOrders() {
         <div className="fixed inset-0 z-[120] flex items-end bg-slate-950/65 backdrop-blur-sm sm:items-center sm:justify-center sm:p-4" role="dialog" aria-modal="true">
           <div className="w-full rounded-t-[28px] bg-white p-5 shadow-2xl sm:max-w-lg sm:rounded-[28px] sm:p-7">
             <div className={`flex h-14 w-14 items-center justify-center rounded-2xl ${
-              confirmation.type === 'delete'
+              confirmation.type === 'cancel'
                 ? 'bg-red-50 text-red-600'
                 : 'bg-emerald-50 text-emerald-600'
             }`}>
-              {confirmation.type === 'delete' ? <Trash2 size={26} /> : <CheckCircle2 size={26} />}
+              {confirmation.type === 'cancel' ? <Ban size={26} /> : <CheckCircle2 size={26} />}
             </div>
 
             <h2 className="mt-5 text-xl font-black text-slate-950">
-              {confirmation.type === 'delete' ? 'Eliminar pedido' : 'Completar entrega'}
+              {confirmation.type === 'cancel' ? 'Anular pedido' : 'Completar entrega'}
             </h2>
             <p className="mt-2 break-words text-sm leading-6 text-slate-500">
-              {confirmation.type === 'delete'
-                ? `Se eliminará el pedido #${confirmation.order.numero_pedido || confirmation.order.id} de ${confirmation.order.cliente}. Esta acción no se puede deshacer.`
+              {confirmation.type === 'cancel'
+                ? `El pedido #${confirmation.order.numero_pedido || confirmation.order.id} quedará anulado y se conservará como historial.`
                 : 'Se completará la entrega. Si el pedido proviene de una venta registrada, no se duplicará; si proviene del portal, se cargará el stock necesario para poder entregarlo.'}
             </p>
+
+            {confirmation.type === 'cancel' && (
+              <label className="mt-5 block space-y-2">
+                <span className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+                  Motivo obligatorio
+                </span>
+                <textarea
+                  value={cancelReason}
+                  onChange={event => setCancelReason(event.target.value)}
+                  maxLength={500}
+                  rows={4}
+                  autoFocus
+                  placeholder="Ejemplo: pedido duplicado o proveedor sin disponibilidad"
+                  className="w-full resize-y rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm outline-none transition focus:border-red-400 focus:bg-white focus:ring-4 focus:ring-red-100"
+                />
+                <p className="text-right text-[11px] font-bold text-slate-400">
+                  {cancelReason.length}/500
+                </p>
+              </label>
+            )}
 
             <div className="mt-6 grid grid-cols-1 gap-2 sm:grid-cols-2">
               <button
@@ -1660,15 +1733,15 @@ export default function SupplierOrders() {
               <button
                 type="button"
                 onClick={() => {
-                  if (confirmation.type === 'delete') {
-                    deleteOrder(confirmation.order.id);
+                  if (confirmation.type === 'cancel') {
+                    cancelOrder(confirmation.order);
                   } else {
                     handleCompleteSale(confirmation.order.id);
                   }
                 }}
-                disabled={confirmationBusy}
+                disabled={confirmationBusy || (confirmation.type === 'cancel' && cancelReason.trim().length < 3)}
                 className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-black text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                  confirmation.type === 'delete'
+                  confirmation.type === 'cancel'
                     ? 'bg-red-600 hover:bg-red-700'
                     : 'bg-emerald-600 hover:bg-emerald-700'
                 }`}
@@ -1676,8 +1749,8 @@ export default function SupplierOrders() {
                 {confirmationBusy && <Loader2 size={17} className="animate-spin" />}
                 {confirmationBusy
                   ? 'Procesando…'
-                  : confirmation.type === 'delete'
-                    ? 'Eliminar pedido'
+                  : confirmation.type === 'cancel'
+                    ? 'Confirmar anulación'
                     : 'Completar y actualizar stock'}
               </button>
             </div>

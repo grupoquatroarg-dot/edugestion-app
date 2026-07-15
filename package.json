@@ -11,14 +11,15 @@
     "lint": "tsc --noEmit",
     "check:encoding": "node scripts/check-encoding.mjs",
     "check:audit": "tsx scripts/check-functional-audit.ts",
-    "validate:audit": "npm run check:encoding && npm run check:routes && npm run check:sql-parameters && npm run check:inventory-endpoints && npm run check:purchase-invoice-traceability && npm run check:purchase-invoice-cancellation && npm run check:sale-cancellation && npm run check:audit && npm run lint && npm run build",
+    "validate:audit": "npm run check:encoding && npm run check:routes && npm run check:sql-parameters && npm run check:inventory-endpoints && npm run check:purchase-invoice-traceability && npm run check:purchase-invoice-cancellation && npm run check:supplier-order-cancellation && npm run check:sale-cancellation && npm run check:audit && npm run lint && npm run build",
     "start": "tsx server.ts",
     "check:routes": "node scripts/check-vercel-routes.mjs",
     "check:inventory-endpoints": "tsx scripts/check-product-inventory-endpoints.ts",
     "check:sql-parameters": "node scripts/check-sql-parameters.mjs",
     "check:sale-cancellation": "tsx scripts/check-sale-cancellation.ts",
     "check:purchase-invoice-traceability": "tsx scripts/check-purchase-invoice-traceability.ts",
-    "check:purchase-invoice-cancellation": "tsx scripts/check-purchase-invoice-cancellation.ts"
+    "check:purchase-invoice-cancellation": "tsx scripts/check-purchase-invoice-cancellation.ts",
+    "check:supplier-order-cancellation": "tsx scripts/check-supplier-order-cancellation.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

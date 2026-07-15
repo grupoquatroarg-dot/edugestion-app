@@ -163,8 +163,26 @@ export function initDb() {
       estado TEXT DEFAULT 'pendiente',
       notes TEXT,
       stock_actualizado INTEGER DEFAULT 0,
+      customer_order_id INTEGER,
+      cancelled_at DATETIME,
+      cancelled_by TEXT,
+      cancel_reason TEXT,
+      cancellation_source TEXT,
+      cancelled_from_status TEXT,
       FOREIGN KEY (cliente_id) REFERENCES clientes(id),
       FOREIGN KEY (sale_id) REFERENCES sales(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS supplier_order_cancellations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      supplier_order_id INTEGER NOT NULL UNIQUE,
+      motivo TEXT NOT NULL,
+      cancelado_por TEXT NOT NULL,
+      cancelado_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      estado_original TEXT NOT NULL,
+      cancellation_source TEXT NOT NULL DEFAULT 'manual',
+      snapshot TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (supplier_order_id) REFERENCES supplier_orders(id)
     );
 
     CREATE TABLE IF NOT EXISTS supplier_order_items (
@@ -408,6 +426,13 @@ export function initDb() {
   try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN purchase_invoice_id INTEGER"); } catch (e) {}
   try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN purchase_invoice_cancellation_id INTEGER"); } catch (e) {}
   try { db.exec("ALTER TABLE cheques ADD COLUMN purchase_invoice_id INTEGER"); } catch (e) {}
+
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN customer_order_id INTEGER"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN cancelled_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN cancelled_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN cancel_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN cancellation_source TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN cancelled_from_status TEXT"); } catch (e) {}
 
   try { db.exec("ALTER TABLE sales ADD COLUMN costo_total REAL DEFAULT 0"); } catch (e) {}
   try { db.exec("ALTER TABLE sales ADD COLUMN ganancia REAL DEFAULT 0"); } catch (e) {}

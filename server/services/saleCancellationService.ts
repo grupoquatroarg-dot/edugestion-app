@@ -412,7 +412,7 @@ export const saleCancellationService = {
       }
 
       const supplierOrdersResult = await client.query(
-        `SELECT id, numero_pedido, estado, stock_actualizado, notes
+        `SELECT id, numero_pedido, cliente, cliente_id, sale_id, customer_order_id, estado, stock_actualizado, notes
          FROM supplier_orders
          WHERE sale_id = $1
          ORDER BY id ASC
@@ -606,11 +606,43 @@ export const saleCancellationService = {
       for (const order of supplierOrdersResult.rows) {
         if (['pendiente', 'pedido_realizado', 'auditar_pedido'].includes(String(order.estado))) {
           await client.query(
+            `INSERT INTO supplier_order_cancellations (
+               supplier_order_id,
+               motivo,
+               cancelado_por,
+               estado_original,
+               cancellation_source,
+               snapshot
+             )
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+             ON CONFLICT (supplier_order_id) DO NOTHING`,
+            [
+              order.id,
+              cancellationNote,
+              normalizedUser,
+              String(order.estado),
+              'sale_cancellation',
+              JSON.stringify({ order }),
+            ]
+          );
+
+          await client.query(
             `UPDATE supplier_orders
              SET estado = 'cancelado',
-                 notes = $1
-             WHERE id = $2`,
-            [appendAuditNote(order.notes, cancellationNote), order.id]
+                 notes = $1,
+                 cancelled_at = now(),
+                 cancelled_by = $2,
+                 cancel_reason = $3,
+                 cancellation_source = 'sale_cancellation',
+                 cancelled_from_status = $4
+             WHERE id = $5`,
+            [
+              appendAuditNote(order.notes, cancellationNote),
+              normalizedUser,
+              cancellationNote,
+              String(order.estado),
+              order.id,
+            ]
           );
           cancelledSupplierOrderIds.push(toNumber(order.id));
         }

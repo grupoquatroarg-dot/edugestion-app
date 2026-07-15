@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { supplierOrderRepository } from '../repositories/supplierOrderRepository.js';
 import { supplierOrderService } from '../services/supplierOrderService.js';
+import { supplierOrderCancellationService } from '../services/supplierOrderCancellationService.js';
 import { requirePermission } from '../middleware/authMiddleware.js';
 import { validate } from '../middleware/validate.js';
 import { z } from 'zod';
@@ -48,6 +49,25 @@ router.post('/:id/complete-sale', requirePermission('suppliers', 'edit'), (req, 
     usuario: (req.session as any).userName || 'Sistema'
   });
   return sendSuccess(res, result, "Venta completada");
+});
+
+router.post('/:id/cancel', requirePermission('suppliers', 'delete'), async (req, res) => {
+  try {
+    const result = await supplierOrderCancellationService.cancelSupplierOrder({
+      supplierOrderId: Number(req.params.id),
+      motivo: String(req.body?.motivo || ''),
+      usuario: (req as any).user?.userName || 'Sistema',
+    });
+
+    return sendSuccess(res, result, 'Pedido anulado correctamente');
+  } catch (error: any) {
+    return sendError(
+      res,
+      error?.message || 'No se pudo anular el pedido',
+      error?.statusCode || 400,
+      error?.errors || []
+    );
+  }
 });
 
 export default router;

@@ -9,6 +9,7 @@ import { normalizeBusinessDateForStorage } from "../server/utils/businessDate.js
 import { saleTraceService } from "../server/services/saleTraceService.js";
 import type { SaleStockAllocationInput } from "../server/services/saleTraceService.js";
 import { saleCancellationService } from "../server/services/saleCancellationService.js";
+import { supplierOrderCancellationService } from "../server/services/supplierOrderCancellationService.js";
 
 const saleSchema = z.object({
   cliente_id: z.number(),
@@ -65,6 +66,10 @@ const supplierOrderItemsSchema = z.object({
 const supplierOrderCompleteSchema = z.object({
   metodo_pago: z.string().optional(),
   monto_pagado: z.number().nonnegative().optional(),
+});
+
+const supplierOrderCancellationSchema = z.object({
+  motivo: z.string().trim().min(3, "El motivo de anulación es obligatorio").max(500, "El motivo es demasiado extenso"),
 });
 
 const customerOrderApproveSchema = z.object({
@@ -252,6 +257,13 @@ const mapSupplierOrder = (row: any, items: any[] = []) => {
     sale_monto_pagado: salePaid,
     sale_monto_pendiente: toNumber(row.sale_monto_pendiente),
     sale_metodo_pago: saleMetodoPago,
+    sale_estado: row.sale_estado || null,
+    customer_order_estado: row.customer_order_estado || null,
+    cancelled_at: row.cancelled_at || null,
+    cancelled_by: row.cancelled_by || null,
+    cancel_reason: row.cancel_reason || null,
+    cancellation_source: row.cancellation_source || null,
+    cancelled_from_status: row.cancelled_from_status || null,
     productos,
   };
 };
@@ -301,12 +313,16 @@ const handleSupplierOrders = async (req: any, res: any) => {
         `
           SELECT
             so.id, so.numero_pedido, so.cliente, so.cliente_id, so.sale_id, so.customer_order_id, so.fecha, so.estado, so.notes, so.stock_actualizado,
+            so.cancelled_at, so.cancelled_by, so.cancel_reason, so.cancellation_source, so.cancelled_from_status,
             s.total AS sale_total,
             s.monto_pagado AS sale_monto_pagado,
             s.monto_pendiente AS sale_monto_pendiente,
-            s.metodo_pago AS sale_metodo_pago
+            s.metodo_pago AS sale_metodo_pago,
+            s.estado AS sale_estado,
+            co.estado AS customer_order_estado
           FROM supplier_orders so
           LEFT JOIN sales s ON s.id = so.sale_id
+          LEFT JOIN customer_orders co ON co.id = so.customer_order_id
           ORDER BY so.fecha DESC, so.id DESC
         `
       );
@@ -333,12 +349,16 @@ const handleSupplierOrders = async (req: any, res: any) => {
         `
           SELECT
             so.id, so.numero_pedido, so.cliente, so.cliente_id, so.sale_id, so.customer_order_id, so.fecha, so.estado, so.notes, so.stock_actualizado,
+            so.cancelled_at, so.cancelled_by, so.cancel_reason, so.cancellation_source, so.cancelled_from_status,
             s.total AS sale_total,
             s.monto_pagado AS sale_monto_pagado,
             s.monto_pendiente AS sale_monto_pendiente,
-            s.metodo_pago AS sale_metodo_pago
+            s.metodo_pago AS sale_metodo_pago,
+            s.estado AS sale_estado,
+            co.estado AS customer_order_estado
           FROM supplier_orders so
           LEFT JOIN sales s ON s.id = so.sale_id
+          LEFT JOIN customer_orders co ON co.id = so.customer_order_id
           WHERE so.id = $1
           LIMIT 1
         `,
@@ -499,66 +519,47 @@ const handleSupplierOrders = async (req: any, res: any) => {
   if (endpoint === "supplier-order" && req.method === "DELETE") {
     const user = await requirePermission(req, res, "suppliers", "delete");
     if (!user) return;
+
+    return sendError(
+      res,
+      "Los pedidos ya no se eliminan. Utilice Anular pedido para conservar el historial.",
+      409
+    );
+  }
+
+  if (endpoint === "supplier-order-cancel" && req.method === "POST") {
+    const user = await requirePermission(req, res, "suppliers", "delete");
+    if (!user) return;
     if (!id) return sendError(res, "ID de pedido inválido", 400);
 
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-
-      const orderResult = await client.query(
-        `SELECT id, estado, sale_id, customer_order_id, stock_actualizado
-         FROM supplier_orders
-         WHERE id = $1
-         LIMIT 1
-         FOR UPDATE`,
-        [id]
+    const parsed = supplierOrderCancellationSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(
+        res,
+        "Validation failed",
+        400,
+        parsed.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        }))
       );
+    }
 
-      if (!orderResult.rowCount) {
-        await client.query("ROLLBACK");
-        return sendError(res, "Pedido no encontrado", 404);
-      }
+    try {
+      const result = await supplierOrderCancellationService.cancelSupplierOrder({
+        supplierOrderId: id,
+        motivo: parsed.data.motivo,
+        usuario: user.userName || "Sistema",
+      });
 
-      const order = orderResult.rows[0];
-      const stockUpdated = toNumber(order.stock_actualizado) === 1;
-
-      if (["entregado", "cancelado"].includes(String(order.estado)) || stockUpdated) {
-        await client.query("ROLLBACK");
-        return sendError(
-          res,
-          "No se puede eliminar un pedido entregado o cancelado porque debe conservarse su historial.",
-          409
-        );
-      }
-
-      if (order.sale_id !== null && order.sale_id !== undefined) {
-        await client.query("ROLLBACK");
-        return sendError(
-          res,
-          "No se puede eliminar este pedido porque está vinculado a una venta. Primero deberá anularse la operación de origen.",
-          409
-        );
-      }
-
-      if (order.customer_order_id !== null && order.customer_order_id !== undefined) {
-        await client.query("ROLLBACK");
-        return sendError(
-          res,
-          "No se puede eliminar este pedido porque está vinculado a un pedido de cliente.",
-          409
-        );
-      }
-
-      await client.query(`DELETE FROM supplier_order_items WHERE order_id = $1`, [id]);
-      await client.query(`DELETE FROM supplier_orders WHERE id = $1`, [id]);
-      await client.query("COMMIT");
-
-      return sendSuccess(res, null, "Pedido eliminado");
+      return sendSuccess(res, result, "Pedido anulado correctamente");
     } catch (error: any) {
-      await client.query("ROLLBACK");
-      return sendError(res, error?.message || "Error al eliminar pedido", 400);
-    } finally {
-      client.release();
+      return sendError(
+        res,
+        error?.message || "No se pudo anular el pedido",
+        error?.statusCode || 400,
+        error?.errors || []
+      );
     }
   }
 
@@ -1623,6 +1624,7 @@ export default async function handler(req: any, res: any) {
       "supplier-order-status",
       "supplier-order-items",
       "supplier-order-complete",
+      "supplier-order-cancel",
     ].includes(endpoint)
   ) {
     return handleSupplierOrders(req, res);
