@@ -187,13 +187,18 @@ router.get("/", requirePermission('dashboard', 'view'), validate(reportParamsSch
       SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE 0 END) as ingresos,
       SUM(CASE WHEN tipo = 'egreso' THEN monto ELSE 0 END) as egresos
     FROM movimientos_financieros
-    WHERE fecha BETWEEN ? AND ?
+    WHERE COALESCE(estado, 'Activo') <> 'Anulado'
+      AND COALESCE(origen, '') <> 'anulacion_egreso_manual'
+      AND fecha BETWEEN ? AND ?
   `).get(fromDate, toDate) as any;
 
   const expensesByCategory = db.prepare(`
     SELECT categoria as name, SUM(monto) as value
     FROM movimientos_financieros
-    WHERE tipo = 'egreso' AND fecha BETWEEN ? AND ?
+    WHERE tipo = 'egreso'
+      AND COALESCE(estado, 'Activo') <> 'Anulado'
+      AND COALESCE(origen, '') <> 'anulacion_egreso_manual'
+      AND fecha BETWEEN ? AND ?
     GROUP BY categoria
   `).all(fromDate, toDate);
 
@@ -203,7 +208,9 @@ router.get("/", requirePermission('dashboard', 'view'), validate(reportParamsSch
       SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE 0 END) as ingresos,
       SUM(CASE WHEN tipo = 'egreso' THEN monto ELSE 0 END) as egresos
     FROM movimientos_financieros
-    WHERE fecha BETWEEN ? AND ?
+    WHERE COALESCE(estado, 'Activo') <> 'Anulado'
+      AND COALESCE(origen, '') <> 'anulacion_egreso_manual'
+      AND fecha BETWEEN ? AND ?
     GROUP BY date(fecha)
     ORDER BY fecha ASC
   `).all(fromDate, toDate);

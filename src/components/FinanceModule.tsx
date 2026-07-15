@@ -29,7 +29,8 @@ import {
   RotateCcw,
   BadgeDollarSign,
   Banknote,
-  Smartphone
+  Smartphone,
+  Ban
 } from 'lucide-react';
 import { getSocket } from '../utils/socket';
 import { useAuth } from '../contexts/AuthContext';
@@ -48,7 +49,7 @@ type Movimiento = {
   fecha: string;
   fecha_dia?: string;
   tipo: 'ingreso' | 'egreso';
-  origen: 'venta' | 'pago_cc' | 'egreso_manual' | 'ajuste' | 'compra' | 'cobranza' | 'anulacion_venta' | 'anulacion_compra';
+  origen: 'venta' | 'pago_cc' | 'egreso_manual' | 'ajuste' | 'compra' | 'cobranza' | 'anulacion_venta' | 'anulacion_compra' | 'anulacion_egreso_manual';
   cliente_id: number | null;
   venta_id: number | null;
   descripcion: string;
@@ -57,6 +58,13 @@ type Movimiento = {
   monto: number;
   usuario: string;
   nombre_cliente?: string;
+  estado?: string;
+  reversion_version?: number;
+  anulada_at?: string | null;
+  anulada_por?: string | null;
+  anulacion_motivo?: string | null;
+  reversed_movement_id?: number | null;
+  financial_movement_cancellation_id?: number | null;
 };
 
 const readApiJson = async (response: Response) => {
@@ -99,6 +107,10 @@ export default function FinanceModule() {
   const [updatingChequeId, setUpdatingChequeId] = useState<number | null>(null);
   const [egresoError, setEgresoError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [cancellationTarget, setCancellationTarget] = useState<Movimiento | null>(null);
+  const [cancellationReason, setCancellationReason] = useState('');
+  const [cancellationError, setCancellationError] = useState('');
+  const [isCancellingExpense, setIsCancellingExpense] = useState(false);
   const [egresoForm, setEgresoForm] = useState({
     monto: '',
     descripcion: '',
@@ -213,23 +225,31 @@ export default function FinanceModule() {
     }
   };
 
+  const metricMovements = useMemo(
+    () => movimientos.filter((movement) =>
+      String(movement.estado || 'Activo').toLowerCase() !== 'anulado' &&
+      movement.origen !== 'anulacion_egreso_manual'
+    ),
+    [movimientos]
+  );
+
   const stats = useMemo(() => {
     const todayStr = getBusinessDateInputValue();
     const monthStr = todayStr.slice(0, 7);
 
-    const ingresosDia = movimientos
+    const ingresosDia = metricMovements
       .filter(m => m.tipo === 'ingreso' && (m.fecha_dia || getBusinessDateKey(m.fecha)) === todayStr)
       .reduce((acc, m) => acc + m.monto, 0);
     
-    const egresosDia = movimientos
+    const egresosDia = metricMovements
       .filter(m => m.tipo === 'egreso' && (m.fecha_dia || getBusinessDateKey(m.fecha)) === todayStr)
       .reduce((acc, m) => acc + m.monto, 0);
 
-    const ingresosMes = movimientos
+    const ingresosMes = metricMovements
       .filter(m => m.tipo === 'ingreso' && (m.fecha_dia || getBusinessDateKey(m.fecha)).startsWith(monthStr))
       .reduce((acc, m) => acc + m.monto, 0);
     
-    const egresosMes = movimientos
+    const egresosMes = metricMovements
       .filter(m => m.tipo === 'egreso' && (m.fecha_dia || getBusinessDateKey(m.fecha)).startsWith(monthStr))
       .reduce((acc, m) => acc + m.monto, 0);
 
@@ -241,11 +261,11 @@ export default function FinanceModule() {
       egresosMes,
       resultadoMes: ingresosMes - egresosMes
     };
-  }, [movimientos]);
+  }, [metricMovements]);
 
   const cajaDiaria = useMemo(() => {
-    return movimientos.filter(m => (m.fecha_dia || getBusinessDateKey(m.fecha)) === selectedDate);
-  }, [movimientos, selectedDate]);
+    return metricMovements.filter(m => (m.fecha_dia || getBusinessDateKey(m.fecha)) === selectedDate);
+  }, [metricMovements, selectedDate]);
 
   const cajaStats = useMemo(() => {
     const ingresos = cajaDiaria.filter(m => m.tipo === 'ingreso');
@@ -277,7 +297,7 @@ export default function FinanceModule() {
   }, [cajaDiaria]);
 
   const egresosList = useMemo(() => {
-    return movimientos.filter(m => m.tipo === 'egreso');
+    return movimientos.filter(m => m.tipo === 'egreso' && m.origen !== 'anulacion_egreso_manual');
   }, [movimientos]);
 
   const handleUpdateChequeStatus = async (id: number, nuevoEstado: string) => {
@@ -301,6 +321,57 @@ export default function FinanceModule() {
       setDataError(error?.message || 'No se pudo actualizar el estado del cheque.');
     } finally {
       setUpdatingChequeId(null);
+    }
+  };
+
+  const canCancelManualExpense = (movement: Movimiento) =>
+    movement.tipo === 'egreso' &&
+    movement.origen === 'egreso_manual' &&
+    Number(movement.reversion_version || 0) === 1 &&
+    String(movement.estado || 'Activo').toLowerCase() !== 'anulado';
+
+  const openExpenseCancellation = (movement: Movimiento) => {
+    setCancellationTarget(movement);
+    setCancellationReason('');
+    setCancellationError('');
+  };
+
+  const closeExpenseCancellation = () => {
+    if (isCancellingExpense) return;
+    setCancellationTarget(null);
+    setCancellationReason('');
+    setCancellationError('');
+  };
+
+  const handleCancelManualExpense = async () => {
+    if (!cancellationTarget || isCancellingExpense) return;
+
+    const reason = cancellationReason.trim();
+    if (reason.length < 3) {
+      setCancellationError('El motivo debe tener al menos 3 caracteres.');
+      return;
+    }
+
+    setIsCancellingExpense(true);
+    setCancellationError('');
+
+    try {
+      const response = await apiFetch(
+        `/api/finanzas?endpoint=manual-expense-cancel&id=${cancellationTarget.id}`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ motivo: reason }),
+        }
+      );
+      await readApiJson(response);
+      setSuccessMessage('Egreso anulado correctamente.');
+      setCancellationTarget(null);
+      setCancellationReason('');
+      await Promise.all([fetchMovimientos(), fetchCheques()]);
+    } catch (error: any) {
+      setCancellationError(error?.message || 'No se pudo anular el egreso.');
+    } finally {
+      setIsCancellingExpense(false);
     }
   };
 
@@ -385,7 +456,8 @@ export default function FinanceModule() {
       egreso_manual: 'Egreso manual',
       ajuste: 'Ajuste',
       anulacion_venta: 'Anulación de venta',
-      anulacion_compra: 'Anulación de compra'
+      anulacion_compra: 'Anulación de compra',
+      anulacion_egreso_manual: 'Anulación de egreso manual'
     };
 
     return labels[value || ''] || (value || 'Sin origen').replace(/_/g, ' ');
@@ -699,7 +771,7 @@ export default function FinanceModule() {
 
                 <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">
                   {cajaDiaria.length > 0 ? cajaDiaria.map((movement) => (
-                    <article key={movement.id} className="min-w-0 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <article key={movement.id} className={`min-w-0 rounded-3xl border p-5 shadow-sm ${String(movement.estado || 'Activo').toLowerCase() === 'anulado' ? 'border-red-200 bg-red-50/60' : 'border-slate-200 bg-white'}`}>
                       <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                         <div className="flex min-w-0 items-start gap-3">
                           <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${
@@ -777,7 +849,7 @@ export default function FinanceModule() {
 
                 <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 2xl:grid-cols-3">
                   {egresosList.length > 0 ? egresosList.map((expense) => (
-                    <article key={expense.id} className="min-w-0 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <article key={expense.id} className={`min-w-0 rounded-3xl border p-5 shadow-sm ${String(expense.estado || 'Activo').toLowerCase() === 'anulado' ? 'border-red-200 bg-red-50/60' : 'border-slate-200 bg-white'}`}>
                       <div className="flex min-w-0 items-start justify-between gap-4">
                         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-red-50 text-red-700">
                           <TrendingDown size={20} />
@@ -789,7 +861,12 @@ export default function FinanceModule() {
                           </span>
                         </div>
                       </div>
-                      <p className="mt-5 break-words text-sm font-black text-slate-950">{expense.descripcion}</p>
+                      <div className="mt-5 flex flex-wrap items-center gap-2">
+                        <p className={`break-words text-sm font-black ${String(expense.estado || 'Activo').toLowerCase() === 'anulado' ? 'text-red-900 line-through' : 'text-slate-950'}`}>{expense.descripcion}</p>
+                        {String(expense.estado || 'Activo').toLowerCase() === 'anulado' && (
+                          <span className="rounded-full border border-red-200 bg-red-100 px-3 py-1 text-[10px] font-black uppercase tracking-wide text-red-700">Anulado</span>
+                        )}
+                      </div>
                       <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 min-[420px]:grid-cols-2">
                         <div className="min-w-0 rounded-2xl bg-slate-50 p-3">
                           <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Fecha</p>
@@ -800,6 +877,34 @@ export default function FinanceModule() {
                           <p className="mt-1 break-words text-sm font-bold text-slate-800">{paymentLabel(expense.forma_pago)}</p>
                         </div>
                       </div>
+
+                      {String(expense.estado || 'Activo').toLowerCase() === 'anulado' && (
+                        <div className="mt-4 rounded-2xl border border-red-200 bg-white p-4 text-sm text-red-800">
+                          <p className="font-black">Egreso anulado</p>
+                          <p className="mt-1 break-words">Motivo: {expense.anulacion_motivo || 'Sin motivo informado'}</p>
+                          <p className="mt-1 text-xs font-bold text-red-600">
+                            {expense.anulada_por || 'Sistema'}
+                            {expense.anulada_at ? ` · ${formatDate(expense.anulada_at, true)}` : ''}
+                          </p>
+                        </div>
+                      )}
+
+                      {hasPermission('current_accounts', 'delete') && canCancelManualExpense(expense) && (
+                        <button
+                          type="button"
+                          onClick={() => openExpenseCancellation(expense)}
+                          className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-black uppercase tracking-wide text-red-700 hover:bg-red-100"
+                        >
+                          <Ban size={17} />
+                          Anular egreso
+                        </button>
+                      )}
+
+                      {expense.origen === 'egreso_manual' && Number(expense.reversion_version || 0) !== 1 && String(expense.estado || 'Activo').toLowerCase() !== 'anulado' && expense.categoria !== 'Cheque Rechazado' && (
+                        <p className="mt-4 rounded-2xl bg-amber-50 p-3 text-xs font-bold text-amber-800">
+                          Egreso histórico sin trazabilidad para anular.
+                        </p>
+                      )}
                     </article>
                   )) : (
                     <div className="col-span-full rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center">
@@ -878,7 +983,7 @@ export default function FinanceModule() {
 
                 <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">
                   {filteredMovimientos.length > 0 ? filteredMovimientos.map((movement) => (
-                    <article key={movement.id} className="min-w-0 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <article key={movement.id} className={`min-w-0 rounded-3xl border p-5 shadow-sm ${String(movement.estado || 'Activo').toLowerCase() === 'anulado' ? 'border-red-200 bg-red-50/60' : 'border-slate-200 bg-white'}`}>
                       <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                         <div className="flex min-w-0 items-start gap-3">
                           <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${
@@ -900,8 +1005,13 @@ export default function FinanceModule() {
                               <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600">
                                 {originLabel(movement.origen)}
                               </span>
+                              {String(movement.estado || 'Activo').toLowerCase() === 'anulado' && (
+                                <span className="rounded-full border border-red-200 bg-red-100 px-3 py-1 text-[10px] font-black uppercase tracking-wide text-red-700">
+                                  Anulado
+                                </span>
+                              )}
                             </div>
-                            <p className="mt-3 break-words text-sm font-black text-slate-950">{movement.descripcion}</p>
+                            <p className={`mt-3 break-words text-sm font-black ${String(movement.estado || 'Activo').toLowerCase() === 'anulado' ? 'text-red-900 line-through' : 'text-slate-950'}`}>{movement.descripcion}</p>
                           </div>
                         </div>
                         <p className={`shrink-0 break-words text-xl font-black ${
@@ -925,6 +1035,34 @@ export default function FinanceModule() {
                           <p className="mt-1 break-words text-sm font-bold text-slate-800">{movement.nombre_cliente || 'Sin cliente asociado'}</p>
                         </div>
                       </div>
+
+                      {String(movement.estado || 'Activo').toLowerCase() === 'anulado' && (
+                        <div className="mt-4 rounded-2xl border border-red-200 bg-white p-4 text-sm text-red-800">
+                          <p className="font-black">Egreso anulado</p>
+                          <p className="mt-1 break-words">Motivo: {movement.anulacion_motivo || 'Sin motivo informado'}</p>
+                          <p className="mt-1 text-xs font-bold text-red-600">
+                            {movement.anulada_por || 'Sistema'}
+                            {movement.anulada_at ? ` · ${formatDate(movement.anulada_at, true)}` : ''}
+                          </p>
+                        </div>
+                      )}
+
+                      {hasPermission('current_accounts', 'delete') && canCancelManualExpense(movement) && (
+                        <button
+                          type="button"
+                          onClick={() => openExpenseCancellation(movement)}
+                          className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-black uppercase tracking-wide text-red-700 hover:bg-red-100"
+                        >
+                          <Ban size={17} />
+                          Anular egreso
+                        </button>
+                      )}
+
+                      {movement.tipo === 'egreso' && movement.origen === 'egreso_manual' && Number(movement.reversion_version || 0) !== 1 && String(movement.estado || 'Activo').toLowerCase() !== 'anulado' && movement.categoria !== 'Cheque Rechazado' && (
+                        <p className="mt-4 rounded-2xl bg-amber-50 p-3 text-xs font-bold text-amber-800">
+                          Egreso histórico sin trazabilidad para anular.
+                        </p>
+                      )}
                     </article>
                   )) : (
                     <div className="col-span-full rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center">
@@ -1210,6 +1348,77 @@ export default function FinanceModule() {
                 className="min-h-11 w-full rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black uppercase tracking-wide text-white hover:bg-slate-800"
               >
                 Cerrar detalle
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {cancellationTarget && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-4">
+          <div className="w-full max-w-lg overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <header className="flex items-start justify-between gap-4 border-b border-slate-100 p-5 sm:p-6">
+              <div className="min-w-0">
+                <h3 className="text-xl font-black text-slate-950">Anular egreso manual</h3>
+                <p className="mt-1 break-words text-sm text-slate-500">
+                  {cancellationTarget.descripcion} · {formatCurrency(cancellationTarget.monto)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeExpenseCancellation}
+                disabled={isCancellingExpense}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-slate-500 hover:bg-slate-100 disabled:opacity-50"
+                aria-label="Cerrar anulación de egreso"
+              >
+                <X size={20} />
+              </button>
+            </header>
+
+            <div className="space-y-4 p-5 sm:p-6">
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-relaxed text-amber-900">
+                El egreso permanecerá como historial. Se creará un contramovimiento y, si utilizó un cheque todavía entregado al proveedor, volverá a quedar en cartera.
+              </div>
+
+              <label className="block">
+                <span className="mb-2 block text-[11px] font-black uppercase tracking-wide text-slate-500">Motivo obligatorio</span>
+                <textarea
+                  value={cancellationReason}
+                  onChange={(event) => {
+                    setCancellationReason(event.target.value.slice(0, 500));
+                    setCancellationError('');
+                  }}
+                  rows={4}
+                  maxLength={500}
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                  placeholder="Ej.: Egreso cargado por duplicado"
+                />
+              </label>
+
+              {cancellationError && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700" role="alert">
+                  {cancellationError}
+                </div>
+              )}
+            </div>
+
+            <footer className="grid grid-cols-1 gap-3 border-t border-slate-100 p-5 sm:grid-cols-2 sm:p-6">
+              <button
+                type="button"
+                onClick={closeExpenseCancellation}
+                disabled={isCancellingExpense}
+                className="min-h-12 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black uppercase tracking-wide text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+              >
+                Volver
+              </button>
+              <button
+                type="button"
+                onClick={handleCancelManualExpense}
+                disabled={isCancellingExpense || cancellationReason.trim().length < 3}
+                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-red-600 px-4 py-3 text-sm font-black uppercase tracking-wide text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isCancellingExpense ? <Loader2 size={18} className="animate-spin" /> : <Ban size={18} />}
+                {isCancellingExpense ? 'Anulando…' : 'Confirmar anulación'}
               </button>
             </footer>
           </div>

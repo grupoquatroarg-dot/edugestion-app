@@ -3,6 +3,7 @@ import { providerRepository } from "../server/repositories/providerRepository.js
 import { UserRepository } from "../server/repositories/userRepository.js";
 import { verifyToken } from "../server/utils/jwt.js";
 import { sendError, sendSuccess } from "../server/utils/response.js";
+import { manualExpenseCancellationService } from "../server/services/manualExpenseCancellationService.js";
 
 const getBody = (req: any) => {
   if (req.body && typeof req.body === "object") return req.body;
@@ -28,6 +29,7 @@ const permissionKeyByAction = {
   view: "can_view",
   create: "can_create",
   edit: "can_edit",
+  delete: "can_delete",
 } as const;
 
 const requireCurrentAccountsPermission = async (req: any, res: any, action: keyof typeof permissionKeyByAction) => {
@@ -133,6 +135,35 @@ export default async function handler(req: any, res: any) {
       return sendSuccess(res, null, "Egreso registrado exitosamente", 201);
     } catch (error: any) {
       return sendError(res, error?.message || "Error al registrar egreso", error?.statusCode || 400, error?.errors || []);
+    }
+  }
+
+
+  if (req.method === "POST" && endpoint === "manual-expense-cancel") {
+    const user = await requireCurrentAccountsPermission(req, res, "delete");
+    if (!user) return;
+
+    const movementId = Number(req.query?.id);
+    const body = getBody(req);
+
+    if (!Number.isInteger(movementId) || movementId <= 0) {
+      return sendError(res, "ID de movimiento inválido", 400);
+    }
+
+    try {
+      const result = await manualExpenseCancellationService.cancelManualExpense({
+        movementId,
+        motivo: body.motivo,
+        usuario: user.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Egreso anulado correctamente");
+    } catch (error: any) {
+      return sendError(
+        res,
+        error?.message || "No se pudo anular el egreso",
+        error?.statusCode || 400,
+        error?.errors || []
+      );
     }
   }
 

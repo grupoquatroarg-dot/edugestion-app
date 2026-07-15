@@ -467,7 +467,8 @@ export default async function handler(req: any, res: any) {
               COALESCE(SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE 0 END), 0) AS ingresos,
               COALESCE(SUM(CASE WHEN tipo = 'egreso' THEN monto ELSE 0 END), 0) AS egresos
             FROM movimientos_financieros
-            WHERE COALESCE(estado, '') <> 'Anulada'
+            WHERE COALESCE(estado, 'Activo') <> 'Anulado'
+              AND COALESCE(origen, '') <> 'anulacion_egreso_manual'
               AND DATE(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
           `,
           [fromDate, toDate]
@@ -477,7 +478,10 @@ export default async function handler(req: any, res: any) {
           `
             SELECT categoria AS name, COALESCE(SUM(monto), 0) AS value
             FROM movimientos_financieros
-            WHERE tipo = 'egreso' AND DATE(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
+            WHERE tipo = 'egreso'
+              AND COALESCE(estado, 'Activo') <> 'Anulado'
+              AND COALESCE(origen, '') <> 'anulacion_egreso_manual'
+              AND DATE(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
             GROUP BY categoria
             ORDER BY value DESC
           `,
@@ -491,7 +495,8 @@ export default async function handler(req: any, res: any) {
               COALESCE(SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE 0 END), 0) AS ingresos,
               COALESCE(SUM(CASE WHEN tipo = 'egreso' THEN monto ELSE 0 END), 0) AS egresos
             FROM movimientos_financieros
-            WHERE COALESCE(estado, '') <> 'Anulada'
+            WHERE COALESCE(estado, 'Activo') <> 'Anulado'
+              AND COALESCE(origen, '') <> 'anulacion_egreso_manual'
               AND DATE(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires') BETWEEN $1::date AND $2::date
             GROUP BY TO_CHAR(fecha::timestamptz AT TIME ZONE 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD')
             ORDER BY fecha ASC

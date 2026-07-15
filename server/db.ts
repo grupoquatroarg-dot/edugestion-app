@@ -268,9 +268,28 @@ export function initDb() {
       venta_id INTEGER,
       purchase_invoice_id INTEGER,
       purchase_invoice_cancellation_id INTEGER,
+      estado TEXT NOT NULL DEFAULT 'Activo',
+      reversion_version INTEGER NOT NULL DEFAULT 0,
+      anulada_at TEXT,
+      anulada_por TEXT,
+      anulacion_motivo TEXT,
+      reversed_movement_id INTEGER,
+      financial_movement_cancellation_id INTEGER,
       FOREIGN KEY (cliente_id) REFERENCES clientes(id),
       FOREIGN KEY (venta_id) REFERENCES sales(id),
       FOREIGN KEY (purchase_invoice_id) REFERENCES purchase_invoices(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS financial_movement_cancellations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      movimiento_financiero_id INTEGER NOT NULL UNIQUE,
+      motivo TEXT NOT NULL,
+      anulada_por TEXT NOT NULL,
+      anulada_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      estado_original TEXT,
+      cheque_estado_original TEXT,
+      snapshot TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (movimiento_financiero_id) REFERENCES movimientos_financieros(id)
     );
 
     CREATE TABLE IF NOT EXISTS cheques (
@@ -425,6 +444,13 @@ export function initDb() {
   try { db.exec("ALTER TABLE stock_movimientos ADD COLUMN purchase_invoice_item_id INTEGER"); } catch (e) {}
   try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN purchase_invoice_id INTEGER"); } catch (e) {}
   try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN purchase_invoice_cancellation_id INTEGER"); } catch (e) {}
+  try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN estado TEXT NOT NULL DEFAULT 'Activo'"); } catch (e) {}
+  try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN reversion_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN anulada_at TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN anulada_por TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN anulacion_motivo TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN reversed_movement_id INTEGER"); } catch (e) {}
+  try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN financial_movement_cancellation_id INTEGER"); } catch (e) {}
   try { db.exec("ALTER TABLE cheques ADD COLUMN purchase_invoice_id INTEGER"); } catch (e) {}
 
   try { db.exec("ALTER TABLE supplier_orders ADD COLUMN customer_order_id INTEGER"); } catch (e) {}

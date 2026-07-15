@@ -62,6 +62,13 @@ const mapMovement = (row: any) => ({
   usuario: row.usuario || 'Sistema',
   numero_pago: row.numero_pago === null || row.numero_pago === undefined ? null : toNumber(row.numero_pago),
   cheque_id: row.cheque_id === null || row.cheque_id === undefined ? null : toNumber(row.cheque_id),
+  estado: row.estado || 'Activo',
+  reversion_version: toNumber(row.reversion_version),
+  anulada_at: row.anulada_at || null,
+  anulada_por: row.anulada_por || null,
+  anulacion_motivo: row.anulacion_motivo || null,
+  reversed_movement_id: row.reversed_movement_id === null || row.reversed_movement_id === undefined ? null : toNumber(row.reversed_movement_id),
+  financial_movement_cancellation_id: row.financial_movement_cancellation_id === null || row.financial_movement_cancellation_id === undefined ? null : toNumber(row.financial_movement_cancellation_id),
   nombre_cliente: row.nombre_cliente || null,
 });
 
@@ -248,8 +255,8 @@ export const financeRepository = {
         db.prepare("UPDATE settings SET value = ? WHERE key = 'next_payment_number'").run(String(nextPaymentNum + 1));
 
         db.prepare(`
-          INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cheque_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cheque_id, estado, reversion_version)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           'egreso',
           'egreso_manual',
@@ -260,7 +267,9 @@ export const financeRepository = {
           movementDate,
           usuario || 'Sistema',
           nextPaymentNum,
-          chequeId || null
+          chequeId || null,
+          'Activo',
+          1
         );
 
         if (forma_pago === 'cheque_en_cartera' && chequeId) {
@@ -283,8 +292,8 @@ export const financeRepository = {
         const nextPaymentNum = await getAndIncrementSetting(client, 'next_payment_number');
 
         await client.query(
-          `INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cheque_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          `INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cheque_id, estado, reversion_version)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
           [
             'egreso',
             'egreso_manual',
@@ -296,6 +305,8 @@ export const financeRepository = {
             usuario || 'Sistema',
             nextPaymentNum,
             chequeId,
+            'Activo',
+            1,
           ]
         );
 

@@ -5,6 +5,7 @@ import { providerRepository } from '../repositories/providerRepository.js';
 import { requireAuth, requirePermission } from '../middleware/authMiddleware.js';
 import { validate } from '../middleware/validate.js';
 import { sendError, sendSuccess } from '../utils/response.js';
+import { manualExpenseCancellationService } from '../services/manualExpenseCancellationService.js';
 
 const router = Router();
 
@@ -60,6 +61,31 @@ router.get('/cheques', requireAuth, requirePermission('current_accounts', 'view'
     return sendError(res, error.message || 'Error al obtener cheques', error.statusCode || 400, error.errors || []);
   }
 });
+
+
+router.post(
+  '/movimientos/:id/cancel',
+  requireAuth,
+  requirePermission('current_accounts', 'delete'),
+  async (req, res) => {
+    try {
+      const movementId = parseInt(req.params.id, 10);
+      const result = await manualExpenseCancellationService.cancelManualExpense({
+        movementId,
+        motivo: req.body?.motivo,
+        usuario: (req as any).user?.userName || 'Sistema',
+      });
+      return sendSuccess(res, result, 'Egreso anulado correctamente');
+    } catch (error: any) {
+      return sendError(
+        res,
+        error.message || 'No se pudo anular el egreso',
+        error.statusCode || 400,
+        error.errors || []
+      );
+    }
+  }
+);
 
 router.patch(
   '/cheques/:id/estado',
