@@ -248,8 +248,11 @@ export function initDb() {
       cheque_id INTEGER,
       cliente_id INTEGER,
       venta_id INTEGER,
+      purchase_invoice_id INTEGER,
+      purchase_invoice_cancellation_id INTEGER,
       FOREIGN KEY (cliente_id) REFERENCES clientes(id),
-      FOREIGN KEY (venta_id) REFERENCES sales(id)
+      FOREIGN KEY (venta_id) REFERENCES sales(id),
+      FOREIGN KEY (purchase_invoice_id) REFERENCES purchase_invoices(id)
     );
 
     CREATE TABLE IF NOT EXISTS cheques (
@@ -262,11 +265,13 @@ export function initDb() {
       cliente_id INTEGER,
       venta_id INTEGER,
       proveedor_id INTEGER,
+      purchase_invoice_id INTEGER,
       fecha_entrega TEXT,
       observaciones TEXT,
       FOREIGN KEY (cliente_id) REFERENCES clientes(id),
       FOREIGN KEY (venta_id) REFERENCES sales(id),
-      FOREIGN KEY (proveedor_id) REFERENCES proveedores(id)
+      FOREIGN KEY (proveedor_id) REFERENCES proveedores(id),
+      FOREIGN KEY (purchase_invoice_id) REFERENCES purchase_invoices(id)
     );
 
     CREATE TABLE IF NOT EXISTS stock_movimientos (
@@ -279,8 +284,12 @@ export function initDb() {
       tipo_movimiento TEXT NOT NULL,
       motivo TEXT,
       usuario TEXT,
+      purchase_invoice_id INTEGER,
+      purchase_invoice_item_id INTEGER,
       fecha_ingreso DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (product_id) REFERENCES products(id)
+      FOREIGN KEY (product_id) REFERENCES products(id),
+      FOREIGN KEY (purchase_invoice_id) REFERENCES purchase_invoices(id),
+      FOREIGN KEY (purchase_invoice_item_id) REFERENCES purchase_invoice_items(id)
     );
 
     CREATE TABLE IF NOT EXISTS purchase_invoices (
@@ -290,6 +299,15 @@ export function initDb() {
       total REAL NOT NULL,
       fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
       metodo_pago TEXT,
+      estado_pago TEXT,
+      monto_pagado REAL DEFAULT 0,
+      fecha_pago DATETIME,
+      metodo_pago_real TEXT,
+      estado TEXT NOT NULL DEFAULT 'Activa',
+      reversion_version INTEGER NOT NULL DEFAULT 0,
+      anulada_at DATETIME,
+      anulada_por TEXT,
+      anulacion_motivo TEXT,
       FOREIGN KEY (proveedor_id) REFERENCES proveedores(id)
     );
 
@@ -300,8 +318,38 @@ export function initDb() {
       cantidad INTEGER NOT NULL,
       costo_unitario REAL NOT NULL,
       cantidad_restante INTEGER NOT NULL,
+      previous_product_cost REAL,
+      product_was_created INTEGER NOT NULL DEFAULT 0,
+      stock_movement_id INTEGER,
       FOREIGN KEY (invoice_id) REFERENCES purchase_invoices(id) ON DELETE CASCADE,
-      FOREIGN KEY (product_id) REFERENCES products(id)
+      FOREIGN KEY (product_id) REFERENCES products(id),
+      FOREIGN KEY (stock_movement_id) REFERENCES stock_movimientos(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS purchase_invoice_payment_allocations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      purchase_invoice_id INTEGER NOT NULL,
+      movimiento_financiero_id INTEGER NOT NULL,
+      monto REAL NOT NULL,
+      allocation_type TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (purchase_invoice_id, movimiento_financiero_id),
+      FOREIGN KEY (purchase_invoice_id) REFERENCES purchase_invoices(id) ON DELETE CASCADE,
+      FOREIGN KEY (movimiento_financiero_id) REFERENCES movimientos_financieros(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS purchase_invoice_cancellations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      purchase_invoice_id INTEGER NOT NULL UNIQUE,
+      motivo TEXT NOT NULL,
+      anulada_por TEXT NOT NULL,
+      anulada_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      estado_original TEXT,
+      estado_pago_original TEXT,
+      total_original REAL NOT NULL,
+      monto_pagado_original REAL NOT NULL,
+      snapshot TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (purchase_invoice_id) REFERENCES purchase_invoices(id)
     );
 
     CREATE TABLE IF NOT EXISTS price_update_history (
@@ -342,6 +390,24 @@ export function initDb() {
       VALUES (1, 'Proveedor General')
     `).run();
   }
+
+  try { db.exec("ALTER TABLE purchase_invoices ADD COLUMN estado_pago TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE purchase_invoices ADD COLUMN monto_pagado REAL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE purchase_invoices ADD COLUMN fecha_pago DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE purchase_invoices ADD COLUMN metodo_pago_real TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE purchase_invoices ADD COLUMN estado TEXT NOT NULL DEFAULT 'Activa'"); } catch (e) {}
+  try { db.exec("ALTER TABLE purchase_invoices ADD COLUMN reversion_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE purchase_invoices ADD COLUMN anulada_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE purchase_invoices ADD COLUMN anulada_por TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE purchase_invoices ADD COLUMN anulacion_motivo TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE purchase_invoice_items ADD COLUMN previous_product_cost REAL"); } catch (e) {}
+  try { db.exec("ALTER TABLE purchase_invoice_items ADD COLUMN product_was_created INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE purchase_invoice_items ADD COLUMN stock_movement_id INTEGER"); } catch (e) {}
+  try { db.exec("ALTER TABLE stock_movimientos ADD COLUMN purchase_invoice_id INTEGER"); } catch (e) {}
+  try { db.exec("ALTER TABLE stock_movimientos ADD COLUMN purchase_invoice_item_id INTEGER"); } catch (e) {}
+  try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN purchase_invoice_id INTEGER"); } catch (e) {}
+  try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN purchase_invoice_cancellation_id INTEGER"); } catch (e) {}
+  try { db.exec("ALTER TABLE cheques ADD COLUMN purchase_invoice_id INTEGER"); } catch (e) {}
 
   try { db.exec("ALTER TABLE sales ADD COLUMN costo_total REAL DEFAULT 0"); } catch (e) {}
   try { db.exec("ALTER TABLE sales ADD COLUMN ganancia REAL DEFAULT 0"); } catch (e) {}

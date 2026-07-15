@@ -38,22 +38,39 @@ export type ProductFormData = Omit<Product, 'id' | 'active' | 'eliminado' | 'cod
 
 export interface PurchaseInvoice {
   id: number;
+  proveedor_id?: number;
   numero_factura: string;
   proveedor: string;
   fecha_compra: string;
   total: number;
+  metodo_pago?: string;
+  estado_pago?: string;
+  monto_pagado?: number;
+  saldo_pendiente?: number;
+  fecha_pago?: string | null;
+  metodo_pago_real?: string | null;
+  estado?: string;
+  reversion_version?: number;
+  anulada_at?: string | null;
+  anulada_por?: string | null;
+  anulacion_motivo?: string | null;
   created_at: string;
   items?: PurchaseInvoiceItem[];
 }
 
 export interface PurchaseInvoiceItem {
   id: number;
-  purchase_invoice_id: number;
+  invoice_id?: number;
+  purchase_invoice_id?: number;
   product_id: number;
   product_name?: string;
+  codigo_unico?: string;
   cantidad: number;
   costo_unitario: number;
   cantidad_restante: number;
+  previous_product_cost?: number | null;
+  product_was_created?: boolean;
+  stock_movement_id?: number | null;
 }
 
 export interface Cheque {
