@@ -159,7 +159,7 @@ export default function Dashboard() {
     setDetailError('');
 
     try {
-      const response = await apiFetch(`/api/products/${productId}/min-stock`, {
+      const response = await apiFetch(`/api/products/${productId}?action=min-stock`, {
         method: 'POST',
         body: JSON.stringify({ stock_minimo: newMin }),
       });

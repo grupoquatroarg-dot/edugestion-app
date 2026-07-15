@@ -1,4 +1,5 @@
-﻿import { z } from "zod";
+import { z } from "zod";
+import { handleProductInventoryAction, type InventoryAction } from "../../server/services/vercel/productInventoryApiHelpers.js";
 import { ProductRepository } from "../../server/repositories/productRepository.js";
 import { UserRepository } from "../../server/repositories/userRepository.js";
 import { sendError, sendSuccess } from "../../server/utils/response.js";
@@ -82,6 +83,17 @@ export default async function handler(req: any, res: any) {
 
   if (!id) {
     return sendError(res, "ID de producto inválido", 400);
+  }
+
+  if (req.method === "POST") {
+    const rawAction = Array.isArray(req.query?.action) ? req.query.action[0] : req.query?.action;
+    const action = typeof rawAction === "string" ? rawAction : "";
+
+    if (!(["stock", "expire", "min-stock"] as const).includes(action as InventoryAction)) {
+      return sendError(res, "Acción de inventario inválida", 400);
+    }
+
+    return handleProductInventoryAction(req, res, action as InventoryAction);
   }
 
   if (req.method === "PUT") {

@@ -8,12 +8,18 @@ const assert = (condition: any, message: string) => {
   if (!condition) throw new Error(message);
 };
 
-for (const route of ['stock', 'expire', 'min-stock']) {
-  const routePath = path.join(root, 'api', 'products', '[id]', `${route}.ts`);
-  assert(fs.existsSync(routePath), `Falta la función Vercel ${routePath}.`);
-  const source = fs.readFileSync(routePath, 'utf8');
-  assert(source.includes(`"${route}"`), `La función ${route} no delega la acción correcta.`);
+const consolidatedRoutePath = path.join(root, 'api', 'products', '[id].ts');
+assert(fs.existsSync(consolidatedRoutePath), 'Falta la función Vercel consolidada api/products/[id].ts.');
+const consolidatedSource = fs.readFileSync(consolidatedRoutePath, 'utf8');
+for (const action of ['stock', 'expire', 'min-stock']) {
+  assert(consolidatedSource.includes(`"${action}"`), `La función consolidada no contempla ${action}.`);
+  const obsoletePath = path.join(root, 'api', 'products', '[id]', `${action}.ts`);
+  assert(!fs.existsSync(obsoletePath), `La ruta ${obsoletePath} crea una función Vercel innecesaria.`);
 }
+assert(
+  consolidatedSource.includes('handleProductInventoryAction(req, res, action as InventoryAction)'),
+  'La función consolidada no delega al servicio compartido de inventario.',
+);
 
 const helperPath = path.join(root, 'server/services/vercel/productInventoryApiHelpers.ts');
 const helperSource = fs.readFileSync(helperPath, 'utf8');
@@ -110,10 +116,10 @@ Object.defineProperty(globalThis, 'fetch', {
 const { apiFetch } = await import('../src/utils/api.js');
 let friendlyError = '';
 try {
-  await apiFetch('/api/products/100/stock', { method: 'POST' });
+  await apiFetch('/api/products/100?action=stock', { method: 'POST' });
 } catch (error: any) {
   friendlyError = String(error?.message || '');
 }
 assert(friendlyError.includes('no está disponible'), 'apiFetch no convierte un NOT_FOUND de Vercel en un error comprensible.');
 
-console.log(`Inventario correcto: tres rutas, ${sqlQueriesChecked} consultas SQL, carga, mínimo, merma, límite y error Vercel verificados.`);
+console.log(`Inventario correcto: una ruta consolidada con tres acciones, ${sqlQueriesChecked} consultas SQL, carga, mínimo, merma, límite y error Vercel verificados.`);

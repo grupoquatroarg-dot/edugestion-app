@@ -175,7 +175,7 @@ export default function ProductModule() {
     if (!selectedProductForStock) return;
 
     try {
-      const res = await apiFetch(`/api/products/${selectedProductForStock.id}/stock`, {
+      const res = await apiFetch(`/api/products/${selectedProductForStock.id}?action=stock`, {
         method: 'POST',
         body: JSON.stringify(stockFormData)
       });
@@ -203,7 +203,7 @@ export default function ProductModule() {
     }
 
     try {
-      const res = await apiFetch(`/api/products/${selectedProductForExpire.id}/expire`, {
+      const res = await apiFetch(`/api/products/${selectedProductForExpire.id}?action=expire`, {
         method: 'POST',
         body: JSON.stringify({
           cantidad: expireFormData.cantidad,

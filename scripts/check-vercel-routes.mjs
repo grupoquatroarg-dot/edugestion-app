@@ -20,6 +20,7 @@ const walk = (root, predicate) => {
 
 const sourceFiles = walk(srcRoot, (file) => /\.(ts|tsx)$/.test(file));
 const apiFiles = walk(apiRoot, (file) => file.endsWith('.ts'));
+const HOBBY_FUNCTION_LIMIT = 12;
 
 const routePatternFromFile = (file) => {
   let relative = path.relative(projectRoot, file).replaceAll(path.sep, '/').replace(/\.ts$/, '');
@@ -57,6 +58,14 @@ for (const [route, locations] of [...usedRoutes.entries()].sort(([a], [b]) => a.
   if (!matches) missing.push({ route, locations });
 }
 
+if (apiFiles.length > HOBBY_FUNCTION_LIMIT) {
+  console.error(`El proyecto genera ${apiFiles.length} funciones Vercel y el plan Hobby admite como máximo ${HOBBY_FUNCTION_LIMIT}.`);
+  for (const file of apiFiles) {
+    console.error(`- ${path.relative(projectRoot, file).replaceAll(path.sep, '/')}`);
+  }
+  process.exit(1);
+}
+
 if (missing.length) {
   console.error('Rutas del frontend sin función Vercel correspondiente:');
   for (const item of missing) {
@@ -66,4 +75,4 @@ if (missing.length) {
   process.exit(1);
 }
 
-console.log(`Rutas Vercel correctas: ${usedRoutes.size} rutas del frontend verificadas contra ${apiFiles.length} funciones.`);
+console.log(`Rutas Vercel correctas: ${usedRoutes.size} rutas del frontend verificadas contra ${apiFiles.length}/${HOBBY_FUNCTION_LIMIT} funciones permitidas en Hobby.`);
