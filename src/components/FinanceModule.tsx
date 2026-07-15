@@ -48,7 +48,7 @@ type Movimiento = {
   fecha: string;
   fecha_dia?: string;
   tipo: 'ingreso' | 'egreso';
-  origen: 'venta' | 'pago_cc' | 'egreso_manual' | 'ajuste' | 'compra' | 'cobranza' | 'anulacion_venta';
+  origen: 'venta' | 'pago_cc' | 'egreso_manual' | 'ajuste' | 'compra' | 'cobranza' | 'anulacion_venta' | 'anulacion_compra';
   cliente_id: number | null;
   venta_id: number | null;
   descripcion: string;
@@ -384,7 +384,8 @@ export default function FinanceModule() {
       pago_cc: 'Pago de cuenta corriente',
       egreso_manual: 'Egreso manual',
       ajuste: 'Ajuste',
-      anulacion_venta: 'Anulación de venta'
+      anulacion_venta: 'Anulación de venta',
+      anulacion_compra: 'Anulación de compra'
     };
 
     return labels[value || ''] || (value || 'Sin origen').replace(/_/g, ' ');

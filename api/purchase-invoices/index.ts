@@ -10,6 +10,7 @@ import {
 import { providerRepository } from "../../server/repositories/providerRepository.js";
 import { sendError, sendSuccess } from "../../server/utils/response.js";
 import { getRequestBody, requirePurchaseInvoicePermission } from "../../server/services/vercel/purchaseInvoiceApiHelpers.js";
+import { purchaseInvoiceCancellationService } from "../../server/services/purchaseInvoiceCancellationService.js";
 
 const providerSchema = z.object({
   nombre: z.string().min(2, "El nombre debe tener al menos 2 caracteres"),
@@ -57,6 +58,33 @@ export default async function handler(req: any, res: any) {
       return sendSuccess(res, { id, ...parsed.data }, "Proveedor creado exitosamente", 201);
     } catch (error: any) {
       return sendError(res, error?.message || "Error al crear proveedor", 400);
+    }
+  }
+
+  if (endpoint === "cancel" && req.method === "POST") {
+    const user = await requirePurchaseInvoicePermission(req, res, "delete");
+    if (!user) return;
+
+    const id = Number(req.query?.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return sendError(res, "ID de factura inválido", 400);
+    }
+
+    const motivo = String(getRequestBody(req)?.motivo || "").trim();
+
+    try {
+      const result = await purchaseInvoiceCancellationService.cancelPurchaseInvoice({
+        purchaseInvoiceId: id,
+        motivo,
+        usuario: user.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Factura de compra anulada correctamente");
+    } catch (error: any) {
+      return sendError(
+        res,
+        error?.message || "Error al anular la factura de compra",
+        error?.statusCode || 400
+      );
     }
   }
 

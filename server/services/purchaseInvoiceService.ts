@@ -65,7 +65,8 @@ const buildProductCode = (name: string, attempt: number) => {
 const mapInvoice = (row: any) => {
   const total = toNumber(row.total);
   const montoPagado = toNumber(row.monto_pagado);
-  const saldoPendiente = Math.max(0, total - montoPagado);
+  const isCancelled = String(row.estado || "").toLowerCase() === "anulada";
+  const saldoPendiente = isCancelled ? 0 : Math.max(0, total - montoPagado);
 
   return {
     id: toNumber(row.id),

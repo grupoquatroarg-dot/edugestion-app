@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
+  Ban,
   Building2,
   Calendar,
   CheckCircle2,
@@ -47,7 +48,7 @@ type Provider = ProviderForm & {
 };
 
 type ModuleView = 'invoices' | 'providers';
-type InvoiceFilter = 'all' | 'paid' | 'pending';
+type InvoiceFilter = 'all' | 'paid' | 'pending' | 'cancelled';
 
 const emptyProviderForm: ProviderForm = {
   nombre: '',
@@ -68,11 +69,17 @@ const formatCurrency = (value: unknown) =>
 
 const formatDate = (value: unknown) => formatBusinessDate(value);
 
+const isInvoiceCancelled = (invoice: PurchaseInvoice) =>
+  String((invoice as any).estado || '').toLowerCase() === 'anulada';
+
 const getInvoiceBalance = (invoice: PurchaseInvoice) =>
-  Math.max(0, Number((invoice as any).saldo_pendiente ?? Number(invoice.total || 0) - Number((invoice as any).monto_pagado || 0)));
+  isInvoiceCancelled(invoice)
+    ? 0
+    : Math.max(0, Number((invoice as any).saldo_pendiente ?? Number(invoice.total || 0) - Number((invoice as any).monto_pagado || 0)));
 
 const isInvoicePaid = (invoice: PurchaseInvoice) =>
-  String((invoice as any).estado_pago || '').toLowerCase() === 'pagado' || getInvoiceBalance(invoice) <= 0;
+  !isInvoiceCancelled(invoice) &&
+  (String((invoice as any).estado_pago || '').toLowerCase() === 'pagado' || getInvoiceBalance(invoice) <= 0);
 
 const getPaymentMethodLabel = (method: unknown) => {
   const value = String(method || '').toLowerCase();
@@ -104,8 +111,10 @@ export default function PurchaseInvoiceModule() {
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isProviderModalOpen, setIsProviderModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [isCancellationModalOpen, setIsCancellationModalOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<PurchaseInvoice | null>(null);
   const [selectedInvoiceForPayment, setSelectedInvoiceForPayment] = useState<PurchaseInvoice | null>(null);
+  const [selectedInvoiceForCancellation, setSelectedInvoiceForCancellation] = useState<PurchaseInvoice | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
 
@@ -116,6 +125,9 @@ export default function PurchaseInvoiceModule() {
   const [providerSubmitError, setProviderSubmitError] = useState('');
   const [isPayingInvoice, setIsPayingInvoice] = useState(false);
   const [paymentSubmitError, setPaymentSubmitError] = useState('');
+  const [isCancellingInvoice, setIsCancellingInvoice] = useState(false);
+  const [cancellationReason, setCancellationReason] = useState('');
+  const [cancellationSubmitError, setCancellationSubmitError] = useState('');
   const [isSubmittingInvoice, setIsSubmittingInvoice] = useState(false);
   const [invoiceSubmitError, setInvoiceSubmitError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
@@ -325,6 +337,54 @@ export default function PurchaseInvoiceModule() {
     }
   };
 
+  const openCancellationModal = (invoice: PurchaseInvoice) => {
+    setSelectedInvoiceForCancellation(invoice);
+    setCancellationReason('');
+    setCancellationSubmitError('');
+    setIsCancellationModalOpen(true);
+  };
+
+  const handleCancelInvoice = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedInvoiceForCancellation || isCancellingInvoice) return;
+
+    const normalizedReason = cancellationReason.trim();
+    if (normalizedReason.length < 3) {
+      setCancellationSubmitError('El motivo debe tener al menos 3 caracteres.');
+      return;
+    }
+
+    if (normalizedReason.length > 500) {
+      setCancellationSubmitError('El motivo no puede superar los 500 caracteres.');
+      return;
+    }
+
+    setIsCancellingInvoice(true);
+    setCancellationSubmitError('');
+
+    try {
+      const res = await apiFetch(
+        `/api/purchase-invoices?endpoint=cancel&id=${selectedInvoiceForCancellation.id}`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ motivo: normalizedReason }),
+        },
+      );
+
+      await handleApiJson(res);
+      setIsCancellationModalOpen(false);
+      setSelectedInvoiceForCancellation(null);
+      setCancellationReason('');
+      await Promise.all([fetchInvoices(), fetchProducts()]);
+      setSuccessMessage(`Factura ${selectedInvoiceForCancellation.numero_factura} anulada correctamente.`);
+    } catch (error: any) {
+      console.error('Error cancelling purchase invoice:', error);
+      setCancellationSubmitError(error?.message || 'No se pudo anular la factura de compra.');
+    } finally {
+      setIsCancellingInvoice(false);
+    }
+  };
+
   const handleAddItem = () => {
     const isNewValid = isCreatingNewProduct && newProductName.trim() !== '';
     const isExistingValid = !isCreatingNewProduct && currentItem.product_id !== 0;
@@ -463,8 +523,13 @@ export default function PurchaseInvoiceModule() {
         String((invoice as any).proveedor || '').toLowerCase().includes(term) ||
         String((invoice as any).metodo_pago || '').toLowerCase().includes(term);
 
+      const cancelled = isInvoiceCancelled(invoice);
       const paid = isInvoicePaid(invoice);
-      const matchesStatus = invoiceFilter === 'all' || (invoiceFilter === 'paid' ? paid : !paid);
+      const matchesStatus =
+        invoiceFilter === 'all' ||
+        (invoiceFilter === 'cancelled' && cancelled) ||
+        (invoiceFilter === 'paid' && paid) ||
+        (invoiceFilter === 'pending' && !cancelled && !paid);
       return matchesSearch && matchesStatus;
     });
   }, [invoiceFilter, invoices, searchTerm]);
@@ -473,8 +538,11 @@ export default function PurchaseInvoiceModule() {
     return proveedores.map((provider) => {
       const relatedInvoices = invoices.filter(
         (invoice) =>
-          Number((invoice as any).proveedor_id) === Number(provider.id) ||
-          String((invoice as any).proveedor || '').trim().toLowerCase() === provider.nombre.trim().toLowerCase(),
+          !isInvoiceCancelled(invoice) &&
+          (
+            Number((invoice as any).proveedor_id) === Number(provider.id) ||
+            String((invoice as any).proveedor || '').trim().toLowerCase() === provider.nombre.trim().toLowerCase()
+          ),
       );
       const totalPurchased = relatedInvoices.reduce((sum, invoice) => sum + Number(invoice.total || 0), 0);
       const pendingBalance = relatedInvoices.reduce((sum, invoice) => sum + getInvoiceBalance(invoice), 0);
@@ -502,9 +570,12 @@ export default function PurchaseInvoiceModule() {
     );
   }, [providerSearch, providerSummaries]);
 
-  const totalPurchases = invoices.reduce((sum, invoice) => sum + Number(invoice.total || 0), 0);
-  const totalPending = invoices.reduce((sum, invoice) => sum + getInvoiceBalance(invoice), 0);
-  const paidInvoices = invoices.filter(isInvoicePaid).length;
+  const activeInvoices = invoices.filter((invoice) => !isInvoiceCancelled(invoice));
+  const cancelledInvoices = invoices.length - activeInvoices.length;
+  const totalPurchases = activeInvoices.reduce((sum, invoice) => sum + Number(invoice.total || 0), 0);
+  const totalPending = activeInvoices.reduce((sum, invoice) => sum + getInvoiceBalance(invoice), 0);
+  const paidInvoices = activeInvoices.filter(isInvoicePaid).length;
+  const pendingInvoices = activeInvoices.length - paidInvoices;
   const currentItemSubtotal = currentItem.cantidad > 0 && currentItem.costo_unitario >= 0
     ? currentItem.cantidad * currentItem.costo_unitario
     : 0;
@@ -588,7 +659,7 @@ export default function PurchaseInvoiceModule() {
 
       <section className="mt-4 grid grid-cols-1 gap-3 min-[440px]:grid-cols-2 xl:grid-cols-4">
         {[
-          { label: 'Facturas registradas', value: invoices.length.toLocaleString('es-AR'), icon: FileText, tone: 'indigo' },
+          { label: 'Facturas activas', value: activeInvoices.length.toLocaleString('es-AR'), icon: FileText, tone: 'indigo' },
           { label: 'Compras acumuladas', value: formatCurrency(totalPurchases), icon: CircleDollarSign, tone: 'blue' },
           { label: 'Saldo pendiente', value: formatCurrency(totalPending), icon: WalletCards, tone: totalPending > 0 ? 'amber' : 'emerald' },
           { label: 'Proveedores activos', value: proveedores.length.toLocaleString('es-AR'), icon: Building2, tone: 'slate' },
@@ -689,11 +760,12 @@ export default function PurchaseInvoiceModule() {
                 className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
               />
             </div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2 min-[520px]:grid-cols-4">
               {([
                 ['all', `Todas (${invoices.length})`],
-                ['pending', `Pendientes (${invoices.length - paidInvoices})`],
+                ['pending', `Pendientes (${pendingInvoices})`],
                 ['paid', `Pagadas (${paidInvoices})`],
+                ['cancelled', `Anuladas (${cancelledInvoices})`],
               ] as Array<[InvoiceFilter, string]>).map(([value, label]) => (
                 <button
                   key={value}
@@ -755,39 +827,72 @@ export default function PurchaseInvoiceModule() {
           ) : (
             <div className="mt-4 grid grid-cols-1 gap-3 2xl:grid-cols-2">
               {filteredInvoices.map((invoice) => {
+                const cancelled = isInvoiceCancelled(invoice);
                 const paid = isInvoicePaid(invoice);
                 const balance = getInvoiceBalance(invoice);
+                const hasTraceability = Number((invoice as any).reversion_version || 0) === 1;
+                const canCancel =
+                  !cancelled &&
+                  hasTraceability &&
+                  hasPermission('suppliers', 'delete');
 
                 return (
-                  <article key={invoice.id} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-indigo-200 hover:shadow-md sm:p-5">
+                  <article
+                    key={invoice.id}
+                    className={`min-w-0 rounded-2xl border bg-white p-4 shadow-sm transition sm:p-5 ${
+                      cancelled
+                        ? 'border-red-200 bg-red-50/40'
+                        : 'border-slate-200 hover:border-indigo-200 hover:shadow-md'
+                    }`}
+                  >
                     <div className="flex min-w-0 flex-col gap-4 min-[540px]:flex-row min-[540px]:items-start min-[540px]:justify-between">
                       <div className="flex min-w-0 items-start gap-3">
-                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100">
-                          <Receipt size={20} aria-hidden="true" />
+                        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ring-1 ${
+                          cancelled
+                            ? 'bg-red-100 text-red-700 ring-red-200'
+                            : 'bg-indigo-50 text-indigo-700 ring-indigo-100'
+                        }`}>
+                          {cancelled ? <Ban size={20} aria-hidden="true" /> : <Receipt size={20} aria-hidden="true" />}
                         </div>
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <h2 className="break-all text-base font-black text-slate-950">Factura {invoice.numero_factura}</h2>
-                            <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${paid ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                              {paid ? 'Pagada' : 'Pendiente'}
+                            <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${
+                              cancelled
+                                ? 'bg-red-100 text-red-700'
+                                : paid
+                                  ? 'bg-emerald-50 text-emerald-700'
+                                  : 'bg-amber-50 text-amber-700'
+                            }`}>
+                              {cancelled ? 'Anulada' : paid ? 'Pagada' : 'Pendiente'}
                             </span>
+                            {!cancelled && !hasTraceability && (
+                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600">
+                                Sin trazabilidad
+                              </span>
+                            )}
                           </div>
                           <p className="mt-1 break-words text-sm font-bold text-slate-700">{(invoice as any).proveedor || 'Proveedor sin informar'}</p>
                           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2 text-xs font-semibold text-slate-500">
                             <span className="inline-flex items-center gap-1.5"><Calendar size={14} /> {formatDate((invoice as any).fecha_compra)}</span>
                             <span className="inline-flex items-center gap-1.5"><CreditCard size={14} /> {getPaymentMethodLabel((invoice as any).metodo_pago)}</span>
                           </div>
+                          {cancelled && (invoice as any).anulacion_motivo && (
+                            <p className="mt-2 rounded-xl bg-red-100 px-3 py-2 text-xs font-bold text-red-800">
+                              Motivo: {(invoice as any).anulacion_motivo}
+                            </p>
+                          )}
                         </div>
                       </div>
 
                       <div className="min-[540px]:text-right">
-                        <p className="text-[10px] font-black uppercase tracking-[0.12em] text-slate-400">Total</p>
+                        <p className="text-[10px] font-black uppercase tracking-[0.12em] text-slate-400">Total histórico</p>
                         <p className="mt-1 break-words text-xl font-black text-slate-950">{formatCurrency(invoice.total)}</p>
-                        {!paid && <p className="mt-1 text-xs font-black text-amber-700">Pendiente: {formatCurrency(balance)}</p>}
+                        {!cancelled && !paid && <p className="mt-1 text-xs font-black text-amber-700">Pendiente: {formatCurrency(balance)}</p>}
                       </div>
                     </div>
 
-                    <div className="mt-4 grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+                    <div className="mt-4 grid grid-cols-1 gap-2 min-[420px]:grid-cols-2 xl:grid-cols-3">
                       <button
                         type="button"
                         onClick={() => void fetchInvoiceDetails(invoice.id)}
@@ -797,7 +902,8 @@ export default function PurchaseInvoiceModule() {
                         <Eye size={17} aria-hidden="true" />
                         Ver detalle
                       </button>
-                      {(invoice as any).metodo_pago === 'Cta Cte' && !paid ? (
+
+                      {!cancelled && (invoice as any).metodo_pago === 'Cta Cte' && !paid && (
                         <button
                           type="button"
                           onClick={() => openPaymentModal(invoice)}
@@ -807,12 +913,34 @@ export default function PurchaseInvoiceModule() {
                           <WalletCards size={17} aria-hidden="true" />
                           Registrar pago
                         </button>
-                      ) : (
-                        <div className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-50 px-4 py-2 text-sm font-bold text-slate-500">
-                          <CheckCircle2 size={17} className="text-emerald-600" aria-hidden="true" />
-                          Sin acciones pendientes
-                        </div>
                       )}
+
+                      {hasPermission('suppliers', 'delete') && (
+                        canCancel ? (
+                          <button
+                            type="button"
+                            onClick={() => openCancellationModal(invoice)}
+                            className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-black text-white shadow-sm hover:bg-red-700"
+                            aria-label={`Anular factura ${invoice.numero_factura}`}
+                          >
+                            <Ban size={17} aria-hidden="true" />
+                            Anular factura
+                          </button>
+                        ) : (
+                          <div className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-center text-xs font-black text-slate-500">
+                            {cancelled ? 'Factura anulada' : 'Sin trazabilidad para anular'}
+                          </div>
+                        )
+                      )}
+
+                      {!cancelled &&
+                        !((invoice as any).metodo_pago === 'Cta Cte' && !paid) &&
+                        !hasPermission('suppliers', 'delete') && (
+                          <div className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-50 px-4 py-2 text-sm font-bold text-slate-500">
+                            <CheckCircle2 size={17} className="text-emerald-600" aria-hidden="true" />
+                            Sin acciones pendientes
+                          </div>
+                        )}
                     </div>
                   </article>
                 );
@@ -1294,6 +1422,108 @@ export default function PurchaseInvoiceModule() {
         </div>
       )}
 
+      {isCancellationModalOpen && selectedInvoiceForCancellation && (
+        <div
+          className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/70 backdrop-blur-sm sm:items-center sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="purchase-invoice-cancellation-title"
+        >
+          <div className="w-full overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-w-lg sm:rounded-3xl">
+            <div className="flex items-center justify-between gap-3 border-b border-red-100 bg-red-50 px-4 py-4 sm:px-6">
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-red-600">Operación irreversible</p>
+                <h2 id="purchase-invoice-cancellation-title" className="mt-1 text-lg font-black text-slate-950">
+                  Anular factura {selectedInvoiceForCancellation.numero_factura}
+                </h2>
+                <p className="mt-1 text-xs font-semibold text-slate-600">
+                  Se revertirán stock, costo y pagos vinculados cuando la trazabilidad sea válida.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (isCancellingInvoice) return;
+                  setIsCancellationModalOpen(false);
+                  setSelectedInvoiceForCancellation(null);
+                  setCancellationSubmitError('');
+                }}
+                disabled={isCancellingInvoice}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-white disabled:opacity-40"
+                aria-label="Cerrar anulación"
+              >
+                <X size={21} />
+              </button>
+            </div>
+
+            <form onSubmit={handleCancelInvoice} className="p-4 sm:p-6">
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-950">
+                <div className="flex items-start gap-3">
+                  <AlertCircle size={20} className="mt-0.5 shrink-0" aria-hidden="true" />
+                  <div>
+                    <p className="font-black">La factura seguirá visible como Anulada.</p>
+                    <p className="mt-1 text-sm font-semibold">
+                      Si algún lote fue consumido, existe una compra posterior o un cheque procesado, la operación se bloqueará sin aplicar cambios parciales.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {cancellationSubmitError && (
+                <div role="alert" className="mt-4 flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-900">
+                  <AlertCircle size={20} className="mt-0.5 shrink-0" aria-hidden="true" />
+                  <p className="text-sm font-bold">{cancellationSubmitError}</p>
+                </div>
+              )}
+
+              <label className="mt-4 block">
+                <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">
+                  Motivo obligatorio
+                </span>
+                <textarea
+                  autoFocus
+                  required
+                  minLength={3}
+                  maxLength={500}
+                  rows={4}
+                  value={cancellationReason}
+                  onChange={(event) => setCancellationReason(event.target.value)}
+                  placeholder="Ejemplo: factura cargada por duplicado o mercadería devuelta al proveedor."
+                  className="w-full resize-none rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-red-400 focus:ring-4 focus:ring-red-100"
+                />
+                <div className="mt-1 flex items-center justify-between gap-3 text-xs font-semibold text-slate-500">
+                  <span>Mínimo 3 caracteres.</span>
+                  <span>{cancellationReason.length}/500</span>
+                </div>
+              </label>
+
+              <div className="mt-6 grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCancellationModalOpen(false);
+                    setSelectedInvoiceForCancellation(null);
+                    setCancellationSubmitError('');
+                  }}
+                  disabled={isCancellingInvoice}
+                  className="min-h-11 rounded-xl border border-slate-200 px-5 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Volver
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCancellingInvoice || cancellationReason.trim().length < 3}
+                  className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-red-600 px-5 text-sm font-black text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isCancellingInvoice ? <Loader2 size={18} className="animate-spin" /> : <Ban size={18} />}
+                  {isCancellingInvoice ? 'Anulando…' : 'Confirmar anulación'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {isPaymentModalOpen && selectedInvoiceForPayment && (
         <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/65 backdrop-blur-sm sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="provider-payment-title">
           <div className="w-full overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-w-md sm:rounded-3xl">
@@ -1389,6 +1619,26 @@ export default function PurchaseInvoiceModule() {
                       <p className="mt-1 break-words text-xl font-black text-slate-950">{formatCurrency(selectedInvoice.total)}</p>
                     </div>
                   </div>
+
+                  {isInvoiceCancelled(selectedInvoice) && (
+                    <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-900">
+                      <div className="flex items-start gap-3">
+                        <Ban size={21} className="mt-0.5 shrink-0" aria-hidden="true" />
+                        <div className="min-w-0">
+                          <p className="font-black">Factura anulada</p>
+                          <p className="mt-1 break-words text-sm font-bold">
+                            Motivo: {(selectedInvoice as any).anulacion_motivo || 'Sin motivo informado'}
+                          </p>
+                          <p className="mt-2 text-xs font-semibold text-red-700">
+                            Por {(selectedInvoice as any).anulada_por || 'Sistema'}
+                            {(selectedInvoice as any).anulada_at
+                              ? ` · ${formatDate((selectedInvoice as any).anulada_at)}`
+                              : ''}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="mt-5">
                     <h3 className="text-sm font-black text-slate-900">Productos de la factura</h3>

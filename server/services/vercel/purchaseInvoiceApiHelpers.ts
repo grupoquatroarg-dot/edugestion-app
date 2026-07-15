@@ -1,4 +1,4 @@
-﻿import { UserRepository } from "../../repositories/userRepository.js";
+import { UserRepository } from "../../repositories/userRepository.js";
 import { verifyToken } from "../../utils/jwt.js";
 import { sendError } from "../../utils/response.js";
 
@@ -8,9 +8,17 @@ export const getBearerToken = (req: any) => {
   return authHeader.slice(7);
 };
 
-const getPermissionKey = (action: "view" | "create") => (action === "view" ? "can_view" : "can_create");
+const getPermissionKey = (action: "view" | "create" | "delete") => {
+  if (action === "view") return "can_view";
+  if (action === "delete") return "can_delete";
+  return "can_create";
+};
 
-export const requirePurchaseInvoicePermission = async (req: any, res: any, action: "view" | "create") => {
+export const requirePurchaseInvoicePermission = async (
+  req: any,
+  res: any,
+  action: "view" | "create" | "delete"
+) => {
   const token = getBearerToken(req);
 
   if (!token) {

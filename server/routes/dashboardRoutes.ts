@@ -30,7 +30,7 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
   try {
     if (!isPostgresConfigured()) {
       const cuentasCobrar = db.prepare("SELECT SUM(saldo_cta_cte) as total FROM clientes").get() as any;
-      const cuentasPagar = db.prepare("SELECT SUM(total) as total FROM purchase_invoices WHERE metodo_pago = 'Cta Cte'").get() as any;
+      const cuentasPagar = db.prepare("SELECT SUM(total - COALESCE(monto_pagado, 0)) as total FROM purchase_invoices WHERE metodo_pago = 'Cta Cte' AND COALESCE(estado_pago, 'pendiente') <> 'pagado' AND COALESCE(estado, '') <> 'Anulada'").get() as any;
       const gananciaMes = db.prepare("SELECT SUM(ganancia) as total FROM sales WHERE COALESCE(estado, '') <> 'Anulada' AND strftime('%Y-%m', fecha) = ?").get(currentMonth) as any;
       const gananciaPrevMes = db.prepare("SELECT SUM(ganancia) as total FROM sales WHERE COALESCE(estado, '') <> 'Anulada' AND strftime('%Y-%m', fecha) = ?").get(prevMonth) as any;
 
@@ -168,7 +168,7 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
       alertasDeudaResult,
     ] = await Promise.all([
       pool.query(`SELECT COALESCE(SUM(saldo_cta_cte), 0) AS total FROM clientes WHERE activo = 1`),
-      pool.query(`SELECT COALESCE(SUM(total), 0) AS total FROM purchase_invoices WHERE metodo_pago = 'Cta Cte'`),
+      pool.query(`SELECT COALESCE(SUM(total - COALESCE(monto_pagado, 0)), 0) AS total FROM purchase_invoices WHERE metodo_pago = 'Cta Cte' AND COALESCE(estado_pago, 'pendiente') <> 'pagado' AND COALESCE(estado, '') <> 'Anulada'`),
       pool.query(`
         SELECT COALESCE(SUM(ganancia), 0) AS total
         FROM sales
@@ -390,12 +390,14 @@ router.get("/cuentas-pagar", requirePermission("dashboard", "view"), async (_req
       const results = db.prepare(`
         SELECT
           p.nombre as proveedor,
-          pi.total as monto,
+          (pi.total - COALESCE(pi.monto_pagado, 0)) as monto,
           pi.fecha,
           'Pendiente' as estado
         FROM purchase_invoices pi
         JOIN proveedores p ON pi.proveedor_id = p.id
         WHERE pi.metodo_pago = 'Cta Cte'
+          AND COALESCE(pi.estado_pago, 'pendiente') <> 'pagado'
+          AND COALESCE(pi.estado, '') <> 'Anulada'
         ORDER BY pi.fecha ASC
       `).all();
       return sendSuccess(res, results);
@@ -405,12 +407,14 @@ router.get("/cuentas-pagar", requirePermission("dashboard", "view"), async (_req
     const result = await pool.query(`
       SELECT
         p.nombre AS proveedor,
-        pi.total AS monto,
+        (pi.total - COALESCE(pi.monto_pagado, 0)) AS monto,
         pi.fecha,
         'Pendiente' AS estado
       FROM purchase_invoices pi
       JOIN proveedores p ON pi.proveedor_id = p.id
       WHERE pi.metodo_pago = 'Cta Cte'
+        AND COALESCE(pi.estado_pago, 'pendiente') <> 'pagado'
+        AND COALESCE(pi.estado, '') <> 'Anulada'
       ORDER BY pi.fecha ASC
     `);
 

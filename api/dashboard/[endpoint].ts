@@ -72,7 +72,9 @@ export default async function handler(req: any, res: any) {
           'Pendiente' AS estado
         FROM purchase_invoices pi
         JOIN proveedores p ON pi.proveedor_id = p.id
-        WHERE pi.metodo_pago = 'Cta Cte' AND COALESCE(pi.estado_pago, 'pendiente') <> 'pagado'
+        WHERE pi.metodo_pago = 'Cta Cte'
+          AND COALESCE(pi.estado_pago, 'pendiente') <> 'pagado'
+          AND COALESCE(pi.estado, '') <> 'Anulada'
         ORDER BY pi.fecha ASC
       `);
 

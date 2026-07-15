@@ -1,4 +1,4 @@
-﻿import { Router } from "express";
+import { Router } from "express";
 import { z } from "zod";
 import { requirePermission } from "../middleware/authMiddleware.js";
 import { validate } from "../middleware/validate.js";
@@ -10,6 +10,7 @@ import {
   listPurchaseInvoices,
   purchaseInvoiceBodySchema,
 } from "../services/purchaseInvoiceService.js";
+import { purchaseInvoiceCancellationService } from "../services/purchaseInvoiceCancellationService.js";
 
 const router = Router();
 
@@ -37,6 +38,32 @@ router.get("/:id", requirePermission("suppliers", "view"), async (req, res) => {
     return sendSuccess(res, invoice);
   } catch (error: any) {
     return sendError(res, error.message || "Error al obtener factura de compra", 400);
+  }
+});
+
+router.post("/:id/cancel", requirePermission("suppliers", "delete"), async (req, res) => {
+  try {
+    const result = await purchaseInvoiceCancellationService.cancelPurchaseInvoice({
+      purchaseInvoiceId: Number(req.params.id),
+      motivo: String(req.body?.motivo || ""),
+      usuario: (req as any).user?.userName || "Sistema",
+    });
+
+    try {
+      const io = getIo();
+      io.emit("financial_movement_created");
+      io.emit("stock_updated");
+    } catch {
+      // Socket opcional
+    }
+
+    return sendSuccess(res, result, "Factura de compra anulada correctamente");
+  } catch (error: any) {
+    return sendError(
+      res,
+      error.message || "Error al anular la factura de compra",
+      error.statusCode || 400
+    );
   }
 });
 

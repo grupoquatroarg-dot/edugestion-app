@@ -81,7 +81,8 @@ export interface Cheque {
   importe: number;
   cliente_id: number;
   venta_id?: number;
-  estado: 'en_cartera' | 'depositado' | 'entregado_proveedor' | 'cobrado' | 'rechazado';
+  purchase_invoice_id?: number;
+  estado: 'en_cartera' | 'depositado' | 'entregado_proveedor' | 'cobrado' | 'rechazado' | 'anulado';
   fecha_creacion: string;
   observaciones?: string;
 }
