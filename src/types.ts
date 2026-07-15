@@ -31,6 +31,9 @@ export interface Product {
   estado: 'activo' | 'inactivo';
   eliminado: number;
   active: number;
+  deactivated_at?: string | null;
+  deactivated_by?: string | null;
+  deactivation_reason?: string | null;
   created_at: string;
 }
 

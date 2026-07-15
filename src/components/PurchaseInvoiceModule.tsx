@@ -174,7 +174,7 @@ export default function PurchaseInvoiceModule() {
   };
 
   const fetchProducts = async () => {
-    const res = await apiFetch('/api/products?all=true');
+    const res = await apiFetch('/api/products?active_only=true');
     const data = await handleApiJson<Product[]>(res);
     setProducts(Array.isArray(data) ? data : []);
   };

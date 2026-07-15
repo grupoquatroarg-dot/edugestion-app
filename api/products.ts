@@ -126,6 +126,9 @@ const mapProduct = (row: any) => ({
   estado: row.estado,
   eliminado: toNumber(row.eliminado),
   active: toNumber(row.active, 1),
+  deactivated_at: row.deactivated_at ?? null,
+  deactivated_by: row.deactivated_by ?? null,
+  deactivation_reason: row.deactivation_reason ?? null,
   created_at: row.created_at,
   family_name: row.family_name ?? null,
   category_name: row.category_name ?? null,
@@ -504,7 +507,8 @@ export default async function handler(req: any, res: any) {
     if (!user) return;
 
     try {
-      const products = await ProductRepository.findAll();
+      const activeOnly = String(req.query?.active_only || "").toLowerCase() === "true";
+      const products = await ProductRepository.findAll({ activeOnly });
       return sendSuccess(res, products);
     } catch (error: any) {
       return sendError(res, error?.message || "Error al obtener productos", 400);

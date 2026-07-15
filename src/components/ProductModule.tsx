@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, Edit2, Trash2, Package, Search, X, AlertTriangle, Boxes, RefreshCw, Loader2, CircleDollarSign, SlidersHorizontal } from 'lucide-react';
+import { Plus, Edit2, Power, RotateCcw, Package, Search, X, AlertTriangle, Boxes, RefreshCw, Loader2, CircleDollarSign, SlidersHorizontal } from 'lucide-react';
 import { Product, ProductFormData, ProductFamily, ProductCategory } from '../types';
 import { getSocket } from '../utils/socket';
 import { useAuth } from '../contexts/AuthContext';
@@ -44,6 +44,12 @@ export default function ProductModule() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [lifecycleTarget, setLifecycleTarget] = useState<{
+    product: Product;
+    action: 'deactivate' | 'reactivate';
+  } | null>(null);
+  const [lifecycleReason, setLifecycleReason] = useState('');
+  const [lifecycleLoading, setLifecycleLoading] = useState(false);
 
   useEffect(() => {
     fetchProducts(true);
@@ -242,58 +248,50 @@ export default function ProductModule() {
     setIsModalOpen(true);
   };
 
-  // Helper para mostrar mensajes (Toast)
-  const mostrarToast = (mensaje: string) => {
-    console.log("[TOAST]:", mensaje);
-    // Por ahora usamos alert para asegurar visibilidad inmediata
-    alert(mensaje);
+  const openLifecycleModal = (product: Product) => {
+    setLifecycleTarget({
+      product,
+      action: product.estado === 'activo' ? 'deactivate' : 'reactivate',
+    });
+    setLifecycleReason('');
   };
 
-  async function handleDeleteProduct(productId: number, productoObjeto: Product) {
+  const closeLifecycleModal = () => {
+    if (lifecycleLoading) return;
+    setLifecycleTarget(null);
+    setLifecycleReason('');
+  };
+
+  const handleLifecycleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!lifecycleTarget) return;
+
+    const motivo = lifecycleReason.trim();
+    if (motivo.length < 3) return;
+
+    setLifecycleLoading(true);
+
     try {
-      // 2.a Verificar existencia del ID
-      if (!productId) throw new Error("productId inválido: " + productId);
-
-      // 2.b Intento de eliminación directa en la BD (vía API)
-      const response = await apiFetch(`/api/products/${productId}`, {
-        method: 'DELETE'
-      });
-
+      const response = await apiFetch(
+        `/api/products/${lifecycleTarget.product.id}?action=${lifecycleTarget.action}`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ motivo }),
+        }
+      );
       const body = await response.json();
       unwrapResponse(body);
 
-      // 2.c Actualizar estado UI inmediatamente
-      setProducts(prev => prev.filter(p => p.id !== productId));
-      return;
-    } catch (err) {
-      console.error("Error al eliminar directamente:", err);
-
-      // 3) Fallback imprescindible si el delete falla: soft-delete
-      try {
-        // Preparamos los datos para el fallback (marcar como inactivo y eliminado)
-        const fallbackData = {
-          ...productoObjeto,
-          estado: 'inactivo',
-          eliminado: 1 // Usamos 1 para true en SQLite
-        };
-
-        const responseFallback = await apiFetch(`/api/products/${productId}`, {
-          method: 'PUT',
-          body: JSON.stringify(fallbackData)
-        });
-
-        const bodyFallback = await responseFallback.json();
-        unwrapResponse(bodyFallback);
-
-        setProducts(prev => prev.filter(p => p.id !== productId));
-        return;
-      } catch (err2) {
-        console.error("Fallback también falló:", err2);
-        alert("No se pudo eliminar el producto. Ver consola para más detalles.");
-        throw err2;
-      }
+      await fetchProducts();
+      setLifecycleTarget(null);
+      setLifecycleReason('');
+    } catch (error: any) {
+      console.error('Error updating product lifecycle:', error);
+      alert(error?.message || 'No se pudo actualizar el estado del producto.');
+    } finally {
+      setLifecycleLoading(false);
     }
-  }
+  };
 
   const filteredProducts = useMemo(() => {
     const query = searchTerm.toLowerCase().trim();
@@ -305,10 +303,12 @@ export default function ProductModule() {
         p.codigo_unico?.toLowerCase().includes(query) ||
         p.description?.toLowerCase().includes(query) ||
         p.family_name?.toLowerCase().includes(query) ||
-        p.category_name?.toLowerCase().includes(query)
+        p.category_name?.toLowerCase().includes(query) ||
+        p.deactivation_reason?.toLowerCase().includes(query) ||
+        p.deactivated_by?.toLowerCase().includes(query)
       );
       
-      const isCritical = p.stock <= (p.stock_minimo || 0);
+      const isCritical = p.estado === 'activo' && p.stock <= (p.stock_minimo || 0);
       const matchesCritical = !showCriticalOnly || isCritical;
       
       return matchesSearch && matchesCritical;
@@ -325,7 +325,7 @@ export default function ProductModule() {
         summary.totalUnits += stock;
         summary.totalValue += stock * cost;
         if (product.estado === 'activo') summary.active += 1;
-        if (stock <= minimum) summary.critical += 1;
+        if (product.estado === 'activo' && stock <= minimum) summary.critical += 1;
         return summary;
       },
       { active: 0, critical: 0, totalUnits: 0, totalValue: 0 }
@@ -373,60 +373,66 @@ export default function ProductModule() {
     setIsExpireModalOpen(true);
   };
 
-  const renderProductActions = (product: Product) => (
-    <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-2 2xl:grid-cols-4">
-      {hasPermission('products', 'edit') && (
-        <>
+  const renderProductActions = (product: Product) => {
+    const isInactive = product.estado === 'inactivo';
+
+    return (
+      <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-2 2xl:grid-cols-4">
+        {hasPermission('products', 'edit') && (
+          <>
+            <button
+              type="button"
+              onClick={() => !isInactive && openStockModal(product)}
+              disabled={isInactive}
+              className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-2 py-2.5 text-xs font-black text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-100 focus:outline-none focus:ring-4 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+              title={isInactive ? 'Reactivalo antes de cargar stock' : `Cargar stock de ${product.name}`}
+              aria-label={isInactive ? `Producto ${product.name} inactivo; no se puede cargar stock` : `Cargar stock de ${product.name}`}
+            >
+              <Plus size={16} aria-hidden="true" />
+              <span>Cargar stock</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => !isInactive && openExpireModal(product)}
+              disabled={isInactive}
+              className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-2 py-2.5 text-xs font-black text-amber-700 transition hover:border-amber-300 hover:bg-amber-100 focus:outline-none focus:ring-4 focus:ring-amber-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+              title={isInactive ? 'Reactivalo antes de registrar una merma' : `Registrar merma de ${product.name}`}
+              aria-label={isInactive ? `Producto ${product.name} inactivo; no se puede registrar merma` : `Registrar merma de ${product.name}`}
+            >
+              <AlertTriangle size={16} aria-hidden="true" />
+              <span>Registrar merma</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleEdit(product)}
+              className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2 py-2.5 text-xs font-black text-slate-700 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+              title={`Editar ${product.name}`}
+              aria-label={`Editar producto ${product.name}`}
+            >
+              <Edit2 size={16} aria-hidden="true" />
+              <span>Editar</span>
+            </button>
+          </>
+        )}
+        {hasPermission('products', 'delete') && (
           <button
             type="button"
-            onClick={() => openStockModal(product)}
-            className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-2 py-2.5 text-xs font-black text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-100 focus:outline-none focus:ring-4 focus:ring-emerald-100"
-            title={`Cargar stock de ${product.name}`}
-            aria-label={`Cargar stock de ${product.name}`}
+            onClick={() => openLifecycleModal(product)}
+            className={`inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border px-2 py-2.5 text-xs font-black transition focus:outline-none focus:ring-4 ${
+              isInactive
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 focus:ring-emerald-100'
+                : 'border-red-200 bg-white text-red-600 hover:bg-red-50 focus:ring-red-100'
+            }`}
+            title={isInactive ? `Reactivar ${product.name}` : `Dar de baja ${product.name}`}
+            aria-label={isInactive ? `Reactivar producto ${product.name}` : `Dar de baja producto ${product.name}`}
           >
-            <Plus size={16} aria-hidden="true" />
-            <span>Cargar stock</span>
+            {isInactive ? <RotateCcw size={16} aria-hidden="true" /> : <Power size={16} aria-hidden="true" />}
+            <span>{isInactive ? 'Reactivar' : 'Dar de baja'}</span>
           </button>
-          <button
-            type="button"
-            onClick={() => openExpireModal(product)}
-            className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-2 py-2.5 text-xs font-black text-amber-700 transition hover:border-amber-300 hover:bg-amber-100 focus:outline-none focus:ring-4 focus:ring-amber-100"
-            title={`Dar de baja o registrar merma de ${product.name}`}
-            aria-label={`Dar de baja o registrar merma de ${product.name}`}
-          >
-            <AlertTriangle size={16} aria-hidden="true" />
-            <span>Dar de baja</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handleEdit(product)}
-            className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2 py-2.5 text-xs font-black text-slate-700 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-100"
-            title={`Editar ${product.name}`}
-            aria-label={`Editar producto ${product.name}`}
-          >
-            <Edit2 size={16} aria-hidden="true" />
-            <span>Editar</span>
-          </button>
-        </>
-      )}
-      {hasPermission('products', 'delete') && (
-        <button
-          type="button"
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            handleDeleteProduct(product.id, product);
-          }}
-          className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-white px-2 py-2.5 text-xs font-black text-red-600 transition hover:bg-red-50 focus:outline-none focus:ring-4 focus:ring-red-100"
-          title={`Eliminar ${product.name}`}
-          aria-label={`Eliminar producto ${product.name}`}
-        >
-          <Trash2 size={16} aria-hidden="true" />
-          <span>Eliminar</span>
-        </button>
-      )}
-    </div>
-  );
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-full min-w-0 bg-slate-50/70 px-2 py-3 sm:px-4 sm:py-5 lg:px-6 lg:py-6">
@@ -692,6 +698,18 @@ export default function ProductModule() {
                                 </span>
                               )}
                             </div>
+                            {product.estado === 'inactivo' && (
+                              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
+                                <p className="font-black text-slate-700">Producto dado de baja</p>
+                                <p className="break-words">{product.deactivation_reason || 'Baja histórica sin motivo registrado.'}</p>
+                                {(product.deactivated_by || product.deactivated_at) && (
+                                  <p className="mt-1 text-[11px] text-slate-400">
+                                    {product.deactivated_by || 'Usuario no informado'}
+                                    {product.deactivated_at ? ` · ${new Date(product.deactivated_at).toLocaleString('es-AR')}` : ''}
+                                  </p>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -754,6 +772,112 @@ export default function ProductModule() {
             </div>
           )}
         </section>
+      {lifecycleTarget && (
+        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+          <form
+            onSubmit={handleLifecycleSubmit}
+            className="flex max-h-[100dvh] w-full flex-col overflow-hidden rounded-t-3xl border border-slate-200 bg-white shadow-2xl sm:max-h-[92dvh] sm:max-w-lg sm:rounded-3xl"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5 sm:p-6">
+              <div className="flex min-w-0 items-start gap-3">
+                <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${
+                  lifecycleTarget.action === 'deactivate'
+                    ? 'bg-red-100 text-red-700'
+                    : 'bg-emerald-100 text-emerald-700'
+                }`}>
+                  {lifecycleTarget.action === 'deactivate'
+                    ? <Power size={22} aria-hidden="true" />
+                    : <RotateCcw size={22} aria-hidden="true" />}
+                </div>
+                <div className="min-w-0">
+                  <h2 className="text-xl font-black text-slate-950">
+                    {lifecycleTarget.action === 'deactivate' ? 'Dar de baja producto' : 'Reactivar producto'}
+                  </h2>
+                  <p className="mt-1 break-words text-sm text-slate-500">{lifecycleTarget.product.name}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeLifecycleModal}
+                disabled={lifecycleLoading}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 disabled:opacity-50"
+                aria-label="Cerrar"
+              >
+                <X size={20} aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-5 sm:p-6">
+              <div className={`rounded-2xl border p-4 text-sm leading-6 ${
+                lifecycleTarget.action === 'deactivate'
+                  ? 'border-amber-200 bg-amber-50 text-amber-900'
+                  : 'border-emerald-200 bg-emerald-50 text-emerald-900'
+              }`}>
+                {lifecycleTarget.action === 'deactivate' ? (
+                  <>
+                    El producto dejará de estar disponible en ventas, compras, rutas y pedidos nuevos.
+                    Su stock e historial se conservarán. Si tiene pedidos activos vinculados, la operación será bloqueada.
+                    {Number(lifecycleTarget.product.stock || 0) > 0 && (
+                      <strong className="mt-2 block">
+                        Conserva {Number(lifecycleTarget.product.stock).toLocaleString('es-AR')} unidades en inventario.
+                      </strong>
+                    )}
+                  </>
+                ) : (
+                  <>El producto volverá a estar disponible para operaciones nuevas. Su stock e historial no se modificarán.</>
+                )}
+              </div>
+
+              <label className="mt-5 block">
+                <span className="text-xs font-black uppercase tracking-wider text-slate-600">
+                  Motivo obligatorio
+                </span>
+                <textarea
+                  value={lifecycleReason}
+                  onChange={(event) => setLifecycleReason(event.target.value.slice(0, 500))}
+                  rows={4}
+                  autoFocus
+                  className="mt-2 w-full resize-none rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                  placeholder={lifecycleTarget.action === 'deactivate'
+                    ? 'Ej.: Producto discontinuado por el proveedor'
+                    : 'Ej.: El producto vuelve a comercializarse'}
+                  disabled={lifecycleLoading}
+                />
+              </label>
+              <div className="mt-2 flex items-center justify-between text-[11px]">
+                <span className={lifecycleReason.trim().length > 0 && lifecycleReason.trim().length < 3 ? 'text-red-600' : 'text-slate-400'}>
+                  Mínimo 3 caracteres
+                </span>
+                <span className="text-slate-400">{lifecycleReason.length}/500</span>
+              </div>
+            </div>
+
+            <div className="grid gap-3 border-t border-slate-200 bg-slate-50 p-5 sm:grid-cols-2 sm:p-6">
+              <button
+                type="button"
+                onClick={closeLifecycleModal}
+                disabled={lifecycleLoading}
+                className="min-h-12 rounded-xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={lifecycleLoading || lifecycleReason.trim().length < 3}
+                className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-xl px-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50 ${
+                  lifecycleTarget.action === 'deactivate'
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-emerald-600 hover:bg-emerald-700'
+                }`}
+              >
+                {lifecycleLoading && <Loader2 size={17} className="animate-spin" aria-hidden="true" />}
+                {lifecycleTarget.action === 'deactivate' ? 'Confirmar baja' : 'Confirmar reactivación'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {isModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
           <div className="flex max-h-[100dvh] w-full flex-col overflow-hidden rounded-t-3xl border border-slate-200 bg-white shadow-2xl animate-in fade-in zoom-in duration-200 sm:max-h-[92dvh] sm:max-w-2xl sm:rounded-3xl">
@@ -825,15 +949,23 @@ export default function ProductModule() {
               </div>
               <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2">
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wider">Stock Inicial</label>
+                  <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wider">
+                    {editingProduct ? 'Stock actual' : 'Stock inicial'}
+                  </label>
                   <input
                     required
                     type="number"
                     min="0"
-                    className="min-h-11 w-full rounded-xl border border-slate-200 px-3 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm"
+                    disabled={Boolean(editingProduct)}
+                    className="min-h-11 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
                     value={formData.stock}
                     onChange={(e) => setFormData({ ...formData, stock: parseInt(e.target.value) || 0 })}
                   />
+                  {editingProduct && (
+                    <p className="mt-1 text-[10px] leading-4 text-slate-400">
+                      Usá Cargar stock o Registrar merma para modificar existencias con trazabilidad.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wider">Stock Mínimo</label>
@@ -899,35 +1031,20 @@ export default function ProductModule() {
                   </div>
                 </div>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-2 uppercase tracking-wider">Estado del Producto</label>
-                <div className="flex p-1 bg-slate-100 rounded-xl">
-                  <button
-                    type="button"
-                    onClick={() => setFormData({ ...formData, estado: 'activo' })}
-                    className={`flex-1 py-2 text-xs font-medium rounded-lg transition-all ${
-                      formData.estado === 'activo'
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                  >
-                    Activo
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFormData({ ...formData, estado: 'inactivo' })}
-                    className={`flex-1 py-2 text-xs font-medium rounded-lg transition-all ${
-                      formData.estado === 'inactivo'
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                  >
-                    Inactivo
-                  </button>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-black uppercase tracking-wider text-slate-500">Estado del producto</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className={`rounded-full border px-3 py-1 text-xs font-black uppercase ${
+                    formData.estado === 'activo'
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                      : 'border-slate-200 bg-white text-slate-500'
+                  }`}>
+                    {formData.estado}
+                  </span>
+                  <span className="text-xs leading-5 text-slate-500">
+                    El estado se cambia desde las acciones Dar de baja o Reactivar para conservar motivo, usuario y fecha.
+                  </span>
                 </div>
-                <p className="text-[10px] text-slate-400 mt-2 px-1 italic">
-                  * Los productos inactivos no aparecerán en el buscador de ventas.
-                </p>
               </div>
               <div className="sticky bottom-0 -mx-4 flex flex-col-reverse gap-2 border-t border-slate-200 bg-white/95 px-4 pb-1 pt-4 backdrop-blur sm:-mx-6 sm:flex-row sm:px-6">
                 <button

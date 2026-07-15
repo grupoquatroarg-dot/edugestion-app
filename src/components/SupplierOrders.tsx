@@ -84,7 +84,7 @@ export default function SupplierOrders() {
 
   const fetchAllProducts = async () => {
     try {
-      const res = await apiFetch('/api/products?all=true');
+      const res = await apiFetch('/api/products?active_only=true');
       const body = await res.json();
       const data = unwrapResponse(body);
       setAllProducts(data);

@@ -211,7 +211,7 @@ export default async function handler(req: any, res: any) {
       const result = await pool.query(`
         SELECT id, name, codigo_unico, stock, stock_minimo
         FROM products
-        WHERE stock <= stock_minimo AND eliminado = 0
+        WHERE stock <= stock_minimo AND eliminado = 0 AND estado = 'activo'
         ORDER BY stock ASC, name ASC
       `);
 
@@ -430,7 +430,7 @@ export default async function handler(req: any, res: any) {
           `
             SELECT name, stock
             FROM products
-            WHERE stock <= stock_minimo AND eliminado = 0
+            WHERE stock <= stock_minimo AND eliminado = 0 AND estado = 'activo'
             ORDER BY stock ASC, name ASC
           `
         );

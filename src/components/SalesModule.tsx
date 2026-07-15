@@ -272,7 +272,7 @@ export default function SalesModule() {
 
   const fetchActiveProducts = async (): Promise<boolean> => {
     try {
-      const res = await apiFetch('/api/products');
+      const res = await apiFetch('/api/products?active_only=true');
       const body = await res.json();
       const data = unwrapResponse(body);
       setProducts(Array.isArray(data) ? data : []);
@@ -640,6 +640,11 @@ export default function SalesModule() {
   }, [products, searchTerm]);
 
   const addToCart = (product: Product) => {
+    if (product.estado !== 'activo') {
+      alert('El producto está inactivo y no puede agregarse a una venta.');
+      return;
+    }
+
     setCart(prev => {
       const existing = prev.find(item => item.product.id === product.id);
       if (existing) {

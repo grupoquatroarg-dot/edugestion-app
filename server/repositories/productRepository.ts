@@ -31,6 +31,9 @@ const mapProduct = (row: any) => {
     estado: row.estado,
     eliminado: toNumber(row.eliminado),
     active: toNumber(row.active, 1),
+    deactivated_at: row.deactivated_at ?? null,
+    deactivated_by: row.deactivated_by ?? null,
+    deactivation_reason: row.deactivation_reason ?? null,
     created_at: row.created_at,
     family_name: row.family_name ?? null,
     category_name: row.category_name ?? null,
@@ -40,14 +43,16 @@ const mapProduct = (row: any) => {
 const getExecutor = (executor?: Queryable) => executor || getPostgresPool();
 
 export const ProductRepository = {
-  findAll(executor?: Queryable) {
+  findAll(options: { activeOnly?: boolean } = {}, executor?: Queryable) {
+    const activeFilter = options.activeOnly ? " AND p.estado = 'activo'" : "";
+
     if (!isPostgresConfigured()) {
       return db.prepare(`
         SELECT p.*, f.name as family_name, c.name as category_name
         FROM products p
         LEFT JOIN product_families f ON p.family_id = f.id
         LEFT JOIN product_categories c ON p.category_id = c.id
-        WHERE p.eliminado = 0
+        WHERE p.eliminado = 0${activeFilter}
         ORDER BY p.name ASC
       `).all();
     }
@@ -59,7 +64,7 @@ export const ProductRepository = {
          FROM products p
          LEFT JOIN product_families f ON p.family_id = f.id
          LEFT JOIN product_categories c ON p.category_id = c.id
-         WHERE p.eliminado = 0
+         WHERE p.eliminado = 0${activeFilter}
          ORDER BY p.name ASC`
       )
       .then((result) => result.rows.map(mapProduct));
@@ -180,7 +185,6 @@ export const ProductRepository = {
       description,
       cost,
       sale_price,
-      stock = 0,
       stock_minimo = 0,
       company,
       family_id,
@@ -201,7 +205,7 @@ export const ProductRepository = {
 
       db.prepare(`
         UPDATE products
-        SET code = ?, codigo_unico = ?, name = ?, description = ?, cost = ?, sale_price = ?, stock = ?, stock_minimo = ?, company = ?, family_id = ?, category_id = ?, estado = ?
+        SET code = ?, codigo_unico = ?, name = ?, description = ?, cost = ?, sale_price = ?, stock_minimo = ?, company = ?, family_id = ?, category_id = ?
         WHERE id = ?
       `).run(
         code,
@@ -210,12 +214,10 @@ export const ProductRepository = {
         description || null,
         cost,
         sale_price,
-        stock,
         stock_minimo,
         company,
         family_id ?? null,
         category_id ?? null,
-        estado,
         id
       );
 
@@ -242,13 +244,11 @@ export const ProductRepository = {
                description = $4,
                cost = $5,
                sale_price = $6,
-               stock = $7,
-               stock_minimo = $8,
-               company = $9,
-               family_id = $10,
-               category_id = $11,
-               estado = $12
-           WHERE id = $13
+               stock_minimo = $7,
+               company = $8,
+               family_id = $9,
+               category_id = $10
+           WHERE id = $11
            RETURNING id`,
           [
             code,
@@ -257,12 +257,10 @@ export const ProductRepository = {
             description || null,
             cost,
             sale_price,
-            stock,
             stock_minimo,
             company,
             family_id ?? null,
             category_id ?? null,
-            estado,
             id,
           ]
         );

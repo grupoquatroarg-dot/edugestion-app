@@ -79,10 +79,13 @@ const handleSqlite = async (action: InventoryAction, productId: number, data: an
   const { default: db } = await import("../../db.js");
   return db.transaction(() => {
     const product = db
-      .prepare("SELECT id, stock FROM products WHERE id = ? AND eliminado = 0")
+      .prepare("SELECT id, stock, estado FROM products WHERE id = ? AND eliminado = 0")
       .get(productId) as any;
 
     if (!product) throw new AppError("Producto no encontrado", 404);
+    if (String(product.estado || "activo").toLowerCase() !== "activo") {
+      throw new AppError("El producto está inactivo. Reactivalo antes de modificar su inventario.", 409);
+    }
 
     if (action === "stock") {
       db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?").run(data.cantidad, productId);
@@ -141,7 +144,7 @@ export const applyProductInventoryPostgres = async (
   usuario: string
 ) => {
   const productResult = await client.query(
-    `SELECT id, stock
+    `SELECT id, stock, estado
      FROM products
      WHERE id = $1 AND eliminado = 0
      LIMIT 1
@@ -150,6 +153,10 @@ export const applyProductInventoryPostgres = async (
   );
 
   if (!productResult.rowCount) throw new AppError("Producto no encontrado", 404);
+
+  if (String(productResult.rows[0]?.estado || "activo").toLowerCase() !== "activo") {
+    throw new AppError("El producto está inactivo. Reactivalo antes de modificar su inventario.", 409);
+  }
 
   if (action === "stock") {
     await client.query(

@@ -150,7 +150,7 @@ router.get("/", requirePermission('dashboard', 'view'), validate(reportParamsSch
   `).all(fromDate, toDate);
 
   const lowStock = db.prepare(`
-    SELECT name, stock FROM products WHERE stock <= 5 AND eliminado = 0
+    SELECT name, stock FROM products WHERE stock <= 5 AND eliminado = 0 AND estado = 'activo'
   `).all();
 
   reports.productos = {

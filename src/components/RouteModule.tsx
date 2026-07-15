@@ -223,7 +223,7 @@ export default function RouteModule() {
         apiFetch('/api/clientes?endpoint=routes'),
         apiFetch('/api/clientes?endpoint=routes-today'),
         apiFetch('/api/clientes'),
-        apiFetch('/api/products')
+        apiFetch('/api/products?active_only=true')
       ]);
 
       const failed = responses.find(response => !response.ok);

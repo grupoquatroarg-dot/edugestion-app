@@ -87,7 +87,7 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
       `).all(currentMonth);
 
       const stockValorizado = db.prepare("SELECT SUM(stock * cost) as total FROM products WHERE eliminado = 0").get() as any;
-      const stockCritico = db.prepare("SELECT COUNT(*) as count FROM products WHERE stock <= stock_minimo AND eliminado = 0").get() as any;
+      const stockCritico = db.prepare("SELECT COUNT(*) as count FROM products WHERE stock <= stock_minimo AND eliminado = 0 AND estado = 'activo'").get() as any;
       const pedidosPendientes = db.prepare("SELECT COUNT(*) as count FROM supplier_orders WHERE estado = 'pendiente'").get() as any;
 
       const rutaDia = db.prepare(`
@@ -248,7 +248,7 @@ router.get(["/summary", "/stats"], requirePermission("dashboard", "view"), async
         LIMIT 5
       `, [currentMonth]),
       pool.query(`SELECT COALESCE(SUM(stock * cost), 0) AS total FROM products WHERE eliminado = 0`),
-      pool.query(`SELECT COUNT(*)::int AS count FROM products WHERE stock <= stock_minimo AND eliminado = 0`),
+      pool.query(`SELECT COUNT(*)::int AS count FROM products WHERE stock <= stock_minimo AND eliminado = 0 AND estado = 'activo'`),
       pool.query(`SELECT COUNT(*)::int AS count FROM supplier_orders WHERE estado = 'pendiente'`),
       pool.query(`
         SELECT
@@ -547,7 +547,7 @@ router.get("/stock-critico", requirePermission("dashboard", "view"), async (_req
       const results = db.prepare(`
         SELECT id, name, codigo_unico, stock, stock_minimo
         FROM products
-        WHERE stock <= stock_minimo AND eliminado = 0
+        WHERE stock <= stock_minimo AND eliminado = 0 AND estado = 'activo'
         ORDER BY stock ASC
       `).all();
       return sendSuccess(res, results);
@@ -557,7 +557,7 @@ router.get("/stock-critico", requirePermission("dashboard", "view"), async (_req
     const result = await pool.query(`
       SELECT id, name, codigo_unico, stock, stock_minimo
       FROM products
-      WHERE stock <= stock_minimo AND eliminado = 0
+      WHERE stock <= stock_minimo AND eliminado = 0 AND estado = 'activo'
       ORDER BY stock ASC, name ASC
     `);
 

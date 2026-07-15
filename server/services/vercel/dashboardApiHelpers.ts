@@ -167,7 +167,7 @@ export const getSummaryData = async (pool: any) => {
       LIMIT 5
     `, [currentMonth]),
     pool.query(`SELECT COALESCE(SUM(stock * cost), 0) AS total FROM products WHERE eliminado = 0`),
-    pool.query(`SELECT COUNT(*)::int AS count FROM products WHERE stock <= stock_minimo AND eliminado = 0`),
+    pool.query(`SELECT COUNT(*)::int AS count FROM products WHERE stock <= stock_minimo AND eliminado = 0 AND estado = 'activo'`),
     pool.query(`SELECT COUNT(*)::int AS count FROM supplier_orders WHERE estado = 'pendiente'`),
     pool.query(`
       SELECT

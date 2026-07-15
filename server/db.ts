@@ -77,9 +77,25 @@ export function initDb() {
       estado TEXT DEFAULT 'activo',
       eliminado INTEGER DEFAULT 0,
       active INTEGER DEFAULT 1,
+      deactivated_at DATETIME,
+      deactivated_by TEXT,
+      deactivation_reason TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (family_id) REFERENCES product_families(id),
       FOREIGN KEY (category_id) REFERENCES product_categories(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS product_status_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL,
+      action TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      performed_by TEXT NOT NULL,
+      performed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      previous_status TEXT NOT NULL,
+      new_status TEXT NOT NULL,
+      snapshot TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (product_id) REFERENCES products(id)
     );
 
     CREATE TABLE IF NOT EXISTS users (
@@ -427,6 +443,10 @@ export function initDb() {
       VALUES (1, 'Proveedor General')
     `).run();
   }
+
+  try { db.exec("ALTER TABLE products ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE products ADD COLUMN deactivated_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE products ADD COLUMN deactivation_reason TEXT"); } catch (e) {}
 
   try { db.exec("ALTER TABLE purchase_invoices ADD COLUMN estado_pago TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE purchase_invoices ADD COLUMN monto_pagado REAL DEFAULT 0"); } catch (e) {}

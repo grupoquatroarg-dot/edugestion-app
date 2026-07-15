@@ -6,6 +6,7 @@ import { validate } from "../middleware/validate.js";
 import { z } from "zod";
 import { sendSuccess, sendError, AppError } from "../utils/response.js";
 import { getPostgresPool, isPostgresConfigured } from "../utils/postgres.js";
+import { productLifecycleService } from "../services/productLifecycleService.js";
 
 const router = express.Router();
 
@@ -46,8 +47,15 @@ const expireSchema = z.object({
   })
 });
 
+const lifecycleSchema = z.object({
+  body: z.object({
+    motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
+  }),
+});
+
 router.get("/", requireAuth, requirePermission('products', 'view'), async (req, res) => {
-  const products = await ProductRepository.findAll();
+  const activeOnly = String(req.query.active_only || "").toLowerCase() === "true";
+  const products = await ProductRepository.findAll({ activeOnly });
   return sendSuccess(res, products);
 });
 
@@ -59,7 +67,7 @@ router.post("/", requireAuth, requirePermission('products', 'create'), validate(
       let newProduct: any;
 
       db.transaction(() => {
-        newProduct = ProductRepository.create(req.body) as any;
+        newProduct = ProductRepository.create({ ...req.body, estado: 'activo' }) as any;
 
         if (req.body.stock && req.body.stock > 0) {
           db.prepare(`
@@ -77,7 +85,7 @@ router.post("/", requireAuth, requirePermission('products', 'create'), validate(
 
     try {
       await client.query('BEGIN');
-      const newProduct = await ProductRepository.create(req.body, client);
+      const newProduct = await ProductRepository.create({ ...req.body, estado: 'activo' }, client);
 
       if (req.body.stock && req.body.stock > 0) {
         await client.query(
@@ -102,7 +110,22 @@ router.post("/", requireAuth, requirePermission('products', 'create'), validate(
 
 router.put("/:id", requireAuth, requirePermission('products', 'edit'), validate(productSchema), async (req, res) => {
   try {
-    const updatedProduct = await ProductRepository.update(Number(req.params.id), req.body);
+    const productId = Number(req.params.id);
+    const currentProduct = await ProductRepository.findById(productId);
+
+    if (!currentProduct) {
+      return sendError(res, "Producto no encontrado", 404);
+    }
+
+    if (req.body.estado && req.body.estado !== currentProduct.estado) {
+      return sendError(
+        res,
+        "El estado del producto debe cambiarse desde Dar de baja o Reactivar para conservar la auditoría.",
+        409
+      );
+    }
+
+    const updatedProduct = await ProductRepository.update(productId, req.body);
     return sendSuccess(res, updatedProduct, "Producto actualizado exitosamente");
   } catch (error: any) {
     return sendError(res, error.message || "Error al actualizar el producto", error.statusCode || 400, error.errors || []);
@@ -117,6 +140,12 @@ router.post("/:id/stock", requireAuth, requirePermission('products', 'edit'), va
   try {
     if (!isPostgresConfigured()) {
       db.transaction(() => {
+        const product = db.prepare("SELECT id, estado FROM products WHERE id = ? AND eliminado = 0").get(productId) as any;
+        if (!product) throw new AppError("Producto no encontrado", 404);
+        if (String(product.estado || "activo").toLowerCase() !== "activo") {
+          throw new AppError("El producto está inactivo. Reactivalo antes de modificar su inventario.", 409);
+        }
+
         db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?").run(cantidad, productId);
         db.prepare(`
           INSERT INTO stock_movimientos (product_id, cantidad, costo_unitario, cantidad_restante, tipo_movimiento, usuario, motivo)
@@ -134,12 +163,15 @@ router.post("/:id/stock", requireAuth, requirePermission('products', 'edit'), va
       await client.query('BEGIN');
 
       const existing = await client.query(
-        "SELECT id FROM products WHERE id = $1 AND eliminado = 0 LIMIT 1",
+        "SELECT id, estado FROM products WHERE id = $1 AND eliminado = 0 LIMIT 1 FOR UPDATE",
         [productId]
       );
 
       if (!existing.rowCount) {
         throw new AppError("Producto no encontrado", 404);
+      }
+      if (String(existing.rows[0]?.estado || "activo").toLowerCase() !== "activo") {
+        throw new AppError("El producto está inactivo. Reactivalo antes de modificar su inventario.", 409);
       }
 
       await client.query("UPDATE products SET stock = stock + $1 WHERE id = $2", [cantidad, productId]);
@@ -162,20 +194,52 @@ router.post("/:id/stock", requireAuth, requirePermission('products', 'edit'), va
   }
 });
 
-router.delete("/:id", requireAuth, requirePermission('products', 'delete'), async (req, res) => {
-  const productId = Number(req.params.id);
-
-  try {
-    const hasSales = await ProductRepository.hasSales(productId);
-    if (hasSales) {
-      return sendError(res, "No se puede eliminar el producto porque tiene ventas asociadas. Intente marcarlo como 'Inactivo' en su lugar.", 400);
+router.post(
+  "/:id/deactivate",
+  requireAuth,
+  requirePermission('products', 'delete'),
+  validate(lifecycleSchema),
+  async (req, res) => {
+    try {
+      const result = await productLifecycleService.changeStatus({
+        productId: Number(req.params.id),
+        action: "deactivate",
+        motivo: req.body.motivo,
+        usuario: (req as any).user?.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Producto dado de baja correctamente");
+    } catch (error: any) {
+      return sendError(res, error.message || "No se pudo dar de baja el producto", error.statusCode || 400, error.errors || []);
     }
-
-    await ProductRepository.softDelete(productId);
-    return sendSuccess(res, null, "Producto eliminado exitosamente");
-  } catch (error: any) {
-    return sendError(res, error.message || "Error al eliminar el producto", error.statusCode || 400, error.errors || []);
   }
+);
+
+router.post(
+  "/:id/reactivate",
+  requireAuth,
+  requirePermission('products', 'delete'),
+  validate(lifecycleSchema),
+  async (req, res) => {
+    try {
+      const result = await productLifecycleService.changeStatus({
+        productId: Number(req.params.id),
+        action: "reactivate",
+        motivo: req.body.motivo,
+        usuario: (req as any).user?.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Producto reactivado correctamente");
+    } catch (error: any) {
+      return sendError(res, error.message || "No se pudo reactivar el producto", error.statusCode || 400, error.errors || []);
+    }
+  }
+);
+
+router.delete("/:id", requireAuth, requirePermission('products', 'delete'), async (_req, res) => {
+  return sendError(
+    res,
+    "La eliminación física de productos está deshabilitada. Usá la opción Dar de baja.",
+    405
+  );
 });
 
 router.post("/:id/min-stock", requireAuth, requirePermission('products', 'edit'), validate(minStockSchema), async (req, res) => {
@@ -184,12 +248,29 @@ router.post("/:id/min-stock", requireAuth, requirePermission('products', 'edit')
 
   try {
     if (!isPostgresConfigured()) {
+      const product = db.prepare("SELECT id, estado FROM products WHERE id = ? AND eliminado = 0").get(productId) as any;
+      if (!product) throw new AppError("Producto no encontrado", 404);
+      if (String(product.estado || "activo").toLowerCase() !== "activo") {
+        throw new AppError("El producto está inactivo. Reactivalo antes de modificar su inventario.", 409);
+      }
+
       db.prepare("UPDATE products SET stock_minimo = ? WHERE id = ?").run(stock_minimo, productId);
       return sendSuccess(res, null, "Stock mínimo actualizado exitosamente");
     }
 
     const pool = getPostgresPool();
-    await pool.query("UPDATE products SET stock_minimo = $1 WHERE id = $2", [stock_minimo, productId]);
+    const result = await pool.query(
+      `UPDATE products
+       SET stock_minimo = $1
+       WHERE id = $2
+         AND eliminado = 0
+         AND estado = 'activo'
+       RETURNING id`,
+      [stock_minimo, productId]
+    );
+    if (!result.rowCount) {
+      throw new AppError("Producto no encontrado o inactivo", 409);
+    }
     return sendSuccess(res, null, "Stock mínimo actualizado exitosamente");
   } catch (error: any) {
     return sendError(res, error.message || "Error al actualizar stock mínimo", error.statusCode || 400, error.errors || []);
@@ -204,9 +285,12 @@ router.post("/:id/expire", requireAuth, requirePermission('products', 'edit'), v
   try {
     if (!isPostgresConfigured()) {
       db.transaction(() => {
-        const product = db.prepare("SELECT stock FROM products WHERE id = ?").get(productId) as any;
+        const product = db.prepare("SELECT stock, estado FROM products WHERE id = ? AND eliminado = 0").get(productId) as any;
         if (!product) {
           throw new AppError("Producto no encontrado", 404);
+        }
+        if (String(product.estado || "activo").toLowerCase() !== "activo") {
+          throw new AppError("El producto está inactivo. Reactivalo antes de modificar su inventario.", 409);
         }
 
         if (Number(product.stock) < cantidad) {
@@ -230,12 +314,16 @@ router.post("/:id/expire", requireAuth, requirePermission('products', 'edit'), v
       await client.query('BEGIN');
 
       const productResult = await client.query(
-        "SELECT stock FROM products WHERE id = $1 AND eliminado = 0 LIMIT 1",
+        "SELECT stock, estado FROM products WHERE id = $1 AND eliminado = 0 LIMIT 1 FOR UPDATE",
         [productId]
       );
 
       if (!productResult.rowCount) {
         throw new AppError("Producto no encontrado", 404);
+      }
+
+      if (String(productResult.rows[0]?.estado || "activo").toLowerCase() !== "activo") {
+        throw new AppError("El producto está inactivo. Reactivalo antes de modificar su inventario.", 409);
       }
 
       const currentStock = Number(productResult.rows[0].stock || 0);

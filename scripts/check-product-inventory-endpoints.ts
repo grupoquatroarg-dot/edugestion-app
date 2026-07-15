@@ -17,7 +17,8 @@ for (const action of ['stock', 'expire', 'min-stock']) {
   assert(!fs.existsSync(obsoletePath), `La ruta ${obsoletePath} crea una función Vercel innecesaria.`);
 }
 assert(
-  consolidatedSource.includes('handleProductInventoryAction(req, res, action as InventoryAction)'),
+  consolidatedSource.includes('handleProductInventoryAction(req, res, action)') ||
+    consolidatedSource.includes('handleProductInventoryAction(req, res, action as InventoryAction)'),
   'La función consolidada no delega al servicio compartido de inventario.',
 );
 
@@ -63,8 +64,8 @@ const state = {
 const client = {
   async query(text: string, params: any[] = []) {
     const sql = text.replace(/\s+/g, ' ').trim();
-    if (sql.startsWith('SELECT id, stock FROM products')) {
-      return { rows: [{ id: params[0], stock: state.stock }], rowCount: 1 };
+    if (sql.startsWith('SELECT id, stock')) {
+      return { rows: [{ id: params[0], stock: state.stock, estado: 'activo' }], rowCount: 1 };
     }
     if (sql.startsWith('UPDATE products SET stock = COALESCE')) {
       state.stock += Number(params[0]);
@@ -105,6 +106,30 @@ try {
 }
 assert(insufficientStockBlocked, 'La merma permitió descontar más stock del disponible.');
 
+const inactiveClient = {
+  async query(text: string, params: any[] = []) {
+    const sql = text.replace(/\s+/g, ' ').trim();
+    if (sql.startsWith('SELECT id, stock')) {
+      return { rows: [{ id: params[0], stock: 7, estado: 'inactivo' }], rowCount: 1 };
+    }
+    throw new Error(`No debía ejecutarse otra consulta para un producto inactivo: ${sql}`);
+  },
+};
+
+let inactiveProductBlocked = false;
+try {
+  await applyProductInventoryPostgres(
+    inactiveClient,
+    'stock',
+    200,
+    { cantidad: 1, costo_unitario: 5 },
+    'Tester',
+  );
+} catch (error: any) {
+  inactiveProductBlocked = error?.statusCode === 409;
+}
+assert(inactiveProductBlocked, 'El inventario permitió modificar un producto inactivo.');
+
 const localStorageMock = {
   getItem() { return null; },
 };
@@ -122,4 +147,4 @@ try {
 }
 assert(friendlyError.includes('no está disponible'), 'apiFetch no convierte un NOT_FOUND de Vercel en un error comprensible.');
 
-console.log(`Inventario correcto: una ruta consolidada con tres acciones, ${sqlQueriesChecked} consultas SQL, carga, mínimo, merma, límite y error Vercel verificados.`);
+console.log(`Inventario correcto: una ruta consolidada con tres acciones, ${sqlQueriesChecked} consultas SQL, carga, mínimo, merma, límite, bloqueo inactivo y error Vercel verificados.`);
