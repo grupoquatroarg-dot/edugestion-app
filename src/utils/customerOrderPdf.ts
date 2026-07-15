@@ -49,7 +49,8 @@ export const getCustomerOrderPdfFileName = (order: any) => {
     ? getBusinessDateKey(order.fecha) || getBusinessDateInputValue()
     : getBusinessDateInputValue();
 
-  return `Pedido_${clientName}_${dateText}.pdf`;
+  const cancelledSuffix = order?.estado === 'cancelado' ? '_ANULADO' : '';
+  return `Pedido_${clientName}_${dateText}${cancelledSuffix}.pdf`;
 };
 
 const buildCustomerOrderPdf = (
@@ -70,7 +71,13 @@ const buildCustomerOrderPdf = (
   doc.text(String(businessName), margin, isPrint ? 18 : 18);
 
   doc.setFontSize(isPrint ? 17 : 14);
-  doc.text(`Pedido de cliente #${order?.numero_pedido || order?.id || ''}`, margin, isPrint ? 32 : 30);
+  doc.text(
+    order?.estado === 'cancelado'
+      ? `PEDIDO DE CLIENTE - ANULADO #${order?.numero_pedido || order?.id || ''}`
+      : `Pedido de cliente #${order?.numero_pedido || order?.id || ''}`,
+    margin,
+    isPrint ? 32 : 30
+  );
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(isPrint ? 11 : 9);
@@ -155,6 +162,27 @@ const buildCustomerOrderPdf = (
       maxWidth: pageWidth - margin * 2,
     });
     doc.setTextColor(0, 0, 0);
+  }
+
+
+  if (order?.estado === 'cancelado' && order?.cancel_reason) {
+    doc.setFontSize(isPrint ? 11 : 9);
+    doc.setTextColor(isPrint ? 0 : 180, isPrint ? 0 : 40, isPrint ? 0 : 40);
+    doc.text(`Motivo de anulación: ${order.cancel_reason}`, margin, boxY + (isPrint ? 42 : 35), {
+      maxWidth: pageWidth - margin * 2,
+    });
+    doc.setTextColor(0, 0, 0);
+
+    const auditDetails = [
+      order?.cancelled_by ? `Por: ${order.cancelled_by}` : '',
+      order?.cancelled_at ? `Fecha: ${formatBusinessDate(order.cancelled_at)}` : '',
+    ].filter(Boolean).join(' · ');
+
+    if (auditDetails) {
+      doc.text(auditDetails, margin, boxY + (isPrint ? 50 : 43), {
+        maxWidth: pageWidth - margin * 2,
+      });
+    }
   }
 
   if (isPrint) {

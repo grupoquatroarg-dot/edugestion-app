@@ -241,8 +241,8 @@ const createFakeClient = (orderOverrides: Record<string, unknown> = {}) => {
         state.order.cancelled_at = params[0];
         state.order.cancelled_by = params[1];
         state.order.cancel_reason = params[2];
-        state.order.cancellation_source = "manual";
-        state.order.cancelled_from_status = params[3];
+        state.order.cancellation_source = params[3];
+        state.order.cancelled_from_status = params[4];
         return { rows: [], rowCount: 1 };
       }
 
@@ -252,6 +252,7 @@ const createFakeClient = (orderOverrides: Record<string, unknown> = {}) => {
 };
 
 const successClient = createFakeClient();
+await successClient.query("BEGIN");
 const success = await supplierOrderCancellationService.cancelSupplierOrder(
   {
     supplierOrderId: 50,
@@ -260,6 +261,7 @@ const success = await supplierOrderCancellationService.cancelSupplierOrder(
   },
   successClient
 );
+await successClient.query("COMMIT");
 
 assert(successClient.state.committed, "El servicio real no confirmó la transacción.");
 assert(!successClient.state.rolledBack, "El servicio real hizo rollback inesperado.");
@@ -284,6 +286,7 @@ for (const [name, overrides, expectedText] of [
   const client = createFakeClient(overrides);
   let message = "";
 
+  await client.query("BEGIN");
   try {
     await supplierOrderCancellationService.cancelSupplierOrder(
       {
@@ -293,8 +296,10 @@ for (const [name, overrides, expectedText] of [
       },
       client
     );
+    await client.query("COMMIT");
   } catch (error: any) {
     message = String(error?.message || "");
+    await client.query("ROLLBACK");
   }
 
   assert(
@@ -311,6 +316,7 @@ for (const overrides of [
   { customer_order_id: 30, customer_order_estado: "rechazado" },
 ]) {
   const client = createFakeClient(overrides);
+  await client.query("BEGIN");
   await supplierOrderCancellationService.cancelSupplierOrder(
     {
       supplierOrderId: 50,
@@ -319,6 +325,7 @@ for (const overrides of [
     },
     client
   );
+  await client.query("COMMIT");
   assert(client.state.committed, "Un origen ya cancelado debería permitir cerrar el pedido pendiente.");
 }
 

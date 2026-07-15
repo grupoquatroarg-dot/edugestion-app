@@ -6,6 +6,7 @@ import bcrypt from "bcryptjs";
 import { sendError, sendSuccess } from "../server/utils/response.js";
 import { getPostgresPool } from "../server/utils/postgres.js";
 import { salesService } from "../server/services/salesService.js";
+import { customerOrderCancellationService } from "../server/services/customerOrderCancellationService.js";
 
 const clientSchema = z.object({
   nombre_apellido: z.string().min(2, "El nombre es requerido"),
@@ -1578,6 +1579,9 @@ const mapPortalOrder = (row: any, items: any[] = []) => {
     entregado_at: row.entregado_at || null,
     rejected_at: row.rejected_at || null,
     cancelled_at: row.cancelled_at || null,
+    cancelled_by: row.cancelled_by || "",
+    cancellation_source: row.cancellation_source || "",
+    cancelled_from_status: row.cancelled_from_status || "",
     items,
   };
 };
@@ -1818,26 +1822,26 @@ const handleCustomerPortal = async (req: any, res: any) => {
     const orderId = getId(req);
     if (!orderId) return sendError(res, "ID de pedido inválido", 400);
 
-    const body = getBody(req);
-    const reason = String(body?.motivo || "Cancelado por el cliente").trim() || "Cancelado por el cliente";
+    const reason = String(getBody(req)?.motivo || "").trim();
 
-    const result = await pool.query(
-      `UPDATE customer_orders
-       SET estado = 'cancelado',
-           cancel_reason = $1,
-           cancelled_at = now()
-       WHERE id = $2
-         AND cliente_id = $3
-         AND estado = 'pendiente_aprobacion'
-       RETURNING id, numero_pedido`,
-      [reason, orderId, clienteId]
-    );
+    try {
+      const result = await customerOrderCancellationService.cancelCustomerOrder({
+        customerOrderId: orderId,
+        motivo: reason,
+        usuario: `Cliente #${clienteId}`,
+        source: "customer_portal",
+        customerId: clienteId,
+      });
 
-    if (!result.rowCount) {
-      return sendError(res, "Solo podés cancelar pedidos pendientes de aprobación", 400);
+      return sendSuccess(res, result, "Pedido cancelado");
+    } catch (error: any) {
+      return sendError(
+        res,
+        error?.message || "No se pudo cancelar el pedido",
+        error?.statusCode || 400,
+        error?.errors || []
+      );
     }
-
-    return sendSuccess(res, result.rows[0], "Pedido cancelado");
   }
 
 

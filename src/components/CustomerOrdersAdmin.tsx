@@ -24,6 +24,7 @@ import {
 import { unwrapResponse, apiFetch } from '../utils/api';
 import { generateCustomerOrderPdf, printCustomerOrderPdf } from '../utils/customerOrderPdf';
 import { formatBusinessDateTime, getBusinessDateInputValue, getBusinessDateKey } from '../utils/businessDate';
+import { useAuth } from '../contexts/AuthContext';
 
 const formatCurrency = (value: number) =>
   `$${Number(value || 0).toLocaleString('es-AR', {
@@ -162,6 +163,7 @@ export default function CustomerOrdersAdmin({
 }: {
   onChanged?: () => void;
 }) {
+  const { hasPermission } = useAuth();
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
@@ -185,6 +187,8 @@ export default function CustomerOrdersAdmin({
     getBusinessDateInputValue()
   );
   const [paymentNotes, setPaymentNotes] = useState('');
+  const [orderToCancel, setOrderToCancel] = useState<any | null>(null);
+  const [cancellationReason, setCancellationReason] = useState('');
 
   const availablePaymentMethods = useMemo(() => {
     const activeMethods = paymentMethods.filter(
@@ -477,6 +481,58 @@ export default function CustomerOrdersAdmin({
       onChanged?.();
     } catch (error: any) {
       alert(error?.message || 'No se pudo rechazar el pedido');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+
+  const openCancellationModal = (order: any) => {
+    setOrderToCancel(order);
+    setCancellationReason('');
+  };
+
+  const closeCancellationModal = () => {
+    if (actionLoading !== null) return;
+    setOrderToCancel(null);
+    setCancellationReason('');
+  };
+
+  const cancelOrder = async () => {
+    if (!orderToCancel) return;
+
+    const reason = cancellationReason.trim();
+    if (reason.length < 3) {
+      alert('Ingresá un motivo de anulación de al menos 3 caracteres');
+      return;
+    }
+
+    setActionLoading(orderToCancel.id);
+
+    try {
+      const response = await apiFetch(
+        `/api/sales?endpoint=customer-order-cancel&id=${orderToCancel.id}`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ motivo: reason }),
+        }
+      );
+      const body = await response.json();
+      const result = unwrapResponse(body);
+
+      setOrderToCancel(null);
+      setCancellationReason('');
+      await fetchOrders();
+      onChanged?.();
+
+      const supplierCount = Number(result?.cancelled_supplier_order_ids?.length || 0);
+      alert(
+        supplierCount > 0
+          ? `Pedido anulado correctamente. También se cancelaron ${supplierCount} pedidos a proveedor vinculados.`
+          : 'Pedido anulado correctamente.'
+      );
+    } catch (error: any) {
+      alert(error?.message || 'No se pudo anular el pedido');
     } finally {
       setActionLoading(null);
     }
@@ -879,9 +935,16 @@ export default function CustomerOrdersAdmin({
                     )}
 
                     {order.cancel_reason && (
-                      <p className="text-xs text-zinc-500 font-bold mt-2">
-                        Cancelado: {order.cancel_reason}
-                      </p>
+                      <div className="mt-2 rounded-xl border border-red-100 bg-red-50 p-3 text-xs font-bold text-red-700">
+                        <p>Cancelado: {order.cancel_reason}</p>
+                        {(order.cancelled_by || order.cancelled_at) && (
+                          <p className="mt-1 text-[11px] text-red-500">
+                            {order.cancelled_by ? `Por ${order.cancelled_by}` : ''}
+                            {order.cancelled_by && order.cancelled_at ? ' · ' : ''}
+                            {order.cancelled_at ? formatBusinessDateTime(order.cancelled_at) : ''}
+                          </p>
+                        )}
+                      </div>
                     )}
                   </div>
 
@@ -1196,6 +1259,20 @@ export default function CustomerOrdersAdmin({
                         </button>
                       )}
 
+
+                    {hasPermission('sales', 'delete') &&
+                      ['pendiente_aprobacion', 'aprobado_pendiente_entrega'].includes(order.estado) && (
+                        <button
+                          type="button"
+                          disabled={actionLoading === order.id}
+                          onClick={() => openCancellationModal(order)}
+                          className="w-full py-3 border border-red-200 bg-red-50 text-red-700 rounded-xl font-black uppercase text-xs flex items-center justify-center gap-2 disabled:opacity-50 hover:bg-red-100"
+                          aria-label={`Anular pedido ${order.numero_pedido || order.id}`}
+                        >
+                          <XCircle size={16} /> Anular pedido
+                        </button>
+                      )}
+
                     {order.estado === 'entregado' && orderPending > 0 && (
                       <>
                         <button
@@ -1359,6 +1436,64 @@ export default function CustomerOrdersAdmin({
           )}
         </div>
       </div>
+
+      {orderToCancel && (
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-zinc-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-5">
+          <button
+            type="button"
+            className="absolute inset-0"
+            onClick={closeCancellationModal}
+            aria-label="Cerrar anulación"
+          />
+          <section className="relative w-full rounded-t-[30px] bg-white p-5 shadow-2xl sm:max-w-lg sm:rounded-3xl sm:p-6">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-red-100 text-red-700">
+              <XCircle size={24} />
+            </div>
+            <h2 className="mt-5 text-xl font-black text-zinc-950">
+              Anular pedido #{orderToCancel.numero_pedido || orderToCancel.id}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-zinc-500">
+              El pedido permanecerá visible como historial. Si tiene pedidos a proveedor pendientes vinculados, también se cancelarán dentro de la misma operación.
+            </p>
+
+            <label className="mt-5 block text-xs font-black uppercase tracking-widest text-zinc-500" htmlFor="customer-order-cancellation-reason">
+              Motivo obligatorio
+            </label>
+            <textarea
+              id="customer-order-cancellation-reason"
+              value={cancellationReason}
+              onChange={(event) => setCancellationReason(event.target.value)}
+              maxLength={500}
+              className="mt-2 min-h-28 w-full rounded-2xl border border-zinc-200 bg-zinc-50 p-3 text-sm font-bold text-zinc-900 outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100"
+              placeholder="Ej.: El cliente desistió del pedido"
+              autoFocus
+            />
+            <div className="mt-1 text-right text-[11px] font-bold text-zinc-400">
+              {cancellationReason.trim().length}/500
+            </div>
+
+            <div className="mt-5 grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                disabled={actionLoading !== null}
+                onClick={closeCancellationModal}
+                className="min-h-12 rounded-2xl bg-zinc-100 px-4 text-sm font-black text-zinc-700 disabled:opacity-50"
+              >
+                Volver
+              </button>
+              <button
+                type="button"
+                disabled={actionLoading !== null || cancellationReason.trim().length < 3}
+                onClick={cancelOrder}
+                className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-red-600 px-4 text-sm font-black text-white disabled:opacity-50"
+              >
+                {actionLoading !== null ? <Loader2 size={17} className="animate-spin" /> : <XCircle size={17} />}
+                Confirmar anulación
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

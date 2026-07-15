@@ -9,6 +9,7 @@ type CancellationInput = {
   supplierOrderId: number;
   motivo: string;
   usuario: string;
+  source?: "manual" | "sale_cancellation" | "customer_order_cancellation";
 };
 
 const toNumber = (value: any, fallback: number = 0) => {
@@ -22,7 +23,7 @@ const CLOSED_CUSTOMER_STATES = ["cancelado", "rechazado"];
 
 export const supplierOrderCancellationService = {
   async cancelSupplierOrder(
-    { supplierOrderId, motivo, usuario }: CancellationInput,
+    { supplierOrderId, motivo, usuario, source = "manual" }: CancellationInput,
     executor?: TransactionClient
   ) {
     const normalizedReason = String(motivo || "").trim();
@@ -50,11 +51,12 @@ export const supplierOrderCancellationService = {
       );
     }
 
+    const ownsTransaction = !executor;
     const pool = executor ? null : getPostgresPool();
     const client = executor || (await pool!.connect());
 
     try {
-      await client.query("BEGIN");
+      if (ownsTransaction) await client.query("BEGIN");
 
       const orderResult = await client.query(
         `SELECT
@@ -189,7 +191,7 @@ export const supplierOrderCancellationService = {
           normalizedReason,
           normalizedUser,
           currentState,
-          "manual",
+          source,
           JSON.stringify(snapshot),
         ]
       );
@@ -204,19 +206,20 @@ export const supplierOrderCancellationService = {
              cancelled_at = $1,
              cancelled_by = $2,
              cancel_reason = $3,
-             cancellation_source = 'manual',
-             cancelled_from_status = $4
-         WHERE id = $5`,
+             cancellation_source = $4,
+             cancelled_from_status = $5
+         WHERE id = $6`,
         [
           cancelledAt,
           normalizedUser,
           normalizedReason,
+          source,
           currentState,
           supplierOrderId,
         ]
       );
 
-      await client.query("COMMIT");
+      if (ownsTransaction) await client.query("COMMIT");
 
       return {
         order: {
@@ -225,16 +228,16 @@ export const supplierOrderCancellationService = {
           cancelled_at: cancelledAt,
           cancelled_by: normalizedUser,
           cancel_reason: normalizedReason,
-          cancellation_source: "manual",
+          cancellation_source: source,
           cancelled_from_status: currentState,
         },
         cancellation_id: cancellationId,
       };
     } catch (error) {
-      await client.query("ROLLBACK");
+      if (ownsTransaction) await client.query("ROLLBACK");
       throw error;
     } finally {
-      if (!executor && "release" in client && typeof (client as any).release === "function") {
+      if (ownsTransaction && "release" in client && typeof (client as any).release === "function") {
         (client as any).release();
       }
     }

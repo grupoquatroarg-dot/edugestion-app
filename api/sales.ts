@@ -10,6 +10,7 @@ import { saleTraceService } from "../server/services/saleTraceService.js";
 import type { SaleStockAllocationInput } from "../server/services/saleTraceService.js";
 import { saleCancellationService } from "../server/services/saleCancellationService.js";
 import { supplierOrderCancellationService } from "../server/services/supplierOrderCancellationService.js";
+import { customerOrderCancellationService } from "../server/services/customerOrderCancellationService.js";
 
 const saleSchema = z.object({
   cliente_id: z.number(),
@@ -81,6 +82,10 @@ const customerOrderApproveSchema = z.object({
 const customerOrderRejectSchema = z.object({
   motivo: z.string().min(3, "El motivo es obligatorio"),
   admin_notes: z.string().optional().nullable(),
+});
+
+const customerOrderCancellationSchema = z.object({
+  motivo: z.string().trim().min(3, "El motivo de anulación es obligatorio").max(500, "El motivo es demasiado extenso"),
 });
 
 const customerOrderUpdateSchema = z.object({
@@ -970,6 +975,9 @@ const mapCustomerOrderAdmin = (row: any, items: any[] = []) => {
     entregado_at: row.entregado_at || null,
     rejected_at: row.rejected_at || null,
     cancelled_at: row.cancelled_at || null,
+    cancelled_by: row.cancelled_by || "",
+    cancellation_source: row.cancellation_source || "",
+    cancelled_from_status: row.cancelled_from_status || "",
     items,
   };
 };
@@ -1118,7 +1126,12 @@ const getCustomerOrderShortages = async (queryable: any, orderId: number) => {
 
 const handleCustomerOrders = async (req: any, res: any) => {
   const endpoint = getEndpoint(req);
-  const user = await requirePermission(req, res, "sales", endpoint === "customer-orders" ? "view" : "edit");
+  const permissionAction = endpoint === "customer-orders"
+    ? "view"
+    : endpoint === "customer-order-cancel"
+      ? "delete"
+      : "edit";
+  const user = await requirePermission(req, res, "sales", permissionAction);
   if (!user) return;
 
   const pool = getPostgresPool();
@@ -1163,6 +1176,37 @@ const handleCustomerOrders = async (req: any, res: any) => {
     const orderIds = ordersResult.rows.map((row: any) => toNumber(row.id));
     const itemsByOrder = await fetchCustomerOrderItems(pool, orderIds);
     return sendSuccess(res, ordersResult.rows.map((row: any) => mapCustomerOrderAdmin(row, itemsByOrder.get(toNumber(row.id)) || [])));
+  }
+
+
+  if (endpoint === "customer-order-cancel" && req.method === "POST") {
+    if (!id) return sendError(res, "ID de pedido inválido", 400);
+    const parsed = customerOrderCancellationSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(
+        res,
+        "Validation failed",
+        400,
+        parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }))
+      );
+    }
+
+    try {
+      const result = await customerOrderCancellationService.cancelCustomerOrder({
+        customerOrderId: id,
+        motivo: parsed.data.motivo,
+        usuario: user.userName || "Sistema",
+        source: "manual",
+      });
+      return sendSuccess(res, result, "Pedido de cliente anulado correctamente");
+    } catch (error: any) {
+      return sendError(
+        res,
+        error?.message || "No se pudo anular el pedido de cliente",
+        error?.statusCode || 400,
+        error?.errors || []
+      );
+    }
   }
 
   if (endpoint === "customer-order-reject" && req.method === "POST") {
@@ -1613,7 +1657,7 @@ export default async function handler(req: any, res: any) {
   const id = getId(req);
   const endpoint = getEndpoint(req);
 
-  if (["customer-orders", "customer-order-approve", "customer-order-deliver", "customer-order-reject", "customer-order-update", "customer-order-payment"].includes(endpoint)) {
+  if (["customer-orders", "customer-order-approve", "customer-order-deliver", "customer-order-reject", "customer-order-update", "customer-order-payment", "customer-order-cancel"].includes(endpoint)) {
     return handleCustomerOrders(req, res);
   }
 

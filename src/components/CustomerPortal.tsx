@@ -34,6 +34,7 @@ import { unwrapResponse } from '../utils/api';
 import { generateCustomerOrderPdf } from '../utils/customerOrderPdf';
 import { generateSaleReceipt } from '../utils/pdfGenerator';
 import { generatePaymentReceiptPdf } from '../utils/paymentReceiptPdf';
+import { formatBusinessDateTime } from '../utils/businessDate';
 
 type PortalCustomer = {
   id: number;
@@ -74,6 +75,9 @@ type PortalOrder = {
   entregado_at?: string | null;
   rejected_at?: string | null;
   cancelled_at?: string | null;
+  cancelled_by?: string;
+  cancellation_source?: string;
+  cancelled_from_status?: string;
   admin_notes?: string;
   rejection_reason?: string;
   cancel_reason?: string;
@@ -255,6 +259,7 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
     order?: PortalOrder;
   } | null>(null);
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
 
   const filteredProducts = useMemo(() => {
     const q = searchTerm.toLowerCase().trim();
@@ -485,12 +490,22 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
 
   const cancelOrder = (order: PortalOrder) => {
     if (actionLoading !== null) return;
+    setCancelReason('');
     setConfirmAction({ type: 'cancel-order', order });
   };
 
   const confirmCancelOrder = async () => {
     const order = confirmAction?.order;
     if (!order) return;
+
+    const reason = cancelReason.trim();
+    if (reason.length < 3) {
+      setFeedback({
+        type: 'error',
+        message: 'Ingresá un motivo de cancelación de al menos 3 caracteres.',
+      });
+      return;
+    }
 
     setActionLoading(order.id);
     setConfirmAction(null);
@@ -501,13 +516,14 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
         `/api/clientes?endpoint=portal-order-cancel&id=${order.id}`,
         {
           method: 'POST',
-          body: JSON.stringify({ motivo: 'Cancelado por el cliente' }),
+          body: JSON.stringify({ motivo: reason }),
         }
       );
       const body = await response.json();
       unwrapResponse(body);
 
       await loadPortalData('refresh');
+      setCancelReason('');
       setFeedback({
         type: 'success',
         message: `El pedido #${order.numero_pedido} fue cancelado correctamente.`,
@@ -1281,8 +1297,13 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                       </div>
                     )}
                     {order.cancel_reason && (
-                      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm font-bold text-slate-600">
-                        Pedido cancelado: {order.cancel_reason}
+                      <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">
+                        <p>Pedido cancelado: {order.cancel_reason}</p>
+                        {order.cancelled_at && (
+                          <p className="mt-1 text-xs text-red-500">
+                            {formatBusinessDateTime(order.cancelled_at)}
+                          </p>
+                        )}
                       </div>
                     )}
 
@@ -1726,7 +1747,10 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
             type="button"
             className="absolute inset-0"
             onClick={() => {
-              if (!submittingOrder && actionLoading === null) setConfirmAction(null);
+              if (!submittingOrder && actionLoading === null) {
+                setConfirmAction(null);
+                setCancelReason('');
+              }
             }}
             aria-label="Cerrar confirmación"
           />
@@ -1758,18 +1782,45 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                 : 'Solo podés cancelar el pedido mientras está pendiente de aprobación.'}
             </p>
 
+            {confirmAction.type === 'cancel-order' && (
+              <div className="mt-5">
+                <label htmlFor="portal-order-cancel-reason" className="text-xs font-black uppercase tracking-widest text-slate-500">
+                  Motivo obligatorio
+                </label>
+                <textarea
+                  id="portal-order-cancel-reason"
+                  value={cancelReason}
+                  onChange={(event) => setCancelReason(event.target.value)}
+                  maxLength={500}
+                  className="mt-2 min-h-28 w-full rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm font-bold text-slate-900 outline-none focus:border-red-300 focus:ring-2 focus:ring-red-100"
+                  placeholder="Ej.: Ya no necesito estos productos"
+                  autoFocus
+                />
+                <p className="mt-1 text-right text-[11px] font-bold text-slate-400">
+                  {cancelReason.trim().length}/500
+                </p>
+              </div>
+            )}
+
             <div className="mt-6 grid gap-2 sm:grid-cols-2">
               <button
                 type="button"
                 disabled={submittingOrder || actionLoading !== null}
-                onClick={() => setConfirmAction(null)}
+                onClick={() => {
+                  setConfirmAction(null);
+                  setCancelReason('');
+                }}
                 className="min-h-12 rounded-2xl bg-slate-100 px-4 text-sm font-black text-slate-700 disabled:opacity-50"
               >
                 Volver
               </button>
               <button
                 type="button"
-                disabled={submittingOrder || actionLoading !== null}
+                disabled={
+                  submittingOrder ||
+                  actionLoading !== null ||
+                  (confirmAction.type === 'cancel-order' && cancelReason.trim().length < 3)
+                }
                 onClick={
                   confirmAction.type === 'submit-order'
                     ? confirmSubmitOrder

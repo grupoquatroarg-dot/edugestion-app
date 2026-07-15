@@ -421,7 +421,8 @@ export const saleCancellationService = {
       );
 
       const customerOrdersResult = await client.query(
-        `SELECT id, numero_pedido, estado, cancel_reason, admin_notes
+        `SELECT id, numero_pedido, estado, cancel_reason, admin_notes,
+                cancelled_at, cancelled_by, cancellation_source, cancelled_from_status
          FROM customer_orders
          WHERE sale_id = $1
          ORDER BY id ASC
@@ -652,14 +653,40 @@ export const saleCancellationService = {
       for (const order of customerOrdersResult.rows) {
         if (String(order.estado || '').toLowerCase() !== 'cancelado') {
           await client.query(
+            `INSERT INTO customer_order_cancellations (
+               customer_order_id,
+               motivo,
+               cancelado_por,
+               estado_original,
+               cancellation_source,
+               snapshot
+             )
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+             ON CONFLICT (customer_order_id) DO NOTHING`,
+            [
+              order.id,
+              cancellationNote,
+              normalizedUser,
+              String(order.estado || 'entregado'),
+              'sale_cancellation',
+              JSON.stringify({ order }),
+            ]
+          );
+
+          await client.query(
             `UPDATE customer_orders
              SET estado = 'cancelado',
                  cancel_reason = $1,
                  cancelled_at = now(),
-                 admin_notes = $2
-             WHERE id = $3`,
+                 cancelled_by = $2,
+                 cancellation_source = 'sale_cancellation',
+                 cancelled_from_status = $3,
+                 admin_notes = $4
+             WHERE id = $5`,
             [
               cancellationNote,
+              normalizedUser,
+              String(order.estado || 'entregado'),
               appendAuditNote(order.admin_notes, cancellationNote),
               order.id,
             ]
