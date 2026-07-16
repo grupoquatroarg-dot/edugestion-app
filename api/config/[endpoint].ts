@@ -70,6 +70,7 @@ export default async function handler(req: any, res: any) {
           "product_categories",
           "product_families",
           "configuration_item_status_history",
+          "user_status_history",
           "clientes",
           "proveedores",
           "products",
@@ -174,6 +175,7 @@ export default async function handler(req: any, res: any) {
         "product_categories",
         "product_families",
         "configuration_item_status_history",
+          "user_status_history",
         "clientes",
         "proveedores",
         "products",
@@ -345,6 +347,7 @@ export default async function handler(req: any, res: any) {
         "proveedores",
         "clientes",
         "configuration_item_status_history",
+        "user_status_history",
         "product_families",
         "product_categories"
       ];
@@ -518,6 +521,7 @@ export default async function handler(req: any, res: any) {
           "product_categories",
           "product_families",
           "configuration_item_status_history",
+          "user_status_history",
           "clientes",
           "proveedores",
           "products",

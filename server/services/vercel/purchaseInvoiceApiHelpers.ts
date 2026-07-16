@@ -1,12 +1,6 @@
 import { UserRepository } from "../../repositories/userRepository.js";
-import { verifyToken } from "../../utils/jwt.js";
+import { requireBearerUser } from "../currentUserAuthService.js";
 import { sendError } from "../../utils/response.js";
-
-export const getBearerToken = (req: any) => {
-  const authHeader = req.headers?.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
-  return authHeader.slice(7);
-};
 
 const getPermissionKey = (action: "view" | "create" | "delete") => {
   if (action === "view") return "can_view";
@@ -19,19 +13,8 @@ export const requirePurchaseInvoicePermission = async (
   res: any,
   action: "view" | "create" | "delete"
 ) => {
-  const token = getBearerToken(req);
-
-  if (!token) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
-
-  const decoded = verifyToken(token);
-
-  if (!decoded?.userId) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
+  const decoded = await requireBearerUser(req, res);
+  if (!decoded) return null;
 
   if (decoded.role === "administrador") {
     return decoded;

@@ -25,6 +25,12 @@ export const apiFetch = async (url: string, options: RequestInit = {}) => {
 
   const response = await fetch(url, { ...defaultOptions, ...options });
 
+  const isLoginRequest = url.includes('/api/auth/login');
+  if (response.status === 401 && token && !isLoginRequest) {
+    localStorage.removeItem('auth_token');
+    window.dispatchEvent(new CustomEvent('auth:session-invalidated'));
+  }
+
   if (!response.ok) {
     const contentType = response.headers.get('content-type') || '';
     const isJsonResponse = contentType.toLowerCase().includes('application/json');

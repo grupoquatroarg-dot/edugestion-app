@@ -19,6 +19,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    const handleSessionInvalidated = () => {
+      setUser(null);
+      disconnectSocket();
+    };
+
+    window.addEventListener('auth:session-invalidated', handleSessionInvalidated);
+
     // Check if user is already logged in
     apiFetch('/api/auth/me')
       .then(res => {
@@ -31,6 +38,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       .catch(() => setUser(null))
       .finally(() => setIsLoading(false));
+
+    return () => window.removeEventListener('auth:session-invalidated', handleSessionInvalidated);
   }, []);
 
   const login = async (email: string, password: string) => {

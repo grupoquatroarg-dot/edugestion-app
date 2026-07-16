@@ -48,10 +48,12 @@ export default async function handler(req: any, res: any) {
       return sendError(res, "Credenciales inválidas", 401);
     }
 
+    const sessionVersion = Number(user.session_version ?? 1);
     const token = generateToken({
       userId: user.id,
       role: user.role,
       userName: user.name,
+      sessionVersion,
     });
 
     const { password: _password, ...userWithoutPassword } = user;

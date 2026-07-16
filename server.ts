@@ -53,6 +53,7 @@ declare module "express-session" {
     userId: number;
     role: string;
     userName: string;
+    sessionVersion: number;
   }
 }
 

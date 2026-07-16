@@ -4,8 +4,7 @@ import { ProductRepository } from "../server/repositories/productRepository.js";
 import { UserRepository } from "../server/repositories/userRepository.js";
 import { getPostgresPool, isPostgresConfigured } from "../server/utils/postgres.js";
 import { AppError, sendError, sendSuccess } from "../server/utils/response.js";
-import { verifyToken } from "../server/utils/jwt.js";
-import type { TokenPayload } from "../server/utils/jwt.js";
+import { requireBearerUser, type CurrentUserAuth } from "../server/services/currentUserAuthService.js";
 
 const productSchema = z.object({
   code: z.string().min(1, "El codigo es requerido"),
@@ -52,12 +51,6 @@ const getBody = (req: any) => {
   return {};
 };
 
-const getBearerToken = (req: any) => {
-  const authHeader = req.headers?.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
-  return authHeader.slice(7);
-};
-
 const permissionKeyByAction = {
   view: "can_view",
   create: "can_create",
@@ -68,20 +61,9 @@ const requireProductPermission = async (
   req: any,
   res: any,
   action: keyof typeof permissionKeyByAction
-): Promise<TokenPayload | null> => {
-  const token = getBearerToken(req);
-
-  if (!token) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
-
-  const decoded = verifyToken(token);
-
-  if (!decoded?.userId) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
+): Promise<CurrentUserAuth | null> => {
+  const decoded = await requireBearerUser(req, res);
+  if (!decoded) return null;
 
   if (decoded.role === "administrador") {
     return decoded;

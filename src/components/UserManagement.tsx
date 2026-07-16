@@ -12,7 +12,9 @@ import {
   Mail,
   PencilLine,
   PlusCircle,
+  Power,
   RefreshCw,
+  RotateCcw,
   Save,
   Search,
   Shield,
@@ -26,13 +28,19 @@ import {
 } from 'lucide-react';
 import { User, UserPermission } from '../types';
 import { apiFetch, unwrapResponse } from '../utils/api';
+import { useAuth } from '../contexts/AuthContext';
 
 type UserRole = 'administrador' | 'empleado' | 'vendedor' | 'operario';
 type AccessUser = Omit<User, 'role'> & {
   role: UserRole;
   active?: number | boolean;
+  session_version?: number;
+  deactivated_at?: string | null;
+  deactivated_by?: string | null;
+  deactivation_reason?: string | null;
   created_at?: string;
 };
+type UserLifecycleAction = 'deactivate' | 'reactivate';
 type StatusFilter = 'todos' | 'activos' | 'inactivos';
 type RoleFilter = 'todos' | UserRole;
 type PermissionAction = keyof Omit<UserPermission, 'module'>;
@@ -94,7 +102,21 @@ const formatDate = (value?: string) => {
   }).format(date);
 };
 
+const formatDateTime = (value?: string | null) => {
+  if (!value) return 'Sin fecha registrada';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Sin fecha registrada';
+  return new Intl.DateTimeFormat('es-AR', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+};
+
 export default function UserManagement() {
+  const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<AccessUser[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -108,12 +130,16 @@ export default function UserManagement() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPermissionsModalOpen, setIsPermissionsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<AccessUser | null>(null);
+  const [lifecycleTarget, setLifecycleTarget] = useState<{ user: AccessUser; action: UserLifecycleAction } | null>(null);
+  const [lifecycleReason, setLifecycleReason] = useState('');
+  const [lifecycleError, setLifecycleError] = useState('');
   const [userPermissions, setUserPermissions] = useState<Record<string, UserPermission>>({});
   const [isPermissionsLoading, setIsPermissionsLoading] = useState(false);
   const [permissionsError, setPermissionsError] = useState('');
   const [formError, setFormError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const userNameInputRef = useRef<HTMLInputElement | null>(null);
+  const lifecycleReasonRef = useRef<HTMLTextAreaElement | null>(null);
   const permissionsTitleRef = useRef<HTMLHeadingElement | null>(null);
   const modalTriggerRef = useRef<HTMLElement | null>(null);
 
@@ -122,13 +148,11 @@ export default function UserManagement() {
     email: string;
     password: string;
     role: UserRole;
-    active: number;
   }>({
     name: '',
     email: '',
     password: '',
     role: 'empleado',
-    active: 1,
   });
 
   useEffect(() => {
@@ -150,6 +174,11 @@ export default function UserManagement() {
     if (!isPermissionsModalOpen) return;
     window.requestAnimationFrame(() => permissionsTitleRef.current?.focus());
   }, [isPermissionsModalOpen]);
+
+  useEffect(() => {
+    if (!lifecycleTarget) return;
+    window.requestAnimationFrame(() => lifecycleReasonRef.current?.focus());
+  }, [lifecycleTarget]);
 
   const rememberModalTrigger = () => {
     modalTriggerRef.current = document.activeElement instanceof HTMLElement
@@ -220,7 +249,6 @@ export default function UserManagement() {
         email: user.email,
         password: '',
         role: user.role,
-        active: normalizeActive(user.active ?? 1) ? 1 : 0,
       });
     } else {
       setEditingUser(null);
@@ -229,7 +257,6 @@ export default function UserManagement() {
         email: '',
         password: '',
         role: 'empleado',
-        active: 1,
       });
     }
 
@@ -375,12 +402,76 @@ export default function UserManagement() {
       const body = await res.json();
       unwrapResponse(body);
 
-      await fetchUsers(false);
+      const invalidatesCurrentSession = Boolean(
+        editingUser &&
+        Number(editingUser.id) === Number(currentUser?.id) &&
+        formData.password.trim()
+      );
+
       setIsModalOpen(false);
+      if (invalidatesCurrentSession) {
+        localStorage.removeItem('auth_token');
+        window.dispatchEvent(new CustomEvent('auth:session-invalidated'));
+        return;
+      }
+
+      await fetchUsers(false);
       setSuccessMessage(editingUser ? 'Usuario actualizado correctamente.' : 'Usuario creado correctamente.');
       restoreModalTrigger();
     } catch (err: any) {
       setFormError(err?.message || 'Error al guardar usuario.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const openLifecycleModal = (user: AccessUser, action: UserLifecycleAction) => {
+    rememberModalTrigger();
+    setLifecycleTarget({ user, action });
+    setLifecycleReason('');
+    setLifecycleError('');
+  };
+
+  const closeLifecycleModal = () => {
+    if (isSubmitting) return;
+    setLifecycleTarget(null);
+    setLifecycleReason('');
+    setLifecycleError('');
+    restoreModalTrigger();
+  };
+
+  const handleLifecycleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!lifecycleTarget || isSubmitting) return;
+
+    const motivo = lifecycleReason.trim();
+    if (motivo.length < 3) {
+      setLifecycleError('Ingresá un motivo de al menos 3 caracteres.');
+      return;
+    }
+
+    setLifecycleError('');
+    setIsSubmitting(true);
+    try {
+      const { user, action } = lifecycleTarget;
+      const res = await apiFetch(`/api/clientes?endpoint=user-lifecycle&id=${user.id}&action=${action}`, {
+        method: 'POST',
+        body: JSON.stringify({ motivo }),
+      });
+      const body = await res.json();
+      unwrapResponse(body);
+
+      await fetchUsers(false);
+      setLifecycleTarget(null);
+      setLifecycleReason('');
+      setSuccessMessage(
+        action === 'deactivate'
+          ? `${user.name} fue dado de baja correctamente.`
+          : `${user.name} fue reactivado correctamente.`,
+      );
+      restoreModalTrigger();
+    } catch (err: any) {
+      setLifecycleError(err?.message || 'No se pudo actualizar el estado del usuario.');
     } finally {
       setIsSubmitting(false);
     }
@@ -555,6 +646,7 @@ export default function UserManagement() {
           <section className="grid gap-4 xl:grid-cols-2">
             {filteredUsers.map((user) => {
               const isActive = normalizeActive(user.active ?? 1);
+              const isOwnUser = Number(currentUser?.id) === Number(user.id);
               return (
                 <article key={user.id} className="min-w-0 overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-lg hover:shadow-slate-200/60">
                   <div className="p-4 sm:p-5">
@@ -592,11 +684,21 @@ export default function UserManagement() {
                             </div>
                           </div>
                         </div>
+
+                        {!isActive && (
+                          <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900">
+                            <p className="font-black">Baja registrada</p>
+                            <p className="mt-1 break-words leading-5 text-rose-800">{user.deactivation_reason || 'Sin motivo informado'}</p>
+                            <p className="mt-2 text-xs font-bold text-rose-700">
+                              {formatDateTime(user.deactivated_at)} · {user.deactivated_by || 'Usuario no identificado'}
+                            </p>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-2 border-t border-slate-100 bg-slate-50/70 p-3 min-[420px]:grid-cols-2 sm:p-4">
+                  <div className="grid grid-cols-1 gap-2 border-t border-slate-100 bg-slate-50/70 p-3 min-[420px]:grid-cols-3 sm:p-4">
                     <button
                       type="button"
                       onClick={() => void handleOpenPermissionsModal(user)}
@@ -614,6 +716,21 @@ export default function UserManagement() {
                       aria-label={`Editar usuario ${user.name}`}
                     >
                       <Edit3 size={17} /> Editar usuario
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openLifecycleModal(user, isActive ? 'deactivate' : 'reactivate')}
+                      disabled={isActive && isOwnUser}
+                      className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border px-4 py-2.5 text-sm font-black transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                        isActive
+                          ? 'border-rose-200 bg-rose-50 text-rose-700 hover:border-rose-300 hover:bg-rose-100'
+                          : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-100'
+                      }`}
+                      title={isActive && isOwnUser ? 'No podés dar de baja tu propia cuenta' : `${isActive ? 'Dar de baja' : 'Reactivar'} a ${user.name}`}
+                      aria-label={`${isActive ? 'Dar de baja' : 'Reactivar'} a ${user.name}`}
+                    >
+                      {isActive ? <Power size={17} /> : <RotateCcw size={17} />}
+                      {isActive ? 'Dar de baja' : 'Reactivar'}
                     </button>
                   </div>
                 </article>
@@ -655,7 +772,7 @@ export default function UserManagement() {
                   {editingUser ? 'Editar usuario' : 'Nuevo usuario'}
                 </h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  {editingUser ? 'Actualizá sus datos, rol, estado o contraseña.' : 'Creá una nueva cuenta para acceder a Edugestión.'}
+                  {editingUser ? 'Actualizá sus datos, rol o contraseña.' : 'Creá una nueva cuenta para acceder a Edugestión.'}
                 </p>
               </div>
               <button
@@ -742,11 +859,11 @@ export default function UserManagement() {
                       <Shield size={20} />
                     </div>
                     <div>
-                      <h3 className="font-black text-slate-900">Acceso y estado</h3>
+                      <h3 className="font-black text-slate-900">Rol y permisos</h3>
                       <p className="text-xs text-slate-500">El rol define cómo se administran sus permisos.</p>
                     </div>
                   </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-4">
                     <label className="min-w-0">
                       <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Rol</span>
                       <select
@@ -757,17 +874,6 @@ export default function UserManagement() {
                         {ROLE_OPTIONS.map((option) => (
                           <option key={option.value} value={option.value}>{option.label}</option>
                         ))}
-                      </select>
-                    </label>
-                    <label className="min-w-0">
-                      <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Estado</span>
-                      <select
-                        value={formData.active}
-                        onChange={(event) => setFormData({ ...formData, active: Number(event.target.value) })}
-                        className="min-h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-800 outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
-                      >
-                        <option value={1}>Activo — puede iniciar sesión</option>
-                        <option value={0}>Inactivo — acceso bloqueado</option>
                       </select>
                     </label>
                   </div>
@@ -796,6 +902,89 @@ export default function UserManagement() {
                 >
                   {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
                   {isSubmitting ? 'Guardando...' : editingUser ? 'Guardar cambios' : 'Crear usuario'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {lifecycleTarget && (
+        <div className="fixed inset-0 z-[105] flex items-end justify-center bg-slate-950/65 backdrop-blur-sm sm:items-center sm:p-5" role="dialog" aria-modal="true" aria-labelledby="user-lifecycle-title">
+          <div className="w-full overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:max-w-lg sm:rounded-[28px]">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-4 sm:px-6 sm:py-5">
+              <div className="min-w-0">
+                <p className={`text-[10px] font-black uppercase tracking-[0.18em] ${lifecycleTarget.action === 'deactivate' ? 'text-rose-600' : 'text-emerald-600'}`}>
+                  Cambio auditado de estado
+                </p>
+                <h2 id="user-lifecycle-title" className="mt-1 break-words text-xl font-black text-slate-950 sm:text-2xl">
+                  {lifecycleTarget.action === 'deactivate' ? 'Dar de baja' : 'Reactivar'} a {lifecycleTarget.user.name}
+                </h2>
+                <p className="mt-1 text-sm leading-6 text-slate-500">
+                  {lifecycleTarget.action === 'deactivate'
+                    ? 'La cuenta conservará su historial y sus sesiones actuales quedarán invalidadas.'
+                    : 'La cuenta recuperará el acceso, pero los tokens anteriores continuarán invalidados.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeLifecycleModal}
+                disabled={isSubmitting}
+                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50"
+                aria-label="Cerrar cambio de estado"
+              >
+                <X size={21} />
+              </button>
+            </div>
+
+            <form onSubmit={handleLifecycleSubmit}>
+              <div className="space-y-4 px-4 py-5 sm:px-6">
+                {lifecycleError && (
+                  <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-800" role="alert">
+                    <AlertCircle size={19} className="mt-0.5 shrink-0" />
+                    <p className="break-words text-sm font-bold">{lifecycleError}</p>
+                  </div>
+                )}
+                <label className="block">
+                  <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Motivo obligatorio</span>
+                  <textarea
+                    ref={lifecycleReasonRef}
+                    required
+                    minLength={3}
+                    maxLength={500}
+                    rows={5}
+                    value={lifecycleReason}
+                    onChange={(event) => setLifecycleReason(event.target.value)}
+                    placeholder={lifecycleTarget.action === 'deactivate' ? 'Ej.: El usuario dejó de trabajar en la empresa.' : 'Ej.: El usuario retomó sus funciones.'}
+                    className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
+                  />
+                  <span className="mt-2 flex justify-between gap-3 text-xs text-slate-500">
+                    <span>Quedará registrado con fecha y usuario ejecutor.</span>
+                    <span className="shrink-0 font-bold">{lifecycleReason.length}/500</span>
+                  </span>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 gap-2 border-t border-slate-200 px-4 py-4 sm:grid-cols-2 sm:px-6">
+                <button
+                  type="button"
+                  onClick={closeLifecycleModal}
+                  disabled={isSubmitting}
+                  className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-slate-200 px-5 py-3 text-sm font-black text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting || lifecycleReason.trim().length < 3}
+                  className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl px-5 py-3 text-sm font-black text-white shadow-lg transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                    lifecycleTarget.action === 'deactivate'
+                      ? 'bg-rose-600 shadow-rose-200 hover:bg-rose-700'
+                      : 'bg-emerald-600 shadow-emerald-200 hover:bg-emerald-700'
+                  }`}
+                >
+                  {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : lifecycleTarget.action === 'deactivate' ? <Power size={18} /> : <RotateCcw size={18} />}
+                  {isSubmitting ? 'Procesando...' : lifecycleTarget.action === 'deactivate' ? 'Confirmar baja' : 'Confirmar reactivación'}
                 </button>
               </div>
             </form>

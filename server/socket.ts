@@ -1,7 +1,7 @@
 import { Server } from "socket.io";
 import { Server as HttpServer } from "http";
 import { RequestHandler } from "express";
-import { verifyToken } from "./utils/jwt.js";
+import { validateStaffSession, validateStaffToken } from "./services/currentUserAuthService.js";
 
 type RealtimeEmitter = {
   emit: (event: string, ...args: any[]) => boolean;
@@ -33,33 +33,25 @@ export function initSocket(server: HttpServer, sessionMiddleware: RequestHandler
       },
     });
 
-    // Share session with socket.io
     io.engine.use(sessionMiddleware);
 
-    io.on("connection", (socket) => {
+    io.on("connection", async (socket) => {
       const session = (socket.request as any).session;
-      let userId = session?.userId;
-      let userName = session?.userName;
+      let authUser = session?.userId
+        ? await validateStaffSession(session.userId, session.sessionVersion)
+        : null;
 
-      // Fallback to Bearer Token if no session
-      if (!userId) {
-        const token = socket.handshake.auth?.token;
-        if (token) {
-          const decoded = verifyToken(token);
-          if (decoded) {
-            userId = decoded.userId;
-            userName = decoded.userName;
-          }
-        }
+      if (!authUser) {
+        authUser = await validateStaffToken(socket.handshake.auth?.token);
       }
 
-      if (!userId) {
+      if (!authUser) {
         console.log("Unauthorized socket connection attempt:", socket.id);
         socket.disconnect();
         return;
       }
 
-      console.log("Client connected (Authenticated):", socket.id, "User:", userName);
+      console.log("Client connected (Authenticated):", socket.id, "User:", authUser.userName);
       socket.on("disconnect", () => {
         console.log("Client disconnected:", socket.id);
       });

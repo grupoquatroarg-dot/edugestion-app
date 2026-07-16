@@ -1,46 +1,58 @@
 import { Request, Response, NextFunction } from 'express';
 import { UserRepository } from '../repositories/userRepository.js';
 import { sendError } from '../utils/response.js';
-import { verifyToken } from '../utils/jwt.js';
+import {
+  validateStaffSession,
+  validateStaffToken,
+  type CurrentUserAuth,
+} from '../services/currentUserAuthService.js';
 
-/**
- * Extracts user info from session or Bearer token.
- */
-const getAuthUser = (req: Request) => {
-  const sessionUser = {
-    userId: (req.session as any).userId,
-    role: (req.session as any).role,
-    userName: (req.session as any).userName
-  };
-
-  if (sessionUser.userId) {
-    return sessionUser;
-  }
-
+const getTokenFromRequest = (req: Request) => {
   const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.split(' ')[1];
-    const decoded = verifyToken(token);
-    if (decoded) {
-      return decoded;
-    }
-  }
-
-  return null;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  return authHeader.slice(7);
 };
 
-export const requireAuth = (req: Request, res: Response, next: NextFunction) => {
-  const user = getAuthUser(req);
+const clearInvalidSession = (req: Request) => {
+  if (!req.session) return;
+  req.session.userId = undefined as any;
+  req.session.role = undefined as any;
+  req.session.userName = undefined as any;
+  req.session.sessionVersion = undefined as any;
+};
+
+export const getAuthUser = async (req: Request): Promise<CurrentUserAuth | null> => {
+  const sessionUserId = (req.session as any)?.userId;
+  const sessionVersion = (req.session as any)?.sessionVersion;
+
+  if (sessionUserId) {
+    const sessionUser = await validateStaffSession(sessionUserId, sessionVersion);
+    if (sessionUser) {
+      (req.session as any).role = sessionUser.role;
+      (req.session as any).userName = sessionUser.userName;
+      return sessionUser;
+    }
+    clearInvalidSession(req);
+  }
+
+  return validateStaffToken(getTokenFromRequest(req));
+};
+
+export const requireAuth = async (req: Request, res: Response, next: NextFunction) => {
+  const user = await getAuthUser(req);
   if (!user) {
-    return sendError(res, "Unauthorized: Login required", 401);
+    return sendError(res, "Sesión inválida o vencida. Iniciá sesión nuevamente.", 401);
   }
   (req as any).user = user;
   next();
 };
 
-export const requireAdmin = (req: Request, res: Response, next: NextFunction) => {
-  const user = getAuthUser(req);
-  if (!user || user.role !== 'administrador') {
+export const requireAdmin = async (req: Request, res: Response, next: NextFunction) => {
+  const user = await getAuthUser(req);
+  if (!user) {
+    return sendError(res, "Sesión inválida o vencida. Iniciá sesión nuevamente.", 401);
+  }
+  if (user.role !== 'administrador') {
     return sendError(res, "Forbidden: Admin access required", 403);
   }
   (req as any).user = user;
@@ -49,17 +61,15 @@ export const requireAdmin = (req: Request, res: Response, next: NextFunction) =>
 
 export const requirePermission = (module: string, action: 'view' | 'create' | 'edit' | 'delete') => {
   return async (req: Request, res: Response, next: NextFunction) => {
-    const user = getAuthUser(req);
-    
+    const user = await getAuthUser(req);
+
     if (!user) {
       console.warn(`[Auth] Unauthorized: No auth found for module ${module}`);
-      return sendError(res, "Unauthorized: Login required", 401);
+      return sendError(res, "Sesión inválida o vencida. Iniciá sesión nuevamente.", 401);
     }
 
     const { userId, role } = user;
     (req as any).user = user;
-
-    console.log(`[Auth] Module: ${module}, Action: ${action}, UserId: ${userId}, Role: ${role}`);
 
     if (role === 'administrador') {
       return next();

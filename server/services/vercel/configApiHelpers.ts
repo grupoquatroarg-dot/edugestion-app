@@ -1,5 +1,5 @@
 import { UserRepository } from "../../repositories/userRepository.js";
-import { verifyToken } from "../../utils/jwt.js";
+import { requireBearerUser } from "../currentUserAuthService.js";
 import { sendError } from "../../utils/response.js";
 import { getPostgresPool, isPostgresConfigured } from "../../utils/postgres.js";
 
@@ -49,24 +49,9 @@ const getPermissionKey = (action: ConfigAction) => {
   return "can_delete";
 };
 
-const getBearerToken = (req: any) => {
-  const authHeader = req.headers?.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
-  return authHeader.slice(7);
-};
-
 export const requireSettingsPermission = async (req: any, res: any, action: ConfigAction) => {
-  const token = getBearerToken(req);
-  if (!token) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
-
-  const decoded = verifyToken(token);
-  if (!decoded?.userId) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
+  const decoded = await requireBearerUser(req, res);
+  if (!decoded) return null;
 
   if (decoded.role === "administrador") {
     return decoded;

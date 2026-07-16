@@ -144,7 +144,26 @@ export function initDb() {
       role TEXT NOT NULL DEFAULT 'empleado',
       avatar TEXT,
       active INTEGER DEFAULT 1,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      session_version INTEGER NOT NULL DEFAULT 1,
+      deactivated_at DATETIME,
+      deactivated_by TEXT,
+      deactivation_reason TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS user_status_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      action TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      performed_by_user_id INTEGER,
+      performed_by TEXT NOT NULL,
+      performed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      previous_status TEXT NOT NULL,
+      new_status TEXT NOT NULL,
+      snapshot TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (user_id) REFERENCES users(id),
+      FOREIGN KEY (performed_by_user_id) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS user_permissions (
@@ -500,6 +519,12 @@ export function initDb() {
       VALUES (1, 'Proveedor General')
     `).run();
   }
+
+  try { db.exec("ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 1"); } catch (e) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN deactivated_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN deactivation_reason TEXT"); } catch (e) {}
+  try { db.exec("UPDATE users SET session_version = 1 WHERE session_version IS NULL OR session_version < 1"); } catch (e) {}
 
   try { db.exec("ALTER TABLE payment_methods ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE payment_methods ADD COLUMN deactivated_by TEXT"); } catch (e) {}

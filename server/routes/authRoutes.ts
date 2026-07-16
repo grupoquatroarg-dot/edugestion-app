@@ -3,7 +3,8 @@ import bcrypt from "bcryptjs";
 import { UserRepository } from "../repositories/userRepository.js";
 import { validate } from "../middleware/validate.js";
 import { getSessionConfig } from "../utils/sessionConfig.js";
-import { generateToken, verifyToken } from "../utils/jwt.js";
+import { generateToken } from "../utils/jwt.js";
+import { getAuthUser } from "../middleware/authMiddleware.js";
 import { z } from "zod";
 import { sendSuccess, sendError } from "../utils/response.js";
 
@@ -19,21 +20,24 @@ const loginSchema = z.object({
 router.post("/login", validate(loginSchema), async (req, res) => {
   const { email, password } = req.body;
   const user = await UserRepository.findByEmail(email) as any;
-  
+
   if (!user || !bcrypt.compareSync(password, user.password)) {
     return sendError(res, "Credenciales inválidas", 401);
   }
 
+  const sessionVersion = Number(user.session_version ?? 1);
   const token = generateToken({
     userId: user.id,
     role: user.role,
-    userName: user.name
+    userName: user.name,
+    sessionVersion,
   });
 
   if (req.session) {
     req.session.userId = user.id;
     req.session.role = user.role;
     req.session.userName = user.name;
+    req.session.sessionVersion = sessionVersion;
 
     await new Promise<void>((resolve) => {
       req.session.save((err) => {
@@ -50,28 +54,16 @@ router.post("/login", validate(loginSchema), async (req, res) => {
   return sendSuccess(res, { ...userWithoutPassword, permissions, token }, "Login exitoso");
 });
 
-router.get("/me", async (req: any, res) => {
-  let userId = req.session?.userId;
-  
-  if (!userId) {
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.split(' ')[1];
-      const decoded = verifyToken(token);
-      if (decoded) {
-        userId = decoded.userId;
-      }
-    }
+router.get("/me", async (req, res) => {
+  const authUser = await getAuthUser(req);
+  if (!authUser) {
+    return sendError(res, "Sesión inválida o vencida. Iniciá sesión nuevamente.", 401);
   }
 
-  if (!userId) {
-    return sendError(res, "No has iniciado sesión", 401);
-  }
-  
-  const user = await UserRepository.findById(Number(userId)) as any;
+  const user = await UserRepository.findById(Number(authUser.userId)) as any;
   if (!user) return sendError(res, "Usuario no encontrado", 404);
-  
-  const permissions = await UserRepository.getPermissions(Number(userId));
+
+  const permissions = await UserRepository.getPermissions(Number(authUser.userId));
   return sendSuccess(res, { ...user, permissions });
 });
 

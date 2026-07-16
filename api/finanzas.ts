@@ -1,7 +1,7 @@
 import { financeRepository } from "../server/repositories/financeRepository.js";
 import { providerRepository } from "../server/repositories/providerRepository.js";
 import { UserRepository } from "../server/repositories/userRepository.js";
-import { verifyToken } from "../server/utils/jwt.js";
+import { requireBearerUser } from "../server/services/currentUserAuthService.js";
 import { sendError, sendSuccess } from "../server/utils/response.js";
 import { manualExpenseCancellationService } from "../server/services/manualExpenseCancellationService.js";
 import { listActivePaymentMethods } from "../server/services/paymentMethodAvailabilityService.js";
@@ -20,12 +20,6 @@ const getBody = (req: any) => {
   return {};
 };
 
-const getBearerToken = (req: any) => {
-  const authHeader = req.headers?.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
-  return authHeader.slice(7);
-};
-
 const permissionKeyByAction = {
   view: "can_view",
   create: "can_create",
@@ -34,19 +28,8 @@ const permissionKeyByAction = {
 } as const;
 
 const requireCurrentAccountsPermission = async (req: any, res: any, action: keyof typeof permissionKeyByAction) => {
-  const token = getBearerToken(req);
-
-  if (!token) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
-
-  const decoded = verifyToken(token);
-
-  if (!decoded?.userId) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
+  const decoded = await requireBearerUser(req, res);
+  if (!decoded) return null;
 
   if (decoded.role === "administrador") {
     return decoded;

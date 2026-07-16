@@ -2,6 +2,7 @@ import express from "express";
 import { UserRepository } from "../repositories/userRepository.js";
 import { requireAdmin } from "../middleware/authMiddleware.js";
 import { validate } from "../middleware/validate.js";
+import { userLifecycleService, type UserLifecycleAction } from "../services/userLifecycleService.js";
 import { z } from "zod";
 import { sendSuccess, sendError } from "../utils/response.js";
 
@@ -11,7 +12,6 @@ const baseUserBodySchema = z.object({
   name: z.string().min(2, "Nombre demasiado corto"),
   email: z.string().email("Email inválido"),
   role: z.enum(["administrador", "empleado", "vendedor", "operario"]),
-  active: z.union([z.number(), z.boolean()]).optional(),
   avatar: z.string().optional(),
 });
 
@@ -33,6 +33,15 @@ const updateUserSchema = z.object({
   }),
 });
 
+const lifecycleSchema = z.object({
+  body: z.object({
+    motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
+  }),
+  query: z.object({
+    action: z.enum(["deactivate", "reactivate"]),
+  }),
+});
+
 const permissionsSchema = z.object({
   body: z.object({
     permissions: z.record(z.string(), z.object({
@@ -45,7 +54,7 @@ const permissionsSchema = z.object({
   }),
 });
 
-router.get("/", requireAdmin, async (req, res) => {
+router.get("/", requireAdmin, async (_req, res) => {
   const users = await UserRepository.findAll();
   return sendSuccess(res, users);
 });
@@ -64,7 +73,8 @@ router.post("/", requireAdmin, validate(createUserSchema), async (req, res) => {
 
 router.put("/:id", requireAdmin, validate(updateUserSchema), async (req, res) => {
   try {
-    const updatedUser = await UserRepository.update(Number(req.params.id), req.body);
+    const actor = (req as any).user;
+    const updatedUser = await UserRepository.update(Number(req.params.id), req.body, Number(actor.userId));
     return sendSuccess(res, updatedUser, "Usuario actualizado");
   } catch (error: any) {
     if (error.code === 'SQLITE_CONSTRAINT' || error.code === '23505') {
@@ -72,6 +82,34 @@ router.put("/:id", requireAdmin, validate(updateUserSchema), async (req, res) =>
     }
     throw error;
   }
+});
+
+router.post("/:id/lifecycle", requireAdmin, validate(lifecycleSchema), async (req, res) => {
+  const actor = (req as any).user;
+  const action = req.query.action as UserLifecycleAction;
+  const result = await userLifecycleService.changeStatus({
+    userId: Number(req.params.id),
+    action,
+    motivo: req.body.motivo,
+    performedByUserId: Number(actor.userId),
+    performedByName: actor.userName || "Sistema",
+  });
+
+  return sendSuccess(
+    res,
+    result,
+    action === "deactivate"
+      ? "Usuario dado de baja correctamente"
+      : "Usuario reactivado correctamente"
+  );
+});
+
+router.delete("/:id", requireAdmin, async (_req, res) => {
+  return sendError(
+    res,
+    "La eliminación física de usuarios está deshabilitada. Usá Dar de baja para conservar el historial.",
+    409
+  );
 });
 
 router.get("/:id/permissions", requireAdmin, async (req, res) => {

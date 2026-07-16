@@ -1,6 +1,6 @@
 import { getPostgresPool, isPostgresConfigured } from "../../utils/postgres.js";
 import { UserRepository } from "../../repositories/userRepository.js";
-import { verifyToken } from "../../utils/jwt.js";
+import { requireBearerUser } from "../currentUserAuthService.js";
 import { sendError } from "../../utils/response.js";
 import { getBusinessDate } from "../../utils/businessDate.js";
 
@@ -20,26 +20,9 @@ export const getDateKeys = () => {
   return { currentMonth, prevMonth, today };
 };
 
-export const getBearerToken = (req: any) => {
-  const authHeader = req.headers?.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
-  return authHeader.slice(7);
-};
-
 export const requireDashboardAccess = async (req: any, res: any) => {
-  const token = getBearerToken(req);
-
-  if (!token) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
-
-  const decoded = verifyToken(token);
-
-  if (!decoded?.userId) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
+  const decoded = await requireBearerUser(req, res);
+  if (!decoded) return null;
 
   if (decoded.role === "administrador") {
     return decoded;

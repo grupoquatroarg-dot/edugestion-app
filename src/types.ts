@@ -101,7 +101,13 @@ export interface UserPermission {
 export interface User {
   id: number;
   name: string;
-  role: 'administrador' | 'empleado';
+  role: 'administrador' | 'empleado' | 'vendedor' | 'operario';
+  active?: number | boolean;
+  session_version?: number;
+  deactivated_at?: string | null;
+  deactivated_by?: string | null;
+  deactivation_reason?: string | null;
+  created_at?: string;
   email: string;
   avatar?: string;
   permissions?: Record<string, UserPermission>;

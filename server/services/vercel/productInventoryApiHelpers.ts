@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { getPostgresPool, isPostgresConfigured } from "../../utils/postgres.js";
 import { AppError, sendError, sendSuccess } from "../../utils/response.js";
-import { verifyToken } from "../../utils/jwt.js";
+import { requireBearerUser } from "../currentUserAuthService.js";
 
 const stockSchema = z.object({
   cantidad: z.number().min(1, "La cantidad debe ser al menos 1"),
@@ -38,24 +38,9 @@ const getProductId = (req: any) => {
   return Number.isInteger(id) && id > 0 ? id : null;
 };
 
-const getBearerToken = (req: any) => {
-  const authHeader = req.headers?.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
-  return authHeader.slice(7);
-};
-
 const requireProductEditPermission = async (req: any, res: any) => {
-  const token = getBearerToken(req);
-  if (!token) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
-
-  const decoded = verifyToken(token);
-  if (!decoded?.userId) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
+  const decoded = await requireBearerUser(req, res);
+  if (!decoded) return null;
 
   if (decoded.role === "administrador") return decoded;
 

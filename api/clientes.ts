@@ -8,6 +8,8 @@ import { getPostgresPool } from "../server/utils/postgres.js";
 import { salesService } from "../server/services/salesService.js";
 import { customerOrderCancellationService } from "../server/services/customerOrderCancellationService.js";
 import { customerLifecycleService, type CustomerLifecycleAction } from "../server/services/customerLifecycleService.js";
+import { userLifecycleService, type UserLifecycleAction } from "../server/services/userLifecycleService.js";
+import { requireBearerUser } from "../server/services/currentUserAuthService.js";
 
 const clientSchema = z.object({
   nombre_apellido: z.string().min(2, "El nombre es requerido"),
@@ -38,7 +40,6 @@ const baseUserSchema = z.object({
   name: z.string().min(2, "Nombre demasiado corto"),
   email: z.string().email("Email inválido"),
   role: z.enum(["administrador", "empleado", "vendedor", "operario"]),
-  active: z.union([z.number(), z.boolean()]).optional(),
   avatar: z.string().optional(),
 });
 
@@ -54,6 +55,10 @@ const updateUserSchema = baseUserSchema.extend({
       (value) => value === undefined || value === "" || value.length >= 6,
       "La contraseña debe tener al menos 6 caracteres"
     ),
+});
+
+const userLifecycleSchema = z.object({
+  motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
 });
 
 const permissionsSchema = z.object({
@@ -95,19 +100,8 @@ const permissionKeyByAction = {
 } as const;
 
 const requireClientPermission = async (req: any, res: any, action: keyof typeof permissionKeyByAction) => {
-  const token = getBearerToken(req);
-
-  if (!token) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
-
-  const decoded = verifyToken(token);
-
-  if (!decoded?.userId) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
+  const decoded = await requireBearerUser(req, res);
+  if (!decoded) return null;
 
   if (decoded.role === "administrador") {
     return decoded;
@@ -126,19 +120,8 @@ const requireClientPermission = async (req: any, res: any, action: keyof typeof 
 };
 
 const requireAdmin = async (req: any, res: any) => {
-  const token = getBearerToken(req);
-
-  if (!token) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
-
-  const decoded = verifyToken(token);
-
-  if (!decoded?.userId) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
+  const decoded = await requireBearerUser(req, res);
+  if (!decoded) return null;
 
   if (decoded.role !== "administrador") {
     sendError(res, "Forbidden: Solo administrador", 403);
@@ -267,7 +250,7 @@ const handleUsers = async (req: any, res: any) => {
     }
 
     try {
-      const updatedUser = await UserRepository.update(id, parsed.data);
+      const updatedUser = await UserRepository.update(id, parsed.data, Number(admin.userId));
       return sendSuccess(res, updatedUser, "Usuario actualizado exitosamente");
     } catch (error: any) {
       if (error?.code === "SQLITE_CONSTRAINT" || error?.code === "23505") {
@@ -278,7 +261,68 @@ const handleUsers = async (req: any, res: any) => {
     }
   }
 
+  if (req.method === "DELETE") {
+    return sendError(
+      res,
+      "La eliminación física de usuarios está deshabilitada. Usá Dar de baja para conservar el historial.",
+      409
+    );
+  }
+
   return sendError(res, "Method not allowed", 405);
+};
+
+const handleUserLifecycle = async (req: any, res: any) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+
+  if (req.method !== "POST") return sendError(res, "Method not allowed", 405);
+
+  const id = getId(req);
+  if (!id) return sendError(res, "ID de usuario inválido", 400);
+
+  const action = getAction(req);
+  if (!["deactivate", "reactivate"].includes(action)) {
+    return sendError(res, "Acción de usuario inválida", 400);
+  }
+
+  const parsed = userLifecycleSchema.safeParse(getBody(req));
+  if (!parsed.success) {
+    return sendError(
+      res,
+      "Validation failed",
+      400,
+      parsed.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+      }))
+    );
+  }
+
+  try {
+    const result = await userLifecycleService.changeStatus({
+      userId: id,
+      action: action as UserLifecycleAction,
+      motivo: parsed.data.motivo,
+      performedByUserId: Number(admin.userId),
+      performedByName: admin.userName || "Sistema",
+    });
+
+    return sendSuccess(
+      res,
+      result,
+      action === "deactivate"
+        ? "Usuario dado de baja correctamente"
+        : "Usuario reactivado correctamente"
+    );
+  } catch (error: any) {
+    return sendError(
+      res,
+      error?.message || "No se pudo actualizar el estado del usuario",
+      error?.statusCode || 400,
+      error?.errors || []
+    );
+  }
 };
 
 const handleUserPermissions = async (req: any, res: any) => {
@@ -385,19 +429,8 @@ const toIntFlag = (value: any) => {
 };
 
 const requireRoutePermission = async (req: any, res: any, action: keyof typeof permissionKeyByAction) => {
-  const token = getBearerToken(req);
-
-  if (!token) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
-
-  const decoded = verifyToken(token);
-
-  if (!decoded?.userId) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
+  const decoded = await requireBearerUser(req, res);
+  if (!decoded) return null;
 
   if (decoded.role === "administrador") {
     return decoded;
@@ -862,19 +895,8 @@ const handleRoutes = async (req: any, res: any) => {
 
 
 const requireChecklistPermission = async (req: any, res: any, action: keyof typeof permissionKeyByAction) => {
-  const token = getBearerToken(req);
-
-  if (!token) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
-
-  const decoded = verifyToken(token);
-
-  if (!decoded?.userId) {
-    sendError(res, "Unauthorized: Login required", 401);
-    return null;
-  }
+  const decoded = await requireBearerUser(req, res);
+  if (!decoded) return null;
 
   if (decoded.role === "administrador") {
     return decoded;
@@ -2412,6 +2434,10 @@ export default async function handler(req: any, res: any) {
 
   if (endpoint === "users-permissions") {
     return handleUserPermissions(req, res);
+  }
+
+  if (endpoint === "user-lifecycle") {
+    return handleUserLifecycle(req, res);
   }
 
   if (["routes", "routes-today", "route-item", "routes-reorder", "route-supplier-order"].includes(endpoint)) {
