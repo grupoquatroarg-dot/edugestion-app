@@ -3,6 +3,7 @@ import db from "../db.js";
 import { getPostgresPool, isPostgresConfigured } from "../utils/postgres.js";
 import { AppError } from "../utils/response.js";
 import { normalizeBusinessDateForStorage, toStoredDateOnly } from "../utils/businessDate.js";
+import { assertPaymentMethodActive } from "./paymentMethodAvailabilityService.js";
 
 type Queryable = {
   query: (text: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }>;
@@ -405,6 +406,7 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
   const metodoPagoReal = isDebt ? null : payload.metodo_pago;
 
   if (!isPostgresConfigured()) {
+    await assertPaymentMethodActive(payload.metodo_pago);
     const runTransaction = db.transaction(() => {
       const provider = db
         .prepare("SELECT nombre, estado FROM proveedores WHERE id = ? LIMIT 1")
@@ -614,6 +616,7 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
 
   try {
     await client.query("BEGIN");
+    await assertPaymentMethodActive(payload.metodo_pago, client);
 
     const proveedorResult = await client.query(
       `SELECT nombre, estado
@@ -822,6 +825,7 @@ export const payPurchaseInvoice = async (
   }
 
   if (!isPostgresConfigured()) {
+    await assertPaymentMethodActive(payload.metodo_pago_real);
     const runTransaction = db.transaction(() => {
       const invoice = db
         .prepare(
@@ -917,6 +921,7 @@ export const payPurchaseInvoice = async (
 
   try {
     await client.query("BEGIN");
+    await assertPaymentMethodActive(payload.metodo_pago_real, client);
 
     const invoiceResult = await client.query(
       `

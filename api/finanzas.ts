@@ -4,6 +4,7 @@ import { UserRepository } from "../server/repositories/userRepository.js";
 import { verifyToken } from "../server/utils/jwt.js";
 import { sendError, sendSuccess } from "../server/utils/response.js";
 import { manualExpenseCancellationService } from "../server/services/manualExpenseCancellationService.js";
+import { listActivePaymentMethods } from "../server/services/paymentMethodAvailabilityService.js";
 
 const getBody = (req: any) => {
   if (req.body && typeof req.body === "object") return req.body;
@@ -98,6 +99,18 @@ export default async function handler(req: any, res: any) {
       return sendSuccess(res, cheques);
     } catch (error: any) {
       return sendError(res, error?.message || "Error al obtener cheques", error?.statusCode || 400, error?.errors || []);
+    }
+  }
+
+
+  if (req.method === "GET" && endpoint === "payment-methods") {
+    const user = await requireCurrentAccountsPermission(req, res, "view");
+    if (!user) return;
+
+    try {
+      return sendSuccess(res, await listActivePaymentMethods());
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al obtener formas de pago", error?.statusCode || 400, error?.errors || []);
     }
   }
 

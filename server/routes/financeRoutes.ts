@@ -6,19 +6,25 @@ import { requireAuth, requirePermission } from '../middleware/authMiddleware.js'
 import { validate } from '../middleware/validate.js';
 import { sendError, sendSuccess } from '../utils/response.js';
 import { manualExpenseCancellationService } from '../services/manualExpenseCancellationService.js';
+import { listActivePaymentMethods } from '../services/paymentMethodAvailabilityService.js';
 
 const router = Router();
 
 router.get('/', requireAuth, requirePermission('current_accounts', 'view'), async (req, res) => {
-  if (String(req.query.endpoint || '') !== 'proveedores') {
-    return sendError(res, 'Endpoint de finanzas no encontrado', 404);
-  }
+  const endpoint = String(req.query.endpoint || '');
 
   try {
-    const proveedores = await providerRepository.findAll({ activeOnly: true });
-    return sendSuccess(res, proveedores);
+    if (endpoint === 'proveedores') {
+      return sendSuccess(res, await providerRepository.findAll({ activeOnly: true }));
+    }
+
+    if (endpoint === 'payment-methods') {
+      return sendSuccess(res, await listActivePaymentMethods());
+    }
+
+    return sendError(res, 'Endpoint de finanzas no encontrado', 404);
   } catch (error: any) {
-    return sendError(res, error.message || 'Error al obtener proveedores', error.statusCode || 400, error.errors || []);
+    return sendError(res, error.message || 'Error al obtener datos de finanzas', error.statusCode || 400, error.errors || []);
   }
 });
 

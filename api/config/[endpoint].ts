@@ -47,10 +47,12 @@ export default async function handler(req: any, res: any) {
       }
 
       if (endpoint === "product-families" || endpoint === "families") {
+        const activeOnly = req.query?.active === "true";
         const result = await pool.query(`
           SELECT f.*, c.name AS category_name
           FROM product_families f
           LEFT JOIN product_categories c ON f.category_id = c.id
+          ${activeOnly ? "WHERE COALESCE(f.estado, 'activo') = 'activo' AND (f.category_id IS NULL OR COALESCE(c.estado, 'activo') = 'activo')" : ""}
           ORDER BY f.name ASC
         `);
         return sendSuccess(res, result.rows.map(mapFamily));
@@ -67,6 +69,7 @@ export default async function handler(req: any, res: any) {
           "payment_methods",
           "product_categories",
           "product_families",
+          "configuration_item_status_history",
           "clientes",
           "proveedores",
           "products",
@@ -170,6 +173,7 @@ export default async function handler(req: any, res: any) {
         "payment_methods",
         "product_categories",
         "product_families",
+        "configuration_item_status_history",
         "clientes",
         "proveedores",
         "products",
@@ -340,6 +344,7 @@ export default async function handler(req: any, res: any) {
         "products",
         "proveedores",
         "clientes",
+        "configuration_item_status_history",
         "product_families",
         "product_categories"
       ];
@@ -471,9 +476,9 @@ export default async function handler(req: any, res: any) {
         const name = validateName(body);
         const result = await pool.query(
           `INSERT INTO product_categories (name, description, estado)
-           VALUES ($1, $2, $3)
+           VALUES ($1, $2, 'activo')
            RETURNING id, name, description, estado`,
-          [name, body.description || null, body.estado || "activo"]
+          [name, body.description || null]
         );
         return sendSuccess(res, mapCategory(result.rows[0]), "Categoría creada", 201);
       }
@@ -481,11 +486,22 @@ export default async function handler(req: any, res: any) {
       if (endpoint === "product-families" || endpoint === "families") {
         const name = validateName(body);
         const categoryId = body.category_id === null || body.category_id === undefined || body.category_id === "" ? null : Number(body.category_id);
+
+        if (categoryId) {
+          const category = await pool.query(
+            "SELECT id FROM product_categories WHERE id = $1 AND COALESCE(estado, 'activo') = 'activo' LIMIT 1",
+            [categoryId]
+          );
+          if (!category.rowCount) {
+            return sendError(res, "La categoría seleccionada está inactiva o no existe", 409);
+          }
+        }
+
         const result = await pool.query(
           `INSERT INTO product_families (name, category_id, estado)
-           VALUES ($1, $2, $3)
+           VALUES ($1, $2, 'activo')
            RETURNING id, name, category_id, estado`,
-          [name, categoryId, body.estado || "activo"]
+          [name, categoryId]
         );
         return sendSuccess(res, mapFamily(result.rows[0]), "Familia creada", 201);
       }
@@ -501,6 +517,7 @@ export default async function handler(req: any, res: any) {
           "payment_methods",
           "product_categories",
           "product_families",
+          "configuration_item_status_history",
           "clientes",
           "proveedores",
           "products",

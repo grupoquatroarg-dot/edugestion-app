@@ -11,6 +11,7 @@ import type { SaleStockAllocationInput } from "../server/services/saleTraceServi
 import { saleCancellationService } from "../server/services/saleCancellationService.js";
 import { supplierOrderCancellationService } from "../server/services/supplierOrderCancellationService.js";
 import { customerOrderCancellationService } from "../server/services/customerOrderCancellationService.js";
+import { assertPaymentMethodActive } from "../server/services/paymentMethodAvailabilityService.js";
 
 const saleSchema = z.object({
   cliente_id: z.number(),
@@ -834,6 +835,7 @@ const handleSupplierOrders = async (req: any, res: any) => {
       }
 
       const metodoPago = parsed.data.metodo_pago || "efectivo";
+      await assertPaymentMethodActive(metodoPago, client);
       const montoPagado = parsed.data.monto_pagado === undefined ? totalVenta : toNumber(parsed.data.monto_pagado);
       const montoPendiente = Math.max(0, totalVenta - montoPagado);
       const nextSaleNum = await getAndIncrementSetting(client, "next_sale_number");
@@ -1507,6 +1509,9 @@ const handleCustomerOrders = async (req: any, res: any) => {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      for (const payment of payments) {
+        await assertPaymentMethodActive(payment.metodo_pago, client);
+      }
 
       const orderResult = await client.query(
         `SELECT

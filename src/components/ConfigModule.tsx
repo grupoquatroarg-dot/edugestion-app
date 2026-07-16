@@ -40,13 +40,17 @@ interface ConfigItem {
   estado?: string;
   category_id?: number | null;
   category_name?: string;
+  deactivated_at?: string | null;
+  deactivated_by?: string | null;
+  deactivation_reason?: string | null;
 }
 
-interface DeleteTarget {
+interface LifecycleTarget {
   endpoint: string;
   id: number;
   name: string;
   label: string;
+  action: 'deactivate' | 'reactivate';
 }
 
 const tabs: Array<{
@@ -124,16 +128,16 @@ export default function ConfigModule() {
   const [families, setFamilies] = useState<ConfigItem[]>([]);
 
   const [editingItem, setEditingItem] = useState<ConfigItem | null>(null);
-  const [paymentForm, setPaymentForm] = useState({ name: '', tipo: 'Efectivo', activo: 1 });
-  const [categoryForm, setCategoryForm] = useState({ name: '', description: '', estado: 'activo' });
+  const [paymentForm, setPaymentForm] = useState({ name: '', tipo: 'Efectivo' });
+  const [categoryForm, setCategoryForm] = useState({ name: '', description: '' });
   const [familyForm, setFamilyForm] = useState({
     name: '',
     category_id: null as number | null,
-    estado: 'activo',
   });
 
-  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
-  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [lifecycleTarget, setLifecycleTarget] = useState<LifecycleTarget | null>(null);
+  const [lifecycleReason, setLifecycleReason] = useState('');
+  const [lifecycleLoading, setLifecycleLoading] = useState(false);
 
   const [backupLoading, setBackupLoading] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
@@ -159,9 +163,9 @@ export default function ConfigModule() {
 
   const resetEditor = () => {
     setEditingItem(null);
-    setPaymentForm({ name: '', tipo: 'Efectivo', activo: 1 });
-    setCategoryForm({ name: '', description: '', estado: 'activo' });
-    setFamilyForm({ name: '', category_id: null, estado: 'activo' });
+    setPaymentForm({ name: '', tipo: 'Efectivo' });
+    setCategoryForm({ name: '', description: '' });
+    setFamilyForm({ name: '', category_id: null });
   };
 
   const fetchData = async (isRefresh = false) => {
@@ -311,22 +315,40 @@ export default function ConfigModule() {
     }
   };
 
-  const deleteItem = async () => {
-    if (!deleteTarget) return;
-    setDeleteLoading(true);
+  const changeLifecycle = async () => {
+    if (!lifecycleTarget) return;
+    const reason = lifecycleReason.trim();
+    if (reason.length < 3) {
+      showStatus('El motivo debe tener al menos 3 caracteres', 'error');
+      return;
+    }
+
+    setLifecycleLoading(true);
     try {
-      const response = await apiFetch(`/api/config/${deleteTarget.endpoint}/${deleteTarget.id}`, {
-        method: 'DELETE',
+      const response = await apiFetch(`/api/config/${lifecycleTarget.endpoint}/${lifecycleTarget.id}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          action: lifecycleTarget.action,
+          motivo: reason,
+        }),
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body?.message || `No se pudo eliminar ${deleteTarget.label}`);
-      showStatus(`${deleteTarget.label} eliminada correctamente`, 'success');
-      setDeleteTarget(null);
+      const actionLabel = lifecycleTarget.action === 'deactivate' ? 'dar de baja' : 'reactivar';
+      if (!response.ok) throw new Error(body?.message || `No se pudo ${actionLabel} ${lifecycleTarget.label.toLowerCase()}`);
+      showStatus(
+        lifecycleTarget.action === 'deactivate'
+          ? `${lifecycleTarget.label} dada de baja correctamente`
+          : `${lifecycleTarget.label} reactivada correctamente`,
+        'success',
+      );
+      setLifecycleTarget(null);
+      setLifecycleReason('');
+      resetEditor();
       await fetchData(true);
     } catch (error: any) {
-      showStatus(error?.message || 'Error al eliminar el elemento', 'error');
+      showStatus(error?.message || 'No se pudo cambiar el estado', 'error');
     } finally {
-      setDeleteLoading(false);
+      setLifecycleLoading(false);
     }
   };
 
@@ -689,18 +711,9 @@ export default function ConfigModule() {
               <option value="Crédito">Crédito / Cuenta corriente</option>
             </select>
           </label>
-          <label className="flex min-h-12 cursor-pointer items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-            <span>
-              <span className="block text-sm font-black text-slate-800">Forma de pago activa</span>
-              <span className="block text-xs text-slate-500">Disponible para nuevas operaciones.</span>
-            </span>
-            <input
-              type="checkbox"
-              checked={paymentForm.activo === 1}
-              onChange={(event) => setPaymentForm({ ...paymentForm, activo: event.target.checked ? 1 : 0 })}
-              className="h-5 w-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-            />
-          </label>
+          <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-xs font-semibold leading-relaxed text-indigo-800">
+            El estado se administra desde Dar de baja o Reactivar para conservar la auditoría.
+          </div>
         </div>
         <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
           {editingItem && (
@@ -726,6 +739,7 @@ export default function ConfigModule() {
         <div className="mt-5 grid gap-3 md:grid-cols-2">
           {paymentMethods.map((item) => {
             const active = item.activo !== 0;
+            const systemRequired = item.name.trim().toLowerCase() === 'cta cte';
             return (
               <article key={item.id} className="min-w-0 rounded-3xl border border-slate-200 bg-slate-50/70 p-4">
                 <div className="flex min-w-0 items-start justify-between gap-3">
@@ -740,6 +754,13 @@ export default function ConfigModule() {
                     {active ? 'Activa' : 'Inactiva'}
                   </span>
                 </div>
+                {!active && (
+                  <div className="mt-3 rounded-2xl border border-red-100 bg-red-50 p-3 text-xs leading-relaxed text-red-800">
+                    <p><span className="font-black">Motivo:</span> {item.deactivation_reason || 'Sin trazabilidad'}</p>
+                    {item.deactivated_by && <p className="mt-1"><span className="font-black">Usuario:</span> {item.deactivated_by}</p>}
+                    {item.deactivated_at && <p className="mt-1"><span className="font-black">Fecha:</span> {new Date(item.deactivated_at).toLocaleString('es-AR')}</p>}
+                  </div>
+                )}
                 <div className="mt-4 grid grid-cols-2 gap-2">
                   {hasPermission('settings', 'edit') && (
                     <button
@@ -749,7 +770,6 @@ export default function ConfigModule() {
                         setPaymentForm({
                           name: item.name,
                           tipo: item.tipo || 'Efectivo',
-                          activo: item.activo === 0 ? 0 : 1,
                         });
                         window.scrollTo({ top: 0, behavior: 'smooth' });
                       }}
@@ -760,14 +780,30 @@ export default function ConfigModule() {
                     </button>
                   )}
                   {hasPermission('settings', 'delete') && (
-                    <button
-                      type="button"
-                      onClick={() => setDeleteTarget({ endpoint: 'payment-methods', id: item.id, name: item.name, label: 'Forma de pago' })}
-                      className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-3 text-xs font-black text-red-600 transition hover:bg-red-100"
-                      aria-label={`Eliminar forma de pago ${item.name}`}
-                    >
-                      <Trash2 size={15} /> Eliminar
-                    </button>
+                    systemRequired ? (
+                      <div className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 px-3 text-center text-xs font-black text-indigo-700">
+                        <ShieldAlert size={15} /> Requerida por el sistema
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLifecycleReason('');
+                          setLifecycleTarget({
+                            endpoint: 'payment-methods',
+                            id: item.id,
+                            name: item.name,
+                            label: 'Forma de pago',
+                            action: active ? 'deactivate' : 'reactivate',
+                          });
+                        }}
+                        className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border px-3 text-xs font-black transition ${active ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100' : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`}
+                        aria-label={`${active ? 'Dar de baja' : 'Reactivar'} forma de pago ${item.name}`}
+                      >
+                        {active ? <ShieldAlert size={15} /> : <RotateCcw size={15} />}
+                        {active ? 'Dar de baja' : 'Reactivar'}
+                      </button>
+                    )
                   )}
                 </div>
               </article>
@@ -798,13 +834,9 @@ export default function ConfigModule() {
             <span className={labelClass}>Descripción</span>
             <textarea className={`${inputClass} min-h-28 resize-y`} value={categoryForm.description} onChange={(event) => setCategoryForm({ ...categoryForm, description: event.target.value })} placeholder="Descripción opcional" />
           </label>
-          <label className="space-y-2">
-            <span className={labelClass}>Estado</span>
-            <select className={inputClass} value={categoryForm.estado} onChange={(event) => setCategoryForm({ ...categoryForm, estado: event.target.value })}>
-              <option value="activo">Activo</option>
-              <option value="inactivo">Inactivo</option>
-            </select>
-          </label>
+          <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-xs font-semibold leading-relaxed text-indigo-800">
+            El estado se administra desde Dar de baja o Reactivar para conservar la auditoría.
+          </div>
         </div>
         <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
           {editingItem && <button type="button" onClick={resetEditor} className={secondaryButtonClass}>Cancelar</button>}
@@ -833,19 +865,40 @@ export default function ConfigModule() {
                     {active ? 'Activa' : 'Inactiva'}
                   </span>
                 </div>
+                {!active && (
+                  <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-100 p-3 text-xs leading-relaxed text-slate-700">
+                    <p><span className="font-black">Motivo:</span> {item.deactivation_reason || 'Sin trazabilidad'}</p>
+                    {item.deactivated_by && <p className="mt-1"><span className="font-black">Usuario:</span> {item.deactivated_by}</p>}
+                    {item.deactivated_at && <p className="mt-1"><span className="font-black">Fecha:</span> {new Date(item.deactivated_at).toLocaleString('es-AR')}</p>}
+                  </div>
+                )}
                 <div className="mt-4 grid grid-cols-2 gap-2">
                   {hasPermission('settings', 'edit') && (
                     <button type="button" onClick={() => {
                       setEditingItem(item);
-                      setCategoryForm({ name: item.name, description: item.description || '', estado: item.estado || 'activo' });
+                      setCategoryForm({ name: item.name, description: item.description || '' });
                       window.scrollTo({ top: 0, behavior: 'smooth' });
                     }} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700">
                       <Edit3 size={15} /> Editar
                     </button>
                   )}
                   {hasPermission('settings', 'delete') && (
-                    <button type="button" onClick={() => setDeleteTarget({ endpoint: 'product-categories', id: item.id, name: item.name, label: 'Categoría' })} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-3 text-xs font-black text-red-600 transition hover:bg-red-100">
-                      <Trash2 size={15} /> Eliminar
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLifecycleReason('');
+                        setLifecycleTarget({
+                          endpoint: 'product-categories',
+                          id: item.id,
+                          name: item.name,
+                          label: 'Categoría',
+                          action: active ? 'deactivate' : 'reactivate',
+                        });
+                      }}
+                      className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border px-3 text-xs font-black transition ${active ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100' : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`}
+                    >
+                      {active ? <ShieldAlert size={15} /> : <RotateCcw size={15} />}
+                      {active ? 'Dar de baja' : 'Reactivar'}
                     </button>
                   )}
                 </div>
@@ -871,17 +924,19 @@ export default function ConfigModule() {
             <span className={labelClass}>Categoría asociada</span>
             <select className={inputClass} value={familyForm.category_id || ''} onChange={(event) => setFamilyForm({ ...familyForm, category_id: event.target.value ? Number(event.target.value) : null })}>
               <option value="">Sin categoría asociada</option>
-              {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+              {categories
+                .filter((category) => category.estado !== 'inactivo' || category.id === familyForm.category_id)
+                .map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}{category.estado === 'inactivo' ? ' (inactiva)' : ''}
+                  </option>
+                ))}
             </select>
             <span className="block text-xs leading-relaxed text-slate-500">La asociación es informativa y no reemplaza la categoría propia de cada producto.</span>
           </label>
-          <label className="space-y-2">
-            <span className={labelClass}>Estado</span>
-            <select className={inputClass} value={familyForm.estado} onChange={(event) => setFamilyForm({ ...familyForm, estado: event.target.value })}>
-              <option value="activo">Activo</option>
-              <option value="inactivo">Inactivo</option>
-            </select>
-          </label>
+          <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-xs font-semibold leading-relaxed text-indigo-800">
+            El estado se administra desde Dar de baja o Reactivar para conservar la auditoría.
+          </div>
         </div>
         <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
           {editingItem && <button type="button" onClick={resetEditor} className={secondaryButtonClass}>Cancelar</button>}
@@ -910,19 +965,40 @@ export default function ConfigModule() {
                     {active ? 'Activa' : 'Inactiva'}
                   </span>
                 </div>
+                {!active && (
+                  <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-100 p-3 text-xs leading-relaxed text-slate-700">
+                    <p><span className="font-black">Motivo:</span> {item.deactivation_reason || 'Sin trazabilidad'}</p>
+                    {item.deactivated_by && <p className="mt-1"><span className="font-black">Usuario:</span> {item.deactivated_by}</p>}
+                    {item.deactivated_at && <p className="mt-1"><span className="font-black">Fecha:</span> {new Date(item.deactivated_at).toLocaleString('es-AR')}</p>}
+                  </div>
+                )}
                 <div className="mt-4 grid grid-cols-2 gap-2">
                   {hasPermission('settings', 'edit') && (
                     <button type="button" onClick={() => {
                       setEditingItem(item);
-                      setFamilyForm({ name: item.name, category_id: item.category_id || null, estado: item.estado || 'activo' });
+                      setFamilyForm({ name: item.name, category_id: item.category_id || null });
                       window.scrollTo({ top: 0, behavior: 'smooth' });
                     }} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700">
                       <Edit3 size={15} /> Editar
                     </button>
                   )}
                   {hasPermission('settings', 'delete') && (
-                    <button type="button" onClick={() => setDeleteTarget({ endpoint: 'product-families', id: item.id, name: item.name, label: 'Familia' })} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-3 text-xs font-black text-red-600 transition hover:bg-red-100">
-                      <Trash2 size={15} /> Eliminar
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLifecycleReason('');
+                        setLifecycleTarget({
+                          endpoint: 'product-families',
+                          id: item.id,
+                          name: item.name,
+                          label: 'Familia',
+                          action: active ? 'deactivate' : 'reactivate',
+                        });
+                      }}
+                      className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border px-3 text-xs font-black transition ${active ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100' : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`}
+                    >
+                      {active ? <ShieldAlert size={15} /> : <RotateCcw size={15} />}
+                      {active ? 'Dar de baja' : 'Reactivar'}
                     </button>
                   )}
                 </div>
@@ -1102,15 +1178,78 @@ export default function ConfigModule() {
         </section>
       </div>
 
-      {deleteTarget && (
+      {lifecycleTarget && (
         <div className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-5">
           <div className="max-h-[100dvh] w-full overflow-y-auto rounded-t-[28px] bg-white shadow-2xl sm:max-w-md sm:rounded-[28px]">
-            <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5 sm:p-6">
-              <div className="flex items-start gap-3"><div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-red-100 text-red-600"><Trash2 size={21} /></div><div><h3 className="text-lg font-black text-slate-950">Eliminar {deleteTarget.label.toLowerCase()}</h3><p className="mt-1 break-words text-sm text-slate-500">{deleteTarget.name}</p></div></div>
-              <button type="button" onClick={() => setDeleteTarget(null)} disabled={deleteLoading} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-slate-500 hover:bg-slate-100" aria-label="Cerrar confirmación de eliminación"><X size={20} /></button>
+            <div className={`flex items-start justify-between gap-4 border-b p-5 sm:p-6 ${lifecycleTarget.action === 'deactivate' ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50'}`}>
+              <div className="flex items-start gap-3">
+                <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${lifecycleTarget.action === 'deactivate' ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-700'}`}>
+                  {lifecycleTarget.action === 'deactivate' ? <ShieldAlert size={21} /> : <RotateCcw size={21} />}
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-950">
+                    {lifecycleTarget.action === 'deactivate' ? 'Dar de baja' : 'Reactivar'} {lifecycleTarget.label.toLowerCase()}
+                  </h3>
+                  <p className="mt-1 break-words text-sm text-slate-600">{lifecycleTarget.name}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setLifecycleTarget(null);
+                  setLifecycleReason('');
+                }}
+                disabled={lifecycleLoading}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-slate-500 hover:bg-white/70"
+                aria-label="Cerrar cambio de estado"
+              >
+                <X size={20} />
+              </button>
             </div>
-            <div className="p-5 sm:p-6"><p className="text-sm leading-relaxed text-slate-600">Esta acción puede afectar filtros o registros que utilicen este elemento. Confirmá solamente si ya no se necesita.</p></div>
-            <div className="grid gap-3 border-t border-slate-200 bg-slate-50 p-5 sm:grid-cols-2 sm:p-6"><button type="button" onClick={() => setDeleteTarget(null)} disabled={deleteLoading} className={secondaryButtonClass}>Cancelar</button><button type="button" onClick={deleteItem} disabled={deleteLoading} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-red-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-red-700 disabled:opacity-50"><Trash2 size={16} /> {deleteLoading ? 'Eliminando...' : 'Eliminar'}</button></div>
+            <div className="space-y-4 p-5 sm:p-6">
+              <p className="text-sm leading-relaxed text-slate-600">
+                {lifecycleTarget.action === 'deactivate'
+                  ? 'El elemento conservará todo su historial, pero dejará de estar disponible para operaciones nuevas.'
+                  : 'El elemento volverá a estar disponible para operaciones nuevas.'}
+              </p>
+              <label className="space-y-2">
+                <span className={labelClass}>Motivo obligatorio</span>
+                <textarea
+                  className={`${inputClass} min-h-28 resize-y`}
+                  value={lifecycleReason}
+                  onChange={(event) => setLifecycleReason(event.target.value.slice(0, 500))}
+                  placeholder={lifecycleTarget.action === 'deactivate' ? 'Ej.: Ya no se utiliza en la operación' : 'Ej.: Vuelve a utilizarse'}
+                  autoFocus
+                />
+                <span className="block text-xs text-slate-500">{lifecycleReason.trim().length}/500 caracteres</span>
+              </label>
+            </div>
+            <div className="grid gap-3 border-t border-slate-200 bg-slate-50 p-5 sm:grid-cols-2 sm:p-6">
+              <button
+                type="button"
+                onClick={() => {
+                  setLifecycleTarget(null);
+                  setLifecycleReason('');
+                }}
+                disabled={lifecycleLoading}
+                className={secondaryButtonClass}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={changeLifecycle}
+                disabled={lifecycleLoading || lifecycleReason.trim().length < 3}
+                className={`inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl px-5 py-3 text-xs font-black uppercase tracking-widest text-white disabled:opacity-50 ${lifecycleTarget.action === 'deactivate' ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+              >
+                {lifecycleTarget.action === 'deactivate' ? <ShieldAlert size={16} /> : <RotateCcw size={16} />}
+                {lifecycleLoading
+                  ? 'Procesando...'
+                  : lifecycleTarget.action === 'deactivate'
+                    ? 'Dar de baja'
+                    : 'Reactivar'}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -5,6 +5,7 @@ import { AppError } from '../utils/response.js';
 import { normalizeBusinessDateForStorage } from '../utils/businessDate.js';
 import { saleTraceService } from './saleTraceService.js';
 import type { SaleStockAllocationInput } from './saleTraceService.js';
+import { assertPaymentMethodActive } from './paymentMethodAvailabilityService.js';
 
 type TransactionClient = {
   query: (text: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }>;
@@ -76,6 +77,7 @@ export const salesService = {
     const totalVenta = normalizedItems.reduce((sum: number, item: any) => sum + item.cantidad * item.precio_venta, 0);
 
     if (!isPostgresConfigured()) {
+      await assertPaymentMethodActive(metodo_pago);
       // Flujo local de respaldo: conserva el comportamiento anterior para desarrollo local.
       return db.transaction(() => {
         if (cliente_id && Number(cliente_id) !== 1) {
@@ -129,6 +131,7 @@ export const salesService = {
 
     try {
       await client.query('BEGIN');
+      await assertPaymentMethodActive(metodo_pago, client);
 
       if (cliente_id && Number(cliente_id) !== 1) {
         const customerResult = await client.query(
@@ -452,6 +455,7 @@ export const salesService = {
     }
 
     if (!isPostgresConfigured()) {
+      await assertPaymentMethodActive(metodo_pago);
       return db.transaction(() => {
         const customer = db.prepare('SELECT id, nombre_apellido, saldo_cta_cte FROM clientes WHERE id = ?').get(clientId) as any;
         if (!customer) {
@@ -531,6 +535,7 @@ export const salesService = {
 
     try {
       await client.query('BEGIN');
+      await assertPaymentMethodActive(metodo_pago, client);
 
       const customerResult = await client.query(
         `SELECT id, nombre_apellido, saldo_cta_cte

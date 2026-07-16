@@ -11,6 +11,8 @@ import {
   purchaseInvoiceBodySchema,
 } from "../services/purchaseInvoiceService.js";
 import { purchaseInvoiceCancellationService } from "../services/purchaseInvoiceCancellationService.js";
+import { listActivePaymentMethods } from "../services/paymentMethodAvailabilityService.js";
+import { providerRepository } from "../repositories/providerRepository.js";
 
 const router = Router();
 
@@ -18,12 +20,22 @@ const purchaseInvoiceSchema = z.object({
   body: purchaseInvoiceBodySchema,
 });
 
-router.get("/", requirePermission("suppliers", "view"), async (_req, res) => {
+
+router.get("/", requirePermission("suppliers", "view"), async (req, res) => {
   try {
+    const endpoint = String(req.query.endpoint || "");
+    if (endpoint === "payment-methods") {
+      return sendSuccess(res, await listActivePaymentMethods());
+    }
+    if (endpoint === "proveedores") {
+      const activeOnly = String(req.query.active_only || "").toLowerCase() === "true";
+      return sendSuccess(res, await providerRepository.findAll({ activeOnly }));
+    }
+
     const invoices = await listPurchaseInvoices();
     return sendSuccess(res, invoices);
   } catch (error: any) {
-    return sendError(res, error.message || "Error al obtener facturas de compra", 400);
+    return sendError(res, error.message || "Error al obtener facturas de compra", error.statusCode || 400);
   }
 });
 

@@ -48,7 +48,10 @@ export function initDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
       description TEXT,
-      estado TEXT DEFAULT 'activo'
+      estado TEXT DEFAULT 'activo',
+      deactivated_at DATETIME,
+      deactivated_by TEXT,
+      deactivation_reason TEXT
     );
 
     CREATE TABLE IF NOT EXISTS product_families (
@@ -56,6 +59,9 @@ export function initDb() {
       name TEXT NOT NULL UNIQUE,
       category_id INTEGER,
       estado TEXT DEFAULT 'activo',
+      deactivated_at DATETIME,
+      deactivated_by TEXT,
+      deactivation_reason TEXT,
       FOREIGN KEY (category_id) REFERENCES product_categories(id)
     );
 
@@ -63,7 +69,23 @@ export function initDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
       tipo TEXT NOT NULL DEFAULT 'Efectivo',
-      activo INTEGER DEFAULT 1
+      activo INTEGER DEFAULT 1,
+      deactivated_at DATETIME,
+      deactivated_by TEXT,
+      deactivation_reason TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS configuration_item_status_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_type TEXT NOT NULL,
+      item_id INTEGER NOT NULL,
+      action TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      performed_by TEXT NOT NULL,
+      performed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      previous_status TEXT NOT NULL,
+      new_status TEXT NOT NULL,
+      snapshot TEXT NOT NULL DEFAULT '{}'
     );
 
     INSERT OR IGNORE INTO payment_methods (name, tipo) VALUES ('Efectivo', 'Efectivo');
@@ -478,6 +500,16 @@ export function initDb() {
       VALUES (1, 'Proveedor General')
     `).run();
   }
+
+  try { db.exec("ALTER TABLE payment_methods ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE payment_methods ADD COLUMN deactivated_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE payment_methods ADD COLUMN deactivation_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE product_categories ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE product_categories ADD COLUMN deactivated_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE product_categories ADD COLUMN deactivation_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE product_families ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE product_families ADD COLUMN deactivated_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE product_families ADD COLUMN deactivation_reason TEXT"); } catch (e) {}
 
   try { db.exec("ALTER TABLE proveedores ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE proveedores ADD COLUMN deactivated_by TEXT"); } catch (e) {}

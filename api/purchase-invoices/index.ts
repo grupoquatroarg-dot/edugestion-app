@@ -12,6 +12,7 @@ import { sendError, sendSuccess } from "../../server/utils/response.js";
 import { getRequestBody, requirePurchaseInvoicePermission } from "../../server/services/vercel/purchaseInvoiceApiHelpers.js";
 import { purchaseInvoiceCancellationService } from "../../server/services/purchaseInvoiceCancellationService.js";
 import { providerLifecycleService } from "../../server/services/providerLifecycleService.js";
+import { listActivePaymentMethods } from "../../server/services/paymentMethodAvailabilityService.js";
 
 const providerSchema = z.object({
   nombre: z.string().min(2, "El nombre debe tener al menos 2 caracteres"),
@@ -33,6 +34,18 @@ const getEndpoint = (req: any) => {
 
 export default async function handler(req: any, res: any) {
   const endpoint = getEndpoint(req);
+
+
+  if (endpoint === "payment-methods" && req.method === "GET") {
+    const user = await requirePurchaseInvoicePermission(req, res, "view");
+    if (!user) return;
+
+    try {
+      return sendSuccess(res, await listActivePaymentMethods());
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al obtener formas de pago", error?.statusCode || 400);
+    }
+  }
 
   if (endpoint === "proveedores" && req.method === "GET") {
     const user = await requirePurchaseInvoicePermission(req, res, "view");

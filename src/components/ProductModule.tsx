@@ -1014,9 +1014,13 @@ export default function ProductModule() {
                       onChange={(e) => setFormData({ ...formData, family_id: parseInt(e.target.value) || null })}
                     >
                       <option value="">Seleccionar familia...</option>
-                      {families.map(f => (
-                        <option key={f.id} value={f.id}>{f.name}</option>
-                      ))}
+                      {families
+                        .filter((family) => family.estado !== 'inactivo' || family.id === formData.family_id)
+                        .map((family) => (
+                          <option key={family.id} value={family.id}>
+                            {family.name}{family.estado === 'inactivo' ? ' (inactiva)' : ''}
+                          </option>
+                        ))}
                     </select>
                     <button
                       type="button"

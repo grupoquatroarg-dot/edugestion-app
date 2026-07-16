@@ -50,6 +50,12 @@ type Provider = ProviderForm & {
   deactivation_reason?: string | null;
 };
 
+type ConfigPaymentMethod = {
+  id: number;
+  name: string;
+  tipo?: string;
+};
+
 type ModuleView = 'invoices' | 'providers';
 type InvoiceFilter = 'all' | 'paid' | 'pending' | 'cancelled';
 
@@ -100,11 +106,34 @@ const getPaymentMethodLabel = (method: unknown) => {
   return labels[value] || String(method || 'Sin informar');
 };
 
+const isCurrentAccountMethod = (method: unknown) =>
+  String(method || '').trim().toLowerCase() === 'cta cte';
+
+const toPurchasePaymentValue = (name: string) => {
+  const normalized = name.trim().toLowerCase();
+  const aliases: Record<string, string> = {
+    efectivo: 'efectivo',
+    transferencia: 'transferencia',
+    'mercado pago': 'mercado_pago',
+    cheque: 'cheque',
+    'cta cte': 'Cta Cte',
+  };
+  return aliases[normalized] || name.trim();
+};
+
+const getPreferredPurchasePayment = (methods: ConfigPaymentMethod[], allowCurrentAccount: boolean) => {
+  const available = methods
+    .map((method) => toPurchasePaymentValue(method.name))
+    .filter((method) => allowCurrentAccount || !isCurrentAccountMethod(method));
+  return available.find((method) => String(method).toLowerCase() === 'efectivo') || available[0] || '';
+};
+
 export default function PurchaseInvoiceModule() {
   const { hasPermission } = useAuth();
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [proveedores, setProveedores] = useState<Provider[]>([]);
+  const [paymentMethods, setPaymentMethods] = useState<ConfigPaymentMethod[]>([]);
   const [activeView, setActiveView] = useState<ModuleView>('invoices');
   const [invoiceFilter, setInvoiceFilter] = useState<InvoiceFilter>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -145,7 +174,7 @@ export default function PurchaseInvoiceModule() {
   const [successMessage, setSuccessMessage] = useState('');
 
   const [paymentForm, setPaymentForm] = useState({
-    metodo_pago_real: 'efectivo',
+    metodo_pago_real: '',
     fecha_pago: getToday(),
   });
 
@@ -153,7 +182,7 @@ export default function PurchaseInvoiceModule() {
     numero_factura: '',
     proveedor_id: 0,
     fecha_compra: getToday(),
-    metodo_pago: 'efectivo',
+    metodo_pago: '',
     items: [] as InvoiceFormItem[],
   });
 
@@ -191,6 +220,27 @@ export default function PurchaseInvoiceModule() {
     setProducts(Array.isArray(data) ? data : []);
   };
 
+  const fetchPaymentMethods = async () => {
+    const res = await apiFetch('/api/purchase-invoices?endpoint=payment-methods');
+    const data = await handleApiJson<ConfigPaymentMethod[]>(res);
+    const activeMethods = Array.isArray(data) ? data : [];
+    setPaymentMethods(activeMethods);
+
+    const availableValues = activeMethods.map((method) => toPurchasePaymentValue(method.name));
+    setFormData((previous) => ({
+      ...previous,
+      metodo_pago: availableValues.includes(previous.metodo_pago)
+        ? previous.metodo_pago
+        : getPreferredPurchasePayment(activeMethods, true),
+    }));
+    setPaymentForm((previous) => ({
+      ...previous,
+      metodo_pago_real: availableValues.includes(previous.metodo_pago_real) && !isCurrentAccountMethod(previous.metodo_pago_real)
+        ? previous.metodo_pago_real
+        : getPreferredPurchasePayment(activeMethods, false),
+    }));
+  };
+
   const loadData = async (background = false) => {
     if (background) setIsRefreshing(true);
     else setIsLoading(true);
@@ -198,7 +248,7 @@ export default function PurchaseInvoiceModule() {
     setLoadError('');
 
     try {
-      await Promise.all([fetchInvoices(), fetchProducts(), fetchProveedores()]);
+      await Promise.all([fetchInvoices(), fetchProducts(), fetchProveedores(), fetchPaymentMethods()]);
     } catch (error: any) {
       console.error('Error loading purchase invoice module:', error);
       setLoadError(error?.message || 'No se pudieron cargar las facturas y proveedores.');
@@ -247,7 +297,7 @@ export default function PurchaseInvoiceModule() {
       numero_factura: '',
       proveedor_id: 0,
       fecha_compra: getToday(),
-      metodo_pago: 'efectivo',
+      metodo_pago: getPreferredPurchasePayment(paymentMethods, true),
       items: [],
     });
     resetCurrentItem();
@@ -366,7 +416,7 @@ export default function PurchaseInvoiceModule() {
   const openPaymentModal = (invoice: PurchaseInvoice) => {
     setSelectedInvoiceForPayment(invoice);
     setPaymentSubmitError('');
-    setPaymentForm({ metodo_pago_real: 'efectivo', fecha_pago: getToday() });
+    setPaymentForm({ metodo_pago_real: getPreferredPurchasePayment(paymentMethods, false), fecha_pago: getToday() });
     setIsPaymentModalOpen(true);
   };
 
@@ -380,7 +430,7 @@ export default function PurchaseInvoiceModule() {
       return;
     }
 
-    if (paymentForm.metodo_pago_real === 'Cta Cte') {
+    if (isCurrentAccountMethod(paymentForm.metodo_pago_real)) {
       setPaymentSubmitError('Seleccione un método de pago real.');
       return;
     }
@@ -978,7 +1028,7 @@ export default function PurchaseInvoiceModule() {
                         Ver detalle
                       </button>
 
-                      {!cancelled && (invoice as any).metodo_pago === 'Cta Cte' && !paid && (
+                      {!cancelled && isCurrentAccountMethod((invoice as any).metodo_pago) && !paid && (
                         <button
                           type="button"
                           onClick={() => openPaymentModal(invoice)}
@@ -1009,7 +1059,7 @@ export default function PurchaseInvoiceModule() {
                       )}
 
                       {!cancelled &&
-                        !((invoice as any).metodo_pago === 'Cta Cte' && !paid) &&
+                        !(isCurrentAccountMethod((invoice as any).metodo_pago) && !paid) &&
                         !hasPermission('suppliers', 'delete') && (
                           <div className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-50 px-4 py-2 text-sm font-bold text-slate-500">
                             <CheckCircle2 size={17} className="text-emerald-600" aria-hidden="true" />
@@ -1314,11 +1364,12 @@ export default function PurchaseInvoiceModule() {
                         onChange={(event) => setFormData({ ...formData, metodo_pago: event.target.value })}
                         className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
                       >
-                        <option value="efectivo">Efectivo</option>
-                        <option value="transferencia">Transferencia</option>
-                        <option value="mercado_pago">Mercado Pago</option>
-                        <option value="cheque">Cheque</option>
-                        <option value="Cta Cte">Cuenta corriente</option>
+                        {paymentMethods.length === 0 && <option value="">No hay formas de pago activas</option>}
+                        {paymentMethods.map((method) => (
+                          <option key={method.id} value={toPurchasePaymentValue(method.name)}>
+                            {getPaymentMethodLabel(toPurchasePaymentValue(method.name))}
+                          </option>
+                        ))}
                       </select>
                     </label>
                   </div>
@@ -1790,10 +1841,16 @@ export default function PurchaseInvoiceModule() {
                 <label className="block">
                   <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Método de pago</span>
                   <select required value={paymentForm.metodo_pago_real} onChange={(event) => setPaymentForm({ ...paymentForm, metodo_pago_real: event.target.value })} className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100">
-                    <option value="efectivo">Efectivo</option>
-                    <option value="transferencia">Transferencia</option>
-                    <option value="mercado_pago">Mercado Pago</option>
-                    <option value="cheque">Cheque</option>
+                    {paymentMethods.filter((method) => !isCurrentAccountMethod(method.name)).length === 0 && (
+                      <option value="">No hay formas de pago activas</option>
+                    )}
+                    {paymentMethods
+                      .filter((method) => !isCurrentAccountMethod(method.name))
+                      .map((method) => (
+                        <option key={method.id} value={toPurchasePaymentValue(method.name)}>
+                          {getPaymentMethodLabel(toPurchasePaymentValue(method.name))}
+                        </option>
+                      ))}
                   </select>
                 </label>
                 <label className="block">

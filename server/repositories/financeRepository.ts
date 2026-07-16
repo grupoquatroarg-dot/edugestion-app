@@ -2,6 +2,7 @@ import db from '../db.js';
 import { getPostgresPool, isPostgresConfigured } from '../utils/postgres.js';
 import { AppError } from '../utils/response.js';
 import { normalizeBusinessDateForStorage, toBusinessDateKey, toStoredDateOnly } from '../utils/businessDate.js';
+import { assertPaymentMethodActive } from '../services/paymentMethodAvailabilityService.js';
 
 type Queryable = {
   query: (text: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }>;
@@ -227,7 +228,7 @@ export const financeRepository = {
     });
   },
 
-  registerExpense(expenseData: any) {
+  async registerExpense(expenseData: any) {
     const {
       monto,
       descripcion,
@@ -249,6 +250,7 @@ export const financeRepository = {
     }
 
     if (!isPostgresConfigured()) {
+      await assertPaymentMethodActive(forma_pago);
       return db.transaction(() => {
         const nextPaymentNum = parseInt(db.prepare("SELECT value FROM settings WHERE key = 'next_payment_number'").get()?.value || '1', 10);
         db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('next_payment_number', '1')").run();
@@ -288,6 +290,7 @@ export const financeRepository = {
     return pool.connect().then(async (client) => {
       try {
         await client.query('BEGIN');
+        await assertPaymentMethodActive(forma_pago, client);
 
         const nextPaymentNum = await getAndIncrementSetting(client, 'next_payment_number');
 

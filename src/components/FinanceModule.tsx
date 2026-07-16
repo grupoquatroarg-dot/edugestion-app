@@ -67,6 +67,33 @@ type Movimiento = {
   financial_movement_cancellation_id?: number | null;
 };
 
+type ConfigPaymentMethod = {
+  id: number;
+  name: string;
+  tipo?: string;
+};
+
+const isCurrentAccountMethod = (value: unknown) =>
+  String(value || '').trim().toLowerCase() === 'cta cte';
+
+const toFinancePaymentValue = (name: string) => {
+  const normalized = name.trim().toLowerCase();
+  const aliases: Record<string, string> = {
+    efectivo: 'efectivo',
+    transferencia: 'transferencia',
+    'mercado pago': 'mercado_pago',
+    cheque: 'cheque_en_cartera',
+  };
+  return aliases[normalized] || name.trim();
+};
+
+const getPreferredExpensePayment = (methods: ConfigPaymentMethod[]) => {
+  const values = methods
+    .filter((method) => !isCurrentAccountMethod(method.name))
+    .map((method) => toFinancePaymentValue(method.name));
+  return values.find((value) => value.toLowerCase() === 'efectivo') || values[0] || '';
+};
+
 const readApiJson = async (response: Response) => {
   const contentType = response.headers.get('content-type') || '';
 
@@ -97,6 +124,7 @@ export default function FinanceModule() {
   const [chequesEstadoFilter, setChequesEstadoFilter] = useState('todos');
   const [chequesVencimientoFilter, setChequesVencimientoFilter] = useState('');
   const [proveedores, setProveedores] = useState<any[]>([]);
+  const [paymentMethods, setPaymentMethods] = useState<ConfigPaymentMethod[]>([]);
   const [proveedoresLoading, setProveedoresLoading] = useState(false);
   const [proveedoresError, setProveedoresError] = useState('');
   const [selectedCheque, setSelectedCheque] = useState<any>(null);
@@ -115,7 +143,7 @@ export default function FinanceModule() {
     monto: '',
     descripcion: '',
     categoria: 'Otros',
-    forma_pago: 'efectivo',
+    forma_pago: '',
     fecha: getBusinessDateInputValue(),
     cheque_id: '',
     proveedor_id: ''
@@ -165,11 +193,28 @@ export default function FinanceModule() {
     }
   };
 
+  const fetchPaymentMethods = async () => {
+    const res = await apiFetch('/api/finanzas?endpoint=payment-methods');
+    const data = await readApiJson(res);
+    const activeMethods = Array.isArray(data) ? data as ConfigPaymentMethod[] : [];
+    setPaymentMethods(activeMethods);
+
+    const availableValues = activeMethods
+      .filter((method) => !isCurrentAccountMethod(method.name))
+      .map((method) => toFinancePaymentValue(method.name));
+    setEgresoForm((previous) => ({
+      ...previous,
+      forma_pago: availableValues.includes(previous.forma_pago)
+        ? previous.forma_pago
+        : getPreferredExpensePayment(activeMethods),
+    }));
+  };
+
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
       setDataError('');
-      await Promise.all([fetchMovimientos(), fetchCheques(), fetchProveedores()]);
+      await Promise.all([fetchMovimientos(), fetchCheques(), fetchProveedores(), fetchPaymentMethods()]);
       setLoading(false);
     };
     loadData();
@@ -211,7 +256,7 @@ export default function FinanceModule() {
         monto: '',
         descripcion: '',
         categoria: 'Otros',
-        forma_pago: 'efectivo',
+        forma_pago: getPreferredExpensePayment(paymentMethods),
         fecha: getBusinessDateInputValue(),
         cheque_id: '',
         proveedor_id: ''
@@ -1513,10 +1558,19 @@ export default function FinanceModule() {
                       })}
                       className="min-h-11 w-full min-w-0 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-bold outline-none focus:border-red-500 focus:ring-4 focus:ring-red-100"
                     >
-                      <option value="efectivo">Efectivo</option>
-                      <option value="transferencia">Transferencia</option>
-                      <option value="mercado_pago">Mercado Pago</option>
-                      <option value="cheque_en_cartera">Cheque en cartera</option>
+                      {paymentMethods.filter((method) => !isCurrentAccountMethod(method.name)).length === 0 && (
+                        <option value="">No hay formas de pago activas</option>
+                      )}
+                      {paymentMethods
+                        .filter((method) => !isCurrentAccountMethod(method.name))
+                        .map((method) => {
+                          const value = toFinancePaymentValue(method.name);
+                          return (
+                            <option key={method.id} value={value}>
+                              {value === 'cheque_en_cartera' ? 'Cheque en cartera' : method.name}
+                            </option>
+                          );
+                        })}
                     </select>
                   </label>
                 </div>

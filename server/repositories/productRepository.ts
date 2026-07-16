@@ -42,6 +42,52 @@ const mapProduct = (row: any) => {
 
 const getExecutor = (executor?: Queryable) => executor || getPostgresPool();
 
+
+const assertActiveClassificationsSqlite = (
+  familyId: number | null | undefined,
+  categoryId: number | null | undefined,
+  current?: { family_id?: number | null; category_id?: number | null }
+) => {
+  if (familyId) {
+    const family = db.prepare("SELECT id, estado FROM product_families WHERE id = ? LIMIT 1").get(familyId) as any;
+    const unchanged = Number(current?.family_id || 0) === Number(familyId);
+    if (!family || (String(family.estado || "activo").toLowerCase() !== "activo" && !unchanged)) {
+      throw new AppError("La familia seleccionada está inactiva o no existe", 409);
+    }
+  }
+
+  if (categoryId) {
+    const category = db.prepare("SELECT id, estado FROM product_categories WHERE id = ? LIMIT 1").get(categoryId) as any;
+    const unchanged = Number(current?.category_id || 0) === Number(categoryId);
+    if (!category || (String(category.estado || "activo").toLowerCase() !== "activo" && !unchanged)) {
+      throw new AppError("La categoría seleccionada está inactiva o no existe", 409);
+    }
+  }
+};
+
+const assertActiveClassificationsPostgres = async (
+  queryable: Queryable,
+  familyId: number | null | undefined,
+  categoryId: number | null | undefined,
+  current?: { family_id?: number | null; category_id?: number | null }
+) => {
+  if (familyId) {
+    const family = await queryable.query("SELECT id, estado FROM product_families WHERE id = $1 LIMIT 1", [familyId]);
+    const unchanged = Number(current?.family_id || 0) === Number(familyId);
+    if (!family.rowCount || (String(family.rows[0]?.estado || "activo").toLowerCase() !== "activo" && !unchanged)) {
+      throw new AppError("La familia seleccionada está inactiva o no existe", 409);
+    }
+  }
+
+  if (categoryId) {
+    const category = await queryable.query("SELECT id, estado FROM product_categories WHERE id = $1 LIMIT 1", [categoryId]);
+    const unchanged = Number(current?.category_id || 0) === Number(categoryId);
+    if (!category.rowCount || (String(category.rows[0]?.estado || "activo").toLowerCase() !== "activo" && !unchanged)) {
+      throw new AppError("La categoría seleccionada está inactiva o no existe", 409);
+    }
+  }
+};
+
 export const ProductRepository = {
   findAll(options: { activeOnly?: boolean } = {}, executor?: Queryable) {
     const activeFilter = options.activeOnly ? " AND p.estado = 'activo'" : "";
@@ -113,6 +159,7 @@ export const ProductRepository = {
     const codigo_unico = `${company}-${code}`;
 
     if (!isPostgresConfigured()) {
+      assertActiveClassificationsSqlite(family_id, category_id);
       const existing = db.prepare("SELECT id, eliminado FROM products WHERE codigo_unico = ?").get(codigo_unico) as any;
       if (existing) {
         if (existing.eliminado) {
@@ -143,8 +190,8 @@ export const ProductRepository = {
     }
 
     const queryable = getExecutor(executor);
-    return queryable
-      .query("SELECT id, eliminado FROM products WHERE codigo_unico = $1 LIMIT 1", [codigo_unico])
+    return assertActiveClassificationsPostgres(queryable, family_id, category_id)
+      .then(() => queryable.query("SELECT id, eliminado FROM products WHERE codigo_unico = $1 LIMIT 1", [codigo_unico]))
       .then(async (existingResult) => {
         const existing = existingResult.rows[0];
         if (existing) {
@@ -195,6 +242,10 @@ export const ProductRepository = {
     const codigo_unico = `${company}-${code}`;
 
     if (!isPostgresConfigured()) {
+      const current = db.prepare("SELECT family_id, category_id FROM products WHERE id = ? AND eliminado = 0 LIMIT 1").get(id) as any;
+      if (!current) throw new AppError("Producto no encontrado", 404);
+      assertActiveClassificationsSqlite(family_id, category_id, current);
+
       const existing = db.prepare("SELECT id, eliminado FROM products WHERE codigo_unico = ? AND id != ?").get(codigo_unico, id) as any;
       if (existing) {
         if (existing.eliminado) {
@@ -226,7 +277,12 @@ export const ProductRepository = {
 
     const queryable = getExecutor(executor);
     return queryable
-      .query("SELECT id, eliminado FROM products WHERE codigo_unico = $1 AND id != $2 LIMIT 1", [codigo_unico, id])
+      .query("SELECT family_id, category_id FROM products WHERE id = $1 AND eliminado = 0 LIMIT 1", [id])
+      .then(async (currentResult) => {
+        if (!currentResult.rowCount) throw new AppError("Producto no encontrado", 404);
+        await assertActiveClassificationsPostgres(queryable, family_id, category_id, currentResult.rows[0]);
+        return queryable.query("SELECT id, eliminado FROM products WHERE codigo_unico = $1 AND id != $2 LIMIT 1", [codigo_unico, id]);
+      })
       .then(async (existingResult) => {
         const existing = existingResult.rows[0];
         if (existing) {

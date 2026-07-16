@@ -1,4 +1,4 @@
-﻿import { UserRepository } from "../../repositories/userRepository.js";
+import { UserRepository } from "../../repositories/userRepository.js";
 import { verifyToken } from "../../utils/jwt.js";
 import { sendError } from "../../utils/response.js";
 import { getPostgresPool, isPostgresConfigured } from "../../utils/postgres.js";
@@ -89,6 +89,9 @@ export const mapCategory = (row: any) => ({
   name: row.name,
   description: row.description || "",
   estado: row.estado || "activo",
+  deactivated_at: row.deactivated_at ?? null,
+  deactivated_by: row.deactivated_by ?? null,
+  deactivation_reason: row.deactivation_reason ?? null,
 });
 
 export const mapFamily = (row: any) => ({
@@ -97,6 +100,9 @@ export const mapFamily = (row: any) => ({
   category_id: row.category_id === null || row.category_id === undefined ? null : toNumber(row.category_id),
   estado: row.estado || "activo",
   category_name: row.category_name || null,
+  deactivated_at: row.deactivated_at ?? null,
+  deactivated_by: row.deactivated_by ?? null,
+  deactivation_reason: row.deactivation_reason ?? null,
 });
 
 export const mapPaymentMethod = (row: any) => ({
@@ -104,6 +110,9 @@ export const mapPaymentMethod = (row: any) => ({
   name: row.name,
   tipo: row.tipo || "Efectivo",
   activo: toNumber(row.activo, 1),
+  deactivated_at: row.deactivated_at ?? null,
+  deactivated_by: row.deactivated_by ?? null,
+  deactivation_reason: row.deactivation_reason ?? null,
 });
 
 export const validateName = (body: any) => {
