@@ -272,10 +272,15 @@ export default function FinanceModule() {
     }
   };
 
+  const NON_METRIC_REVERSAL_ORIGINS = new Set([
+    'anulacion_egreso_manual',
+    'anulacion_cobranza',
+  ]);
+
   const metricMovements = useMemo(
     () => movimientos.filter((movement) =>
       String(movement.estado || 'Activo').toLowerCase() !== 'anulado' &&
-      movement.origen !== 'anulacion_egreso_manual'
+      !NON_METRIC_REVERSAL_ORIGINS.has(movement.origen)
     ),
     [movimientos]
   );

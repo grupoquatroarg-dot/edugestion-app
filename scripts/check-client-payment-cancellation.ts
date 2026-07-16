@@ -104,6 +104,21 @@ for (const required of [
 }
 
 const financeUi = read("src/components/FinanceModule.tsx");
+const dashboardApi = read("api/dashboard/[endpoint].ts");
+const reportRoutes = read("server/routes/reportRoutes.ts");
+
+assert(
+  financeUi.includes("'anulacion_cobranza'") && financeUi.includes("NON_METRIC_REVERSAL_ORIGINS"),
+  "Caja todavía contabiliza el contramovimiento de una cobranza cuyo ingreso original ya quedó anulado."
+);
+for (const [label, source] of [
+  ["Dashboard", dashboardApi],
+  ["Reportes", reportRoutes],
+] as const) {
+  const matches = source.match(/NOT IN \('anulacion_egreso_manual', 'anulacion_cobranza'\)/g) || [];
+  assert(matches.length >= 3, `${label} todavía duplica el efecto financiero de las cobranzas anuladas.`);
+}
+
 for (const required of [
   "Anular cobranza",
   "Cobranza histórica sin trazabilidad completa",
