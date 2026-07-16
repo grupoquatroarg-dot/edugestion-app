@@ -285,7 +285,7 @@ export default function SalesModule() {
 
   const fetchClientes = async (): Promise<boolean> => {
     try {
-      const res = await apiFetch('/api/clientes');
+      const res = await apiFetch('/api/clientes?active_only=true');
       const body = await res.json();
       const data = unwrapResponse(body);
       setClientes(Array.isArray(data) ? data : []);

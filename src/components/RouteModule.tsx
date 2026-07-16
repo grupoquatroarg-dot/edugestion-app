@@ -222,7 +222,7 @@ export default function RouteModule() {
       const responses = await Promise.all([
         apiFetch('/api/clientes?endpoint=routes'),
         apiFetch('/api/clientes?endpoint=routes-today'),
-        apiFetch('/api/clientes'),
+        apiFetch('/api/clientes?active_only=true'),
         apiFetch('/api/products?active_only=true')
       ]);
 

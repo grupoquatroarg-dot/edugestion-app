@@ -78,6 +78,14 @@ export const salesService = {
     if (!isPostgresConfigured()) {
       // Flujo local de respaldo: conserva el comportamiento anterior para desarrollo local.
       return db.transaction(() => {
+        if (cliente_id && Number(cliente_id) !== 1) {
+          const customer = db.prepare('SELECT id, activo FROM clientes WHERE id = ? LIMIT 1').get(Number(cliente_id)) as any;
+          if (!customer) throw new AppError('Cliente no encontrado', 404);
+          if (Number(customer.activo ?? 1) === 0) {
+            throw new AppError('El cliente está inactivo. Reactivalo antes de registrar una venta.', 409);
+          }
+        }
+
         const nextSaleNum = parseInt(db.prepare("SELECT value FROM settings WHERE key = 'next_sale_number'").get()?.value || '1', 10);
         db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('next_sale_number', '1')").run();
         db.prepare("UPDATE settings SET value = ? WHERE key = 'next_sale_number'").run(String(nextSaleNum + 1));
@@ -121,6 +129,24 @@ export const salesService = {
 
     try {
       await client.query('BEGIN');
+
+      if (cliente_id && Number(cliente_id) !== 1) {
+        const customerResult = await client.query(
+          `SELECT id, nombre_apellido, activo
+           FROM clientes
+           WHERE id = $1
+           LIMIT 1
+           FOR UPDATE`,
+          [Number(cliente_id)]
+        );
+
+        if (!customerResult.rowCount) {
+          throw new AppError('Cliente no encontrado', 404);
+        }
+        if (Number(customerResult.rows[0]?.activo ?? 1) === 0) {
+          throw new AppError('El cliente está inactivo. Reactivalo antes de registrar una venta.', 409);
+        }
+      }
 
       const productIds: number[] = Array.from(
         new Set<number>(normalizedItems.map((item: any) => Number(item.product_id)))

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, UserPlus, User, Phone, Mail, MapPin, Edit2, Trash2, X, AlertCircle, Building2, CreditCard, Eye, KeyRound, Users, WalletCards, AlertTriangle, ShieldCheck, RefreshCw, ChevronRight } from 'lucide-react';
+import { Search, UserPlus, User, Phone, Mail, MapPin, Edit2, Power, X, AlertCircle, Building2, CreditCard, Eye, KeyRound, Users, WalletCards, AlertTriangle, ShieldCheck, RefreshCw, ChevronRight, Loader2, RotateCcw } from 'lucide-react';
 import CustomerDetail from './CustomerDetail';
 import AddressAutocomplete from './AddressAutocomplete';
 import { getSocket } from '../utils/socket';
@@ -31,6 +31,9 @@ interface Cliente {
   tiene_deuda_vencida?: number;
   portal_enabled?: number | boolean;
   portal_username?: string;
+  deactivated_at?: string | null;
+  deactivated_by?: string | null;
+  deactivation_reason?: string | null;
 }
 
 export default function CustomerModule() {
@@ -45,6 +48,9 @@ export default function CustomerModule() {
   const [selectedClienteId, setSelectedClienteId] = useState<number | null>(null);
   const [initialDetailTab, setInitialDetailTab] = useState<'ventas' | 'movimientos' | 'pedidos'>('ventas');
   const [editingCliente, setEditingCliente] = useState<Cliente | null>(null);
+  const [lifecycleTarget, setLifecycleTarget] = useState<{ cliente: Cliente; action: 'deactivate' | 'reactivate' } | null>(null);
+  const [lifecycleReason, setLifecycleReason] = useState('');
+  const [lifecycleLoading, setLifecycleLoading] = useState(false);
   const customerFormRef = useRef<HTMLFormElement | null>(null);
   const customerNameInputRef = useRef<HTMLInputElement | null>(null);
   const lastTriggerRef = useRef<HTMLElement | null>(null);
@@ -190,21 +196,43 @@ export default function CustomerModule() {
     }
   };
 
-  const handleDelete = async (id: number) => {
-    if (id === 1) {
-      alert("No se puede eliminar el cliente por defecto");
-      return;
-    }
-    if (!window.confirm("¿Estás seguro de eliminar este cliente?")) return;
+  const openLifecycleModal = (cliente: Cliente) => {
+    setLifecycleTarget({
+      cliente,
+      action: cliente.activo === false || Number(cliente.activo) === 0 ? 'reactivate' : 'deactivate',
+    });
+    setLifecycleReason('');
+  };
 
+  const closeLifecycleModal = () => {
+    if (lifecycleLoading) return;
+    setLifecycleTarget(null);
+    setLifecycleReason('');
+  };
+
+  const handleLifecycleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!lifecycleTarget) return;
+
+    const motivo = lifecycleReason.trim();
+    if (motivo.length < 3) return;
+
+    setLifecycleLoading(true);
     try {
-      const res = await apiFetch(`/api/clientes?id=${id}`, { method: 'DELETE' });
-      const body = await res.json();
+      const response = await apiFetch(
+        `/api/clientes?id=${lifecycleTarget.cliente.id}&action=${lifecycleTarget.action}`,
+        { method: 'POST', body: JSON.stringify({ motivo }) }
+      );
+      const body = await response.json();
       unwrapResponse(body);
-      fetchClientes(false);
-    } catch (error) {
-      console.error("Error deleting customer:", error);
-      alert("Error al eliminar el cliente");
+      await fetchClientes(false);
+      setLifecycleTarget(null);
+      setLifecycleReason('');
+    } catch (error: any) {
+      console.error('Error updating customer lifecycle:', error);
+      alert(error?.message || 'No se pudo actualizar el estado del cliente.');
+    } finally {
+      setLifecycleLoading(false);
     }
   };
 
@@ -585,12 +613,13 @@ export default function CustomerModule() {
                 const hasBalance = Number(cliente.saldo_cta_cte || 0) > 0;
                 const creditExceeded = Number(cliente.saldo_cta_cte || 0) > Number(cliente.limite_credito || 0) && Number(cliente.limite_credito || 0) > 0;
                 const portalEnabled = cliente.portal_enabled === 1 || cliente.portal_enabled === true;
+                const isActive = cliente.activo !== false && Number(cliente.activo) !== 0;
 
                 return (
                   <article
                     key={cliente.id}
                     className={`min-w-0 overflow-hidden rounded-2xl border bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
-                      cliente.tiene_deuda_vencida === 1 ? 'border-red-200' : 'border-slate-200'
+                      !isActive ? 'border-slate-300 bg-slate-50/70' : cliente.tiene_deuda_vencida === 1 ? 'border-red-200' : 'border-slate-200'
                     }`}
                   >
                     <div className="p-4 sm:p-5">
@@ -616,7 +645,12 @@ export default function CustomerModule() {
                               }`}>
                                 {cliente.tipo_cliente}
                               </span>
-                              {portalEnabled && (
+                              {!isActive && (
+                                <span className="rounded-full border border-slate-300 bg-slate-100 px-2 py-1 text-[9px] font-black uppercase tracking-wider text-slate-600">
+                                  Inactivo
+                                </span>
+                              )}
+                              {portalEnabled && isActive && (
                                 <span className="rounded-full border border-cyan-100 bg-cyan-50 px-2 py-1 text-[9px] font-black uppercase tracking-wider text-cyan-700">
                                   Portal activo
                                 </span>
@@ -627,6 +661,18 @@ export default function CustomerModule() {
                             </p>
                             {cliente.cuit && (
                               <p className="mt-1 break-all font-mono text-[10px] font-bold text-slate-400">CUIT: {cliente.cuit}</p>
+                            )}
+                            {!isActive && (cliente.deactivation_reason || cliente.deactivated_at) && (
+                              <div className="mt-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-[10px] font-bold leading-4 text-slate-600">
+                                <p className="font-black text-slate-700">Cliente dado de baja</p>
+                                {cliente.deactivation_reason && <p className="mt-1 break-words">{cliente.deactivation_reason}</p>}
+                                {(cliente.deactivated_by || cliente.deactivated_at) && (
+                                  <p className="mt-1 text-slate-400">
+                                    {cliente.deactivated_by || 'Usuario no informado'}
+                                    {cliente.deactivated_at ? ` · ${new Date(cliente.deactivated_at).toLocaleString('es-AR')}` : ''}
+                                  </p>
+                                )}
+                              </div>
                             )}
                           </div>
                         </div>
@@ -712,16 +758,20 @@ export default function CustomerModule() {
                             Editar
                           </button>
                         )}
-                        {hasPermission('customers', 'delete') && (
+                        {hasPermission('customers', 'delete') && cliente.id !== 1 && (
                           <button
                             type="button"
-                            onClick={() => handleDelete(cliente.id)}
-                            className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-white px-2 py-2.5 text-xs font-black text-red-600 transition hover:bg-red-50"
-                            title={`Eliminar ${cliente.nombre_apellido}`}
-                            aria-label={`Eliminar cliente ${cliente.nombre_apellido}`}
+                            onClick={() => openLifecycleModal(cliente)}
+                            className={`inline-flex min-h-11 items-center justify-center gap-1.5 rounded-xl border bg-white px-2 py-2.5 text-xs font-black transition ${
+                              isActive
+                                ? 'border-red-200 text-red-600 hover:bg-red-50'
+                                : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'
+                            }`}
+                            title={isActive ? `Dar de baja ${cliente.nombre_apellido}` : `Reactivar ${cliente.nombre_apellido}`}
+                            aria-label={isActive ? `Dar de baja cliente ${cliente.nombre_apellido}` : `Reactivar cliente ${cliente.nombre_apellido}`}
                           >
-                            <Trash2 size={16} />
-                            Eliminar
+                            {isActive ? <Power size={16} /> : <RotateCcw size={16} />}
+                            {isActive ? 'Dar de baja' : 'Reactivar'}
                           </button>
                         )}
                       </div>
@@ -733,6 +783,56 @@ export default function CustomerModule() {
           )}
         </section>
       </div>
+
+      {lifecycleTarget && (
+        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="customer-lifecycle-title">
+          <form onSubmit={handleLifecycleSubmit} className="flex max-h-[100dvh] w-full flex-col overflow-hidden rounded-t-3xl border border-slate-200 bg-white shadow-2xl sm:max-h-[92dvh] sm:max-w-lg sm:rounded-3xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5 sm:p-6">
+              <div className="flex min-w-0 items-start gap-3">
+                <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${lifecycleTarget.action === 'deactivate' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                  {lifecycleTarget.action === 'deactivate' ? <Power size={22} /> : <RotateCcw size={22} />}
+                </div>
+                <div className="min-w-0">
+                  <h2 id="customer-lifecycle-title" className="text-xl font-black text-slate-950">
+                    {lifecycleTarget.action === 'deactivate' ? 'Dar de baja cliente' : 'Reactivar cliente'}
+                  </h2>
+                  <p className="mt-1 break-words text-sm text-slate-500">{lifecycleTarget.cliente.nombre_apellido}</p>
+                </div>
+              </div>
+              <button type="button" onClick={closeLifecycleModal} disabled={lifecycleLoading} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 disabled:opacity-50" aria-label="Cerrar">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-5 sm:p-6">
+              <div className={`rounded-2xl border p-4 text-sm leading-6 ${lifecycleTarget.action === 'deactivate' ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'}`}>
+                {lifecycleTarget.action === 'deactivate' ? (
+                  <>El cliente dejará de estar disponible para ventas, pedidos, rutas y acceso al portal. Todo su historial se conservará. La baja será bloqueada si tiene saldo, pedidos, rutas o cheques activos.</>
+                ) : (
+                  <>El cliente volverá a estar disponible para ventas, pedidos y rutas. El acceso al portal deberá habilitarse nuevamente desde Editar cliente.</>
+                )}
+              </div>
+
+              <label className="mt-5 block">
+                <span className="text-xs font-black uppercase tracking-wider text-slate-600">Motivo obligatorio</span>
+                <textarea value={lifecycleReason} onChange={(event) => setLifecycleReason(event.target.value.slice(0, 500))} rows={4} autoFocus className="mt-2 w-full resize-none rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" placeholder={lifecycleTarget.action === 'deactivate' ? 'Ej.: Cliente que dejó de operar con la empresa' : 'Ej.: El cliente vuelve a operar'} disabled={lifecycleLoading} />
+              </label>
+              <div className="mt-2 flex items-center justify-between text-[11px]">
+                <span className={lifecycleReason.trim().length > 0 && lifecycleReason.trim().length < 3 ? 'text-red-600' : 'text-slate-400'}>Mínimo 3 caracteres</span>
+                <span className="text-slate-400">{lifecycleReason.length}/500</span>
+              </div>
+            </div>
+
+            <div className="grid gap-3 border-t border-slate-200 bg-slate-50 p-5 sm:grid-cols-2 sm:p-6">
+              <button type="button" onClick={closeLifecycleModal} disabled={lifecycleLoading} className="min-h-12 rounded-xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50">Cancelar</button>
+              <button type="submit" disabled={lifecycleLoading || lifecycleReason.trim().length < 3} className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-xl px-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50 ${lifecycleTarget.action === 'deactivate' ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
+                {lifecycleLoading && <Loader2 size={17} className="animate-spin" />}
+                {lifecycleTarget.action === 'deactivate' ? 'Confirmar baja' : 'Confirmar reactivación'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {isModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="customer-form-title">

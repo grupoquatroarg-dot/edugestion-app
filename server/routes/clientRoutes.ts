@@ -5,6 +5,7 @@ import { salesService } from '../services/salesService.js';
 import { requireAuth, requirePermission } from '../middleware/authMiddleware.js';
 import { validate } from '../middleware/validate.js';
 import { sendSuccess, sendError } from '../utils/response.js';
+import { customerLifecycleService } from '../services/customerLifecycleService.js';
 
 const router = Router();
 
@@ -30,6 +31,12 @@ const clientSchema = z.object({
   }),
 });
 
+const lifecycleSchema = z.object({
+  body: z.object({
+    motivo: z.string().trim().min(3, 'El motivo debe tener al menos 3 caracteres').max(500),
+  }),
+});
+
 const paymentSchema = z.object({
   body: z.object({
     monto: z.number().positive('El monto debe ser mayor a cero'),
@@ -40,7 +47,8 @@ const paymentSchema = z.object({
 });
 
 router.get('/', requireAuth, requirePermission('customers', 'view'), async (req, res) => {
-  const clients = await clientRepository.findAll();
+  const activeOnly = String(req.query.active_only || '').toLowerCase() === 'true';
+  const clients = await clientRepository.findAll({ activeOnly });
   return sendSuccess(res, clients);
 });
 
@@ -54,9 +62,32 @@ router.put('/:id', requireAuth, requirePermission('customers', 'edit'), validate
   return sendSuccess(res, null, 'Cliente actualizado exitosamente');
 });
 
-router.delete('/:id', requireAuth, requirePermission('customers', 'delete'), async (req, res) => {
-  await clientRepository.delete(req.params.id);
-  return sendSuccess(res, null, 'Cliente eliminado exitosamente');
+router.post('/:id/deactivate', requireAuth, requirePermission('customers', 'delete'), validate(lifecycleSchema), async (req, res) => {
+  const result = await customerLifecycleService.changeStatus({
+    customerId: Number(req.params.id),
+    action: 'deactivate',
+    motivo: req.body.motivo,
+    usuario: (req as any).user?.userName || 'Sistema',
+  });
+  return sendSuccess(res, result, 'Cliente dado de baja correctamente');
+});
+
+router.post('/:id/reactivate', requireAuth, requirePermission('customers', 'delete'), validate(lifecycleSchema), async (req, res) => {
+  const result = await customerLifecycleService.changeStatus({
+    customerId: Number(req.params.id),
+    action: 'reactivate',
+    motivo: req.body.motivo,
+    usuario: (req as any).user?.userName || 'Sistema',
+  });
+  return sendSuccess(res, result, 'Cliente reactivado correctamente');
+});
+
+router.delete('/:id', requireAuth, requirePermission('customers', 'delete'), async (_req, res) => {
+  return sendError(
+    res,
+    'La eliminación física de clientes está deshabilitada. Usá Dar de baja para conservar el historial.',
+    409
+  );
 });
 
 router.post('/:id/pagos', requireAuth, requirePermission('current_accounts', 'create'), validate(paymentSchema), async (req, res) => {

@@ -27,6 +27,9 @@ export interface Client {
   portal_username?: string | null;
   portal_password?: string | null;
   portal_password_hash?: string | null;
+  deactivated_at?: string | null;
+  deactivated_by?: string | null;
+  deactivation_reason?: string | null;
 }
 
 const toNumber = (value: any, fallback: number = 0) => {
@@ -65,6 +68,9 @@ const mapClient = (row: any): Client | undefined => {
     activo: toNumber(row.activo, 1),
     portal_enabled: toNumber(row.portal_enabled, 0),
     portal_username: row.portal_username ?? null,
+    deactivated_at: row.deactivated_at ?? null,
+    deactivated_by: row.deactivated_by ?? null,
+    deactivation_reason: row.deactivation_reason ?? null,
   };
 };
 
@@ -90,13 +96,22 @@ const normalizeClient = (client: Client) => ({
 });
 
 export const clientRepository = {
-  async findAll(): Promise<Client[]> {
+  async findAll(options: { activeOnly?: boolean } = {}): Promise<Client[]> {
+    const activeOnly = options.activeOnly === true;
+
     if (!isPostgresConfigured()) {
-      return db.prepare("SELECT * FROM clientes ORDER BY nombre_apellido ASC").all() as Client[];
+      const query = activeOnly
+        ? "SELECT * FROM clientes WHERE COALESCE(activo, 1) <> 0 ORDER BY nombre_apellido ASC"
+        : "SELECT * FROM clientes ORDER BY COALESCE(activo, 1) DESC, nombre_apellido ASC";
+      return db.prepare(query).all() as Client[];
     }
 
     const pool = getPostgresPool();
-    const result = await pool.query("SELECT * FROM clientes ORDER BY nombre_apellido ASC");
+    const result = await pool.query(
+      activeOnly
+        ? "SELECT * FROM clientes WHERE COALESCE(activo, 1) <> 0 ORDER BY nombre_apellido ASC"
+        : "SELECT * FROM clientes ORDER BY COALESCE(activo, 1) DESC, nombre_apellido ASC"
+    );
     return result.rows.map((row) => mapClient(row)!).filter(Boolean);
   },
 
@@ -336,22 +351,11 @@ export const clientRepository = {
     );
   },
 
-  async delete(id: number | string): Promise<void> {
-    if (!isPostgresConfigured()) {
-      db.prepare("DELETE FROM clientes WHERE id = ?").run(id);
-      return;
-    }
-
-    const pool = getPostgresPool();
-
-    try {
-      await pool.query("DELETE FROM clientes WHERE id = $1", [Number(id)]);
-    } catch (error: any) {
-      if (error?.code === '23503') {
-        throw new AppError("No se puede eliminar el cliente porque tiene movimientos relacionados.", 400);
-      }
-      throw error;
-    }
+  async delete(_id: number | string): Promise<void> {
+    throw new AppError(
+      "La eliminación física de clientes está deshabilitada. Usá Dar de baja para conservar el historial.",
+      409
+    );
   },
 
   async updateSaldo(id: number | string, nuevoSaldo: number): Promise<void> {

@@ -139,7 +139,26 @@ export function initDb() {
       limite_credito REAL DEFAULT 0,
       saldo_cta_cte REAL DEFAULT 0,
       fecha_alta DATETIME DEFAULT CURRENT_TIMESTAMP,
-      activo INTEGER DEFAULT 1
+      activo INTEGER DEFAULT 1,
+      portal_enabled INTEGER DEFAULT 0,
+      portal_username TEXT,
+      portal_password_hash TEXT,
+      deactivated_at DATETIME,
+      deactivated_by TEXT,
+      deactivation_reason TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS customer_status_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL,
+      action TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      performed_by TEXT NOT NULL,
+      performed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      previous_status TEXT NOT NULL,
+      new_status TEXT NOT NULL,
+      snapshot TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (customer_id) REFERENCES clientes(id)
     );
 
     CREATE TABLE IF NOT EXISTS sales (
@@ -491,6 +510,12 @@ export function initDb() {
   try { db.exec("ALTER TABLE clientes ADD COLUMN codigo_postal TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN lista_precio TEXT DEFAULT 'lista1'"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN limite_credito REAL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE clientes ADD COLUMN portal_enabled INTEGER DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE clientes ADD COLUMN portal_username TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE clientes ADD COLUMN portal_password_hash TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE clientes ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE clientes ADD COLUMN deactivated_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE clientes ADD COLUMN deactivation_reason TEXT"); } catch (e) {}
 
   try { db.exec("ALTER TABLE sales ADD COLUMN notes TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE sales ADD COLUMN usuario TEXT"); } catch (e) {}

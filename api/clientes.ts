@@ -7,6 +7,7 @@ import { sendError, sendSuccess } from "../server/utils/response.js";
 import { getPostgresPool } from "../server/utils/postgres.js";
 import { salesService } from "../server/services/salesService.js";
 import { customerOrderCancellationService } from "../server/services/customerOrderCancellationService.js";
+import { customerLifecycleService, type CustomerLifecycleAction } from "../server/services/customerLifecycleService.js";
 
 const clientSchema = z.object({
   nombre_apellido: z.string().min(2, "El nombre es requerido"),
@@ -27,6 +28,10 @@ const clientSchema = z.object({
   portal_enabled: z.union([z.boolean(), z.number()]).optional().nullable(),
   portal_username: z.string().optional().nullable(),
   portal_password: z.string().optional().nullable(),
+});
+
+const customerLifecycleSchema = z.object({
+  motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
 });
 
 const baseUserSchema = z.object({
@@ -153,6 +158,14 @@ const getEndpoint = (req: any) => {
   const rawEndpoint = Array.isArray(req.query?.endpoint) ? req.query.endpoint[0] : req.query?.endpoint;
   return String(rawEndpoint || "");
 };
+
+const getAction = (req: any) => {
+  const rawAction = Array.isArray(req.query?.action) ? req.query.action[0] : req.query?.action;
+  return String(rawAction || "");
+};
+
+const isCustomerLifecycleAction = (action: string): action is CustomerLifecycleAction =>
+  (["deactivate", "reactivate"] as const).includes(action as CustomerLifecycleAction);
 
 const normalizeArgentinaPhone = (rawPhone: any) => {
   let digits = String(rawPhone || "").replace(/\D/g, "");
@@ -720,6 +733,17 @@ const handleRoutes = async (req: any, res: any) => {
 
       const customerIds = parsed.data.customerIds || parsed.data.clientIds || [];
       if (customerIds.length === 0) return sendError(res, "Seleccione al menos un cliente", 400);
+
+      const activeCustomersResult = await pool.query(
+        `SELECT id
+         FROM clientes
+         WHERE id = ANY($1::int[])
+           AND COALESCE(activo, 1) <> 0`,
+        [customerIds]
+      );
+      if (activeCustomersResult.rowCount !== new Set(customerIds.map(Number)).size) {
+        return sendError(res, "La ruta contiene uno o más clientes inactivos. Actualizá la selección.", 409);
+      }
 
       const client = await pool.connect();
       try {
@@ -1542,6 +1566,22 @@ const requirePortalCustomer = async (req: any, res: any) => {
     return null;
   }
 
+  const pool = getPostgresPool();
+  const customerResult = await pool.query(
+    `SELECT id
+     FROM clientes
+     WHERE id = $1
+       AND COALESCE(activo, 1) <> 0
+       AND COALESCE(portal_enabled, 0) <> 0
+     LIMIT 1`,
+    [Number(decoded.userId)]
+  );
+
+  if (!customerResult.rowCount) {
+    sendError(res, "El acceso al portal de este cliente está deshabilitado", 403);
+    return null;
+  }
+
   return decoded;
 };
 
@@ -1687,7 +1727,9 @@ const handleCustomerPortal = async (req: any, res: any) => {
     const result = await pool.query(
       `SELECT id, nombre_apellido, razon_social, telefono, email, direccion, localidad, saldo_cta_cte
        FROM clientes
-       WHERE id = $1 AND COALESCE(portal_enabled, 0) <> 0
+       WHERE id = $1
+         AND COALESCE(portal_enabled, 0) <> 0
+         AND COALESCE(activo, 1) <> 0
        LIMIT 1`,
       [clienteId]
     );
@@ -2406,10 +2448,55 @@ export default async function handler(req: any, res: any) {
         return sendSuccess(res, cliente);
       }
 
-      const clientes = await clientRepository.findAll();
+      const activeOnly = String(req.query?.active_only || "").toLowerCase() === "true";
+      const clientes = await clientRepository.findAll({ activeOnly });
       return sendSuccess(res, clientes);
     } catch (error: any) {
       return sendError(res, error?.message || "Error al obtener clientes", error?.statusCode || 400, error?.errors || []);
+    }
+  }
+
+  if (req.method === "POST" && isCustomerLifecycleAction(getAction(req))) {
+    const user = await requireClientPermission(req, res, "delete");
+    if (!user) return;
+
+    if (!id) return sendError(res, "ID de cliente inválido", 400);
+
+    const parsed = customerLifecycleSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(
+        res,
+        "Validation failed",
+        400,
+        parsed.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        }))
+      );
+    }
+
+    try {
+      const action = getAction(req) as CustomerLifecycleAction;
+      const result = await customerLifecycleService.changeStatus({
+        customerId: id,
+        action,
+        motivo: parsed.data.motivo,
+        usuario: user.userName || "Sistema",
+      });
+      return sendSuccess(
+        res,
+        result,
+        action === "deactivate"
+          ? "Cliente dado de baja correctamente"
+          : "Cliente reactivado correctamente"
+      );
+    } catch (error: any) {
+      return sendError(
+        res,
+        error?.message || "No se pudo actualizar el estado del cliente",
+        error?.statusCode || 400,
+        error?.errors || []
+      );
     }
   }
 
@@ -2463,6 +2550,16 @@ export default async function handler(req: any, res: any) {
     }
 
     try {
+      const currentCustomer = await clientRepository.findById(id);
+      if (!currentCustomer) return sendError(res, "Cliente no encontrado", 404);
+      if (Number(currentCustomer.activo ?? 1) === 0 && parsed.data.portal_enabled) {
+        return sendError(
+          res,
+          "Reactivá el cliente antes de habilitar nuevamente su acceso al portal.",
+          409
+        );
+      }
+
       await clientRepository.update(id, parsed.data as any);
       const cliente = await clientRepository.findById(id);
       return sendSuccess(res, cliente, "Cliente actualizado exitosamente");
@@ -2475,16 +2572,11 @@ export default async function handler(req: any, res: any) {
     const user = await requireClientPermission(req, res, "delete");
     if (!user) return;
 
-    if (!id) {
-      return sendError(res, "ID de cliente inválido", 400);
-    }
-
-    try {
-      await clientRepository.delete(id);
-      return sendSuccess(res, null, "Cliente eliminado exitosamente");
-    } catch (error: any) {
-      return sendError(res, error?.message || "Error al eliminar cliente", error?.statusCode || 400, error?.errors || []);
-    }
+    return sendError(
+      res,
+      "La eliminación física de clientes está deshabilitada. Usá Dar de baja para conservar ventas, pagos y pedidos.",
+      409
+    );
   }
 
   return sendError(res, "Method not allowed", 405);
