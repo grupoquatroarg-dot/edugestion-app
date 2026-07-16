@@ -407,11 +407,14 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
   if (!isPostgresConfigured()) {
     const runTransaction = db.transaction(() => {
       const provider = db
-        .prepare("SELECT nombre FROM proveedores WHERE id = ? LIMIT 1")
+        .prepare("SELECT nombre, estado FROM proveedores WHERE id = ? LIMIT 1")
         .get(payload.proveedor_id) as any;
 
       if (!provider) {
         throw new AppError("Proveedor no encontrado.", 404);
+      }
+      if (String(provider.estado || "activo").toLowerCase() !== "activo") {
+        throw new AppError("El proveedor está inactivo. Reactivalo antes de registrar una factura.", 409);
       }
 
       const info = db
@@ -613,12 +616,19 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
     await client.query("BEGIN");
 
     const proveedorResult = await client.query(
-      `SELECT nombre FROM proveedores WHERE id = $1 LIMIT 1`,
+      `SELECT nombre, estado
+       FROM proveedores
+       WHERE id = $1
+       LIMIT 1
+       FOR UPDATE`,
       [payload.proveedor_id]
     );
 
     if (!proveedorResult.rows[0]) {
       throw new AppError("Proveedor no encontrado.", 404);
+    }
+    if (String(proveedorResult.rows[0].estado || "activo").toLowerCase() !== "activo") {
+      throw new AppError("El proveedor está inactivo. Reactivalo antes de registrar una factura.", 409);
     }
 
     const proveedorNombre = proveedorResult.rows[0].nombre || "";

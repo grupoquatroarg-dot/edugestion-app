@@ -45,6 +45,9 @@ type ProviderForm = {
 type Provider = ProviderForm & {
   id: number;
   estado?: string;
+  deactivated_at?: string | null;
+  deactivated_by?: string | null;
+  deactivation_reason?: string | null;
 };
 
 type ModuleView = 'invoices' | 'providers';
@@ -71,6 +74,9 @@ const formatDate = (value: unknown) => formatBusinessDate(value);
 
 const isInvoiceCancelled = (invoice: PurchaseInvoice) =>
   String((invoice as any).estado || '').toLowerCase() === 'anulada';
+
+const isProviderActive = (provider: Provider) =>
+  String(provider.estado || 'activo').toLowerCase() !== 'inactivo';
 
 const getInvoiceBalance = (invoice: PurchaseInvoice) =>
   isInvoiceCancelled(invoice)
@@ -112,9 +118,12 @@ export default function PurchaseInvoiceModule() {
   const [isProviderModalOpen, setIsProviderModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isCancellationModalOpen, setIsCancellationModalOpen] = useState(false);
+  const [isProviderLifecycleModalOpen, setIsProviderLifecycleModalOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<PurchaseInvoice | null>(null);
   const [selectedInvoiceForPayment, setSelectedInvoiceForPayment] = useState<PurchaseInvoice | null>(null);
   const [selectedInvoiceForCancellation, setSelectedInvoiceForCancellation] = useState<PurchaseInvoice | null>(null);
+  const [selectedProviderForLifecycle, setSelectedProviderForLifecycle] = useState<Provider | null>(null);
+  const [providerLifecycleAction, setProviderLifecycleAction] = useState<'deactivate' | 'reactivate'>('deactivate');
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
 
@@ -123,6 +132,9 @@ export default function PurchaseInvoiceModule() {
   const [providerForm, setProviderForm] = useState<ProviderForm>(emptyProviderForm);
   const [isCreatingProvider, setIsCreatingProvider] = useState(false);
   const [providerSubmitError, setProviderSubmitError] = useState('');
+  const [providerLifecycleReason, setProviderLifecycleReason] = useState('');
+  const [providerLifecycleError, setProviderLifecycleError] = useState('');
+  const [isChangingProviderStatus, setIsChangingProviderStatus] = useState(false);
   const [isPayingInvoice, setIsPayingInvoice] = useState(false);
   const [paymentSubmitError, setPaymentSubmitError] = useState('');
   const [isCancellingInvoice, setIsCancellingInvoice] = useState(false);
@@ -271,7 +283,6 @@ export default function PurchaseInvoiceModule() {
           telefono: providerForm.telefono.trim(),
           email: providerForm.email.trim(),
           direccion: providerForm.direccion.trim(),
-          estado: 'activo',
         }),
       });
 
@@ -290,6 +301,65 @@ export default function PurchaseInvoiceModule() {
       setProviderSubmitError(error?.message || 'No se pudo crear el proveedor.');
     } finally {
       setIsCreatingProvider(false);
+    }
+  };
+
+  const openProviderLifecycleModal = (provider: Provider, action: 'deactivate' | 'reactivate') => {
+    setSelectedProviderForLifecycle(provider);
+    setProviderLifecycleAction(action);
+    setProviderLifecycleReason('');
+    setProviderLifecycleError('');
+    setIsProviderLifecycleModalOpen(true);
+  };
+
+  const handleProviderLifecycle = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedProviderForLifecycle || isChangingProviderStatus) return;
+
+    const reason = providerLifecycleReason.trim();
+    if (reason.length < 3) {
+      setProviderLifecycleError('Ingresá un motivo de al menos 3 caracteres.');
+      return;
+    }
+
+    setIsChangingProviderStatus(true);
+    setProviderLifecycleError('');
+
+    try {
+      const res = await apiFetch(
+        `/api/purchase-invoices?endpoint=provider-lifecycle&id=${selectedProviderForLifecycle.id}`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            action: providerLifecycleAction,
+            motivo: reason,
+          }),
+        },
+      );
+
+      await handleApiJson(res);
+      await fetchProveedores();
+
+      if (
+        providerLifecycleAction === 'deactivate' &&
+        Number(formData.proveedor_id) === Number(selectedProviderForLifecycle.id)
+      ) {
+        setFormData((previous) => ({ ...previous, proveedor_id: 0 }));
+      }
+
+      setSuccessMessage(
+        providerLifecycleAction === 'deactivate'
+          ? `Proveedor ${selectedProviderForLifecycle.nombre} dado de baja correctamente.`
+          : `Proveedor ${selectedProviderForLifecycle.nombre} reactivado correctamente.`,
+      );
+      setIsProviderLifecycleModalOpen(false);
+      setSelectedProviderForLifecycle(null);
+      setProviderLifecycleReason('');
+    } catch (error: any) {
+      console.error('Error changing provider status:', error);
+      setProviderLifecycleError(error?.message || 'No se pudo cambiar el estado del proveedor.');
+    } finally {
+      setIsChangingProviderStatus(false);
     }
   };
 
@@ -560,6 +630,11 @@ export default function PurchaseInvoiceModule() {
     });
   }, [invoices, proveedores]);
 
+  const activeProviders = useMemo(
+    () => proveedores.filter(isProviderActive),
+    [proveedores],
+  );
+
   const filteredProviders = useMemo(() => {
     const term = providerSearch.trim().toLowerCase();
     if (!term) return providerSummaries;
@@ -643,7 +718,7 @@ export default function PurchaseInvoiceModule() {
               <RefreshCw size={17} className={isRefreshing ? 'animate-spin' : ''} aria-hidden="true" />
               {isRefreshing ? 'Actualizando…' : 'Actualizar'}
             </button>
-            {hasPermission('products', 'create') && (
+            {hasPermission('suppliers', 'create') && (
               <button
                 type="button"
                 onClick={() => openInvoiceForm()}
@@ -662,7 +737,7 @@ export default function PurchaseInvoiceModule() {
           { label: 'Facturas activas', value: activeInvoices.length.toLocaleString('es-AR'), icon: FileText, tone: 'indigo' },
           { label: 'Compras acumuladas', value: formatCurrency(totalPurchases), icon: CircleDollarSign, tone: 'blue' },
           { label: 'Saldo pendiente', value: formatCurrency(totalPending), icon: WalletCards, tone: totalPending > 0 ? 'amber' : 'emerald' },
-          { label: 'Proveedores activos', value: proveedores.length.toLocaleString('es-AR'), icon: Building2, tone: 'slate' },
+          { label: 'Proveedores activos', value: activeProviders.length.toLocaleString('es-AR'), icon: Building2, tone: 'slate' },
         ].map((card) => {
           const tones: Record<string, string> = {
             indigo: 'bg-indigo-50 text-indigo-700 ring-indigo-100',
@@ -813,7 +888,7 @@ export default function PurchaseInvoiceModule() {
                   ? 'Registrá la primera factura para incorporar mercadería y actualizar costos.'
                   : 'Probá otro proveedor, número de factura o estado de pago.'}
               </p>
-              {invoices.length === 0 && hasPermission('products', 'create') && (
+              {invoices.length === 0 && hasPermission('suppliers', 'create') && (
                 <button
                   type="button"
                   onClick={() => openInvoiceForm()}
@@ -1004,7 +1079,14 @@ export default function PurchaseInvoiceModule() {
           ) : (
             <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-2">
               {filteredProviders.map((provider) => (
-                <article key={provider.id} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-indigo-200 hover:shadow-md sm:p-5">
+                <article
+                  key={provider.id}
+                  className={`min-w-0 rounded-2xl border p-4 shadow-sm transition sm:p-5 ${
+                    isProviderActive(provider)
+                      ? 'border-slate-200 bg-white hover:border-indigo-200 hover:shadow-md'
+                      : 'border-slate-200 bg-slate-50'
+                  }`}
+                >
                   <div className="flex min-w-0 items-start gap-3">
                     <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white">
                       <Building2 size={21} aria-hidden="true" />
@@ -1012,8 +1094,14 @@ export default function PurchaseInvoiceModule() {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <h2 className="break-words text-lg font-black text-slate-950">{provider.nombre}</h2>
-                        <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-700">
-                          {provider.estado || 'activo'}
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${
+                            isProviderActive(provider)
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : 'bg-slate-200 text-slate-700'
+                          }`}
+                        >
+                          {isProviderActive(provider) ? 'Activo' : 'Inactivo'}
                         </span>
                       </div>
                       {provider.cuit && <p className="mt-1 break-all text-xs font-bold text-slate-500">CUIT {provider.cuit}</p>}
@@ -1040,6 +1128,19 @@ export default function PurchaseInvoiceModule() {
                       </div>
                     )}
                   </div>
+
+                  {!isProviderActive(provider) && (
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3 text-sm text-slate-600">
+                      <p className="font-black text-slate-800">Proveedor dado de baja</p>
+                      {provider.deactivation_reason && (
+                        <p className="mt-1 break-words"><span className="font-bold">Motivo:</span> {provider.deactivation_reason}</p>
+                      )}
+                      <p className="mt-1 text-xs text-slate-500">
+                        {provider.deactivated_at ? formatDate(provider.deactivated_at) : 'Fecha no informada'}
+                        {provider.deactivated_by ? ` · ${provider.deactivated_by}` : ''}
+                      </p>
+                    </div>
+                  )}
 
                   <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
                     <div className="rounded-xl border border-slate-200 p-3">
@@ -1071,7 +1172,7 @@ export default function PurchaseInvoiceModule() {
                       <Eye size={17} aria-hidden="true" />
                       Ver facturas
                     </button>
-                    {hasPermission('products', 'create') && (
+                    {isProviderActive(provider) && hasPermission('suppliers', 'create') && (
                       <button
                         type="button"
                         onClick={() => openInvoiceForm(provider.id)}
@@ -1079,6 +1180,23 @@ export default function PurchaseInvoiceModule() {
                       >
                         <PackagePlus size={17} aria-hidden="true" />
                         Registrar factura
+                      </button>
+                    )}
+                    {hasPermission('suppliers', 'delete') && (
+                      <button
+                        type="button"
+                        onClick={() => openProviderLifecycleModal(
+                          provider,
+                          isProviderActive(provider) ? 'deactivate' : 'reactivate',
+                        )}
+                        className={`flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-black min-[420px]:col-span-2 ${
+                          isProviderActive(provider)
+                            ? 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-100'
+                            : 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                        }`}
+                      >
+                        {isProviderActive(provider) ? <Ban size={17} aria-hidden="true" /> : <RefreshCw size={17} aria-hidden="true" />}
+                        {isProviderActive(provider) ? 'Dar de baja proveedor' : 'Reactivar proveedor'}
                       </button>
                     )}
                   </div>
@@ -1162,7 +1280,7 @@ export default function PurchaseInvoiceModule() {
                         className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
                       >
                         <option value={0}>Seleccionar proveedor</option>
-                        {proveedores.map((provider) => <option key={provider.id} value={provider.id}>{provider.nombre}</option>)}
+                        {activeProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.nombre}</option>)}
                       </select>
                     </label>
 
@@ -1345,7 +1463,7 @@ export default function PurchaseInvoiceModule() {
                     >
                       Cancelar
                     </button>
-                    {hasPermission('products', 'edit') && (
+                    {hasPermission('suppliers', 'create') && (
                       <button
                         type="submit"
                         disabled={isSubmittingInvoice}
@@ -1357,6 +1475,126 @@ export default function PurchaseInvoiceModule() {
                     )}
                   </div>
                 </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {isProviderLifecycleModalOpen && selectedProviderForLifecycle && (
+        <div
+          className="fixed inset-0 z-[95] flex items-end justify-center bg-slate-950/70 backdrop-blur-sm sm:items-center sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="provider-lifecycle-title"
+        >
+          <div className="w-full overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-w-lg sm:rounded-3xl">
+            <div className={`flex items-start justify-between gap-3 border-b px-4 py-4 sm:px-6 ${
+              providerLifecycleAction === 'deactivate'
+                ? 'border-red-100 bg-red-50'
+                : 'border-emerald-100 bg-emerald-50'
+            }`}>
+              <div className="min-w-0">
+                <p className={`text-[10px] font-black uppercase tracking-[0.18em] ${
+                  providerLifecycleAction === 'deactivate' ? 'text-red-600' : 'text-emerald-700'
+                }`}>
+                  Cambio de estado auditable
+                </p>
+                <h2 id="provider-lifecycle-title" className="mt-1 break-words text-xl font-black text-slate-950">
+                  {providerLifecycleAction === 'deactivate' ? 'Dar de baja proveedor' : 'Reactivar proveedor'}
+                </h2>
+                <p className="mt-1 break-words text-sm text-slate-600">{selectedProviderForLifecycle.nombre}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (isChangingProviderStatus) return;
+                  setIsProviderLifecycleModalOpen(false);
+                  setSelectedProviderForLifecycle(null);
+                  setProviderLifecycleError('');
+                  setProviderLifecycleReason('');
+                }}
+                disabled={isChangingProviderStatus}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-white/70 disabled:opacity-40"
+                aria-label="Cerrar cambio de estado del proveedor"
+              >
+                <X size={21} />
+              </button>
+            </div>
+
+            <form onSubmit={handleProviderLifecycle} className="max-h-[calc(100dvh-88px)] overflow-y-auto p-4 sm:p-6">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                {providerLifecycleAction === 'deactivate' ? (
+                  <p>
+                    El proveedor conservará todas sus facturas y movimientos, pero dejará de estar disponible para nuevas compras y egresos.
+                    La baja se bloqueará si tiene saldos pendientes o cheques todavía en proceso.
+                  </p>
+                ) : (
+                  <p>
+                    El proveedor volverá a estar disponible para nuevas facturas y egresos. El historial de la baja anterior se conservará.
+                  </p>
+                )}
+              </div>
+
+              {providerLifecycleError && (
+                <div role="alert" className="mt-4 flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-900">
+                  <AlertCircle size={20} className="mt-0.5 shrink-0" aria-hidden="true" />
+                  <p className="min-w-0 break-words text-sm font-bold">{providerLifecycleError}</p>
+                </div>
+              )}
+
+              <label className="mt-4 block">
+                <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">
+                  Motivo obligatorio
+                </span>
+                <textarea
+                  required
+                  minLength={3}
+                  maxLength={500}
+                  rows={4}
+                  value={providerLifecycleReason}
+                  onChange={(event) => setProviderLifecycleReason(event.target.value)}
+                  placeholder={
+                    providerLifecycleAction === 'deactivate'
+                      ? 'Ejemplo: dejó de operar o se reemplazó por otro proveedor'
+                      : 'Ejemplo: retomó la relación comercial'
+                  }
+                  className="w-full resize-none rounded-2xl border border-slate-200 px-3 py-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                />
+                <p className="mt-1 text-right text-xs font-bold text-slate-400">{providerLifecycleReason.length}/500</p>
+              </label>
+
+              <div className="mt-5 grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isChangingProviderStatus) return;
+                    setIsProviderLifecycleModalOpen(false);
+                    setSelectedProviderForLifecycle(null);
+                    setProviderLifecycleError('');
+                    setProviderLifecycleReason('');
+                  }}
+                  disabled={isChangingProviderStatus}
+                  className="min-h-11 rounded-xl border border-slate-200 px-5 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isChangingProviderStatus || providerLifecycleReason.trim().length < 3}
+                  className={`flex min-h-11 items-center justify-center gap-2 rounded-xl px-5 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50 ${
+                    providerLifecycleAction === 'deactivate'
+                      ? 'bg-red-600 hover:bg-red-700'
+                      : 'bg-emerald-600 hover:bg-emerald-700'
+                  }`}
+                >
+                  {isChangingProviderStatus ? <Loader2 size={18} className="animate-spin" /> : providerLifecycleAction === 'deactivate' ? <Ban size={18} /> : <RefreshCw size={18} />}
+                  {isChangingProviderStatus
+                    ? 'Guardando…'
+                    : providerLifecycleAction === 'deactivate'
+                      ? 'Confirmar baja'
+                      : 'Confirmar reactivación'}
+                </button>
               </div>
             </form>
           </div>

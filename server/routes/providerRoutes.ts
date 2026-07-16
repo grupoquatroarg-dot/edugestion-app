@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
 import { providerRepository } from "../repositories/providerRepository.js";
+import { providerLifecycleService } from "../services/providerLifecycleService.js";
 import { requireAuth, requirePermission } from "../middleware/authMiddleware.js";
 import { validate } from "../middleware/validate.js";
-import { sendSuccess } from "../utils/response.js";
+import { sendError, sendSuccess } from "../utils/response.js";
 
 const router = Router();
 
@@ -14,28 +15,77 @@ const providerSchema = z.object({
     telefono: z.string().optional(),
     email: z.string().email("Email inválido").optional().or(z.literal("")),
     direccion: z.string().optional(),
-    estado: z.string().optional(),
   }),
 });
 
-router.get("/", requireAuth, requirePermission('suppliers', 'view'), async (req, res) => {
-  const providers = await providerRepository.findAll();
+const lifecycleSchema = z.object({
+  body: z.object({
+    motivo: z.string().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
+  }),
+});
+
+router.get("/", requireAuth, requirePermission("suppliers", "view"), async (req, res) => {
+  const activeOnly = String(req.query.active_only || "").toLowerCase() === "true";
+  const providers = await providerRepository.findAll({ activeOnly });
   return sendSuccess(res, providers);
 });
 
-router.post("/", requireAuth, requirePermission('suppliers', 'create'), validate(providerSchema), async (req, res) => {
+router.post("/", requireAuth, requirePermission("suppliers", "create"), validate(providerSchema), async (req, res) => {
   const id = await providerRepository.create(req.body);
-  return sendSuccess(res, { id, ...req.body }, "Proveedor creado exitosamente", 201);
+  return sendSuccess(res, { id, ...req.body, estado: "activo" }, "Proveedor creado exitosamente", 201);
 });
 
-router.put("/:id", requireAuth, requirePermission('suppliers', 'edit'), validate(providerSchema), async (req, res) => {
+router.put("/:id", requireAuth, requirePermission("suppliers", "edit"), validate(providerSchema), async (req, res) => {
   await providerRepository.update(req.params.id, req.body);
   return sendSuccess(res, null, "Proveedor actualizado exitosamente");
 });
 
-router.delete("/:id", requireAuth, requirePermission('suppliers', 'delete'), async (req, res) => {
-  await providerRepository.delete(req.params.id);
-  return sendSuccess(res, null, "Proveedor eliminado exitosamente");
+router.post(
+  "/:id/deactivate",
+  requireAuth,
+  requirePermission("suppliers", "delete"),
+  validate(lifecycleSchema),
+  async (req, res) => {
+    try {
+      const result = await providerLifecycleService.changeStatus({
+        providerId: Number(req.params.id),
+        action: "deactivate",
+        motivo: req.body.motivo,
+        usuario: (req as any).user?.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Proveedor dado de baja correctamente");
+    } catch (error: any) {
+      return sendError(res, error.message || "No se pudo dar de baja el proveedor", error.statusCode || 400, error.errors || []);
+    }
+  }
+);
+
+router.post(
+  "/:id/reactivate",
+  requireAuth,
+  requirePermission("suppliers", "delete"),
+  validate(lifecycleSchema),
+  async (req, res) => {
+    try {
+      const result = await providerLifecycleService.changeStatus({
+        providerId: Number(req.params.id),
+        action: "reactivate",
+        motivo: req.body.motivo,
+        usuario: (req as any).user?.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Proveedor reactivado correctamente");
+    } catch (error: any) {
+      return sendError(res, error.message || "No se pudo reactivar el proveedor", error.statusCode || 400, error.errors || []);
+    }
+  }
+);
+
+router.delete("/:id", requireAuth, requirePermission("suppliers", "delete"), async (_req, res) => {
+  return sendError(
+    res,
+    "La eliminación física de proveedores está deshabilitada. Usá Dar de baja para conservar el historial.",
+    409
+  );
 });
 
 export default router;

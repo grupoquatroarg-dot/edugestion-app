@@ -106,7 +106,7 @@ export default async function handler(req: any, res: any) {
     if (!user) return;
 
     try {
-      const proveedores = await providerRepository.findAll();
+      const proveedores = await providerRepository.findAll({ activeOnly: true });
       return sendSuccess(res, proveedores);
     } catch (error: any) {
       return sendError(res, error?.message || "Error al obtener proveedores", error?.statusCode || 400, error?.errors || []);

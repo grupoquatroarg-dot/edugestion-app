@@ -25,7 +25,23 @@ export function initDb() {
       telefono TEXT,
       email TEXT,
       direccion TEXT,
-      estado TEXT DEFAULT 'activo'
+      estado TEXT DEFAULT 'activo',
+      deactivated_at DATETIME,
+      deactivated_by TEXT,
+      deactivation_reason TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS provider_status_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider_id INTEGER NOT NULL,
+      action TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      performed_by TEXT NOT NULL,
+      performed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      previous_status TEXT NOT NULL,
+      new_status TEXT NOT NULL,
+      snapshot TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (provider_id) REFERENCES proveedores(id)
     );
 
     CREATE TABLE IF NOT EXISTS product_categories (
@@ -462,6 +478,10 @@ export function initDb() {
       VALUES (1, 'Proveedor General')
     `).run();
   }
+
+  try { db.exec("ALTER TABLE proveedores ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE proveedores ADD COLUMN deactivated_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE proveedores ADD COLUMN deactivation_reason TEXT"); } catch (e) {}
 
   try { db.exec("ALTER TABLE products ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE products ADD COLUMN deactivated_by TEXT"); } catch (e) {}

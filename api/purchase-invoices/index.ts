@@ -11,6 +11,7 @@ import { providerRepository } from "../../server/repositories/providerRepository
 import { sendError, sendSuccess } from "../../server/utils/response.js";
 import { getRequestBody, requirePurchaseInvoicePermission } from "../../server/services/vercel/purchaseInvoiceApiHelpers.js";
 import { purchaseInvoiceCancellationService } from "../../server/services/purchaseInvoiceCancellationService.js";
+import { providerLifecycleService } from "../../server/services/providerLifecycleService.js";
 
 const providerSchema = z.object({
   nombre: z.string().min(2, "El nombre debe tener al menos 2 caracteres"),
@@ -18,7 +19,11 @@ const providerSchema = z.object({
   telefono: z.string().optional(),
   email: z.string().email("Email inválido").optional().or(z.literal("")),
   direccion: z.string().optional(),
-  estado: z.string().optional(),
+});
+
+const providerLifecycleSchema = z.object({
+  action: z.enum(["deactivate", "reactivate"]),
+  motivo: z.string().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
 });
 
 const getEndpoint = (req: any) => {
@@ -34,7 +39,8 @@ export default async function handler(req: any, res: any) {
     if (!user) return;
 
     try {
-      const providers = await providerRepository.findAll();
+      const activeOnly = String(req.query?.active_only || "").toLowerCase() === "true";
+      const providers = await providerRepository.findAll({ activeOnly });
       return sendSuccess(res, providers);
     } catch (error: any) {
       return sendError(res, error?.message || "Error al obtener proveedores", 400);
@@ -55,10 +61,62 @@ export default async function handler(req: any, res: any) {
 
     try {
       const id = await providerRepository.create(parsed.data);
-      return sendSuccess(res, { id, ...parsed.data }, "Proveedor creado exitosamente", 201);
+      return sendSuccess(res, { id, ...parsed.data, estado: "activo" }, "Proveedor creado exitosamente", 201);
     } catch (error: any) {
       return sendError(res, error?.message || "Error al crear proveedor", 400);
     }
+  }
+
+
+  if (endpoint === "provider-lifecycle" && req.method === "POST") {
+    const user = await requirePurchaseInvoicePermission(req, res, "delete");
+    if (!user) return;
+
+    const providerId = Number(req.query?.id);
+    if (!Number.isInteger(providerId) || providerId <= 0) {
+      return sendError(res, "ID de proveedor inválido", 400);
+    }
+
+    const parsed = providerLifecycleSchema.safeParse(getRequestBody(req));
+    if (!parsed.success) {
+      return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+      })));
+    }
+
+    try {
+      const result = await providerLifecycleService.changeStatus({
+        providerId,
+        action: parsed.data.action,
+        motivo: parsed.data.motivo,
+        usuario: user.userName || "Sistema",
+      });
+      return sendSuccess(
+        res,
+        result,
+        parsed.data.action === "deactivate"
+          ? "Proveedor dado de baja correctamente"
+          : "Proveedor reactivado correctamente"
+      );
+    } catch (error: any) {
+      return sendError(
+        res,
+        error?.message || "No se pudo cambiar el estado del proveedor",
+        error?.statusCode || 400
+      );
+    }
+  }
+
+  if (endpoint === "proveedores" && req.method === "DELETE") {
+    const user = await requirePurchaseInvoicePermission(req, res, "delete");
+    if (!user) return;
+
+    return sendError(
+      res,
+      "La eliminación física de proveedores está deshabilitada. Usá Dar de baja para conservar el historial.",
+      409
+    );
   }
 
   if (endpoint === "cancel" && req.method === "POST") {
