@@ -49,7 +49,7 @@ type Movimiento = {
   fecha: string;
   fecha_dia?: string;
   tipo: 'ingreso' | 'egreso';
-  origen: 'venta' | 'pago_cc' | 'egreso_manual' | 'ajuste' | 'compra' | 'cobranza' | 'anulacion_venta' | 'anulacion_compra' | 'anulacion_egreso_manual';
+  origen: 'venta' | 'pago_cc' | 'egreso_manual' | 'ajuste' | 'compra' | 'cobranza' | 'anulacion_venta' | 'anulacion_compra' | 'anulacion_egreso_manual' | 'anulacion_cobranza';
   cliente_id: number | null;
   venta_id: number | null;
   descripcion: string;
@@ -65,6 +65,8 @@ type Movimiento = {
   anulacion_motivo?: string | null;
   reversed_movement_id?: number | null;
   financial_movement_cancellation_id?: number | null;
+  client_payment_cancellation_id?: number | null;
+  route_item_id?: number | null;
 };
 
 type ConfigPaymentMethod = {
@@ -138,7 +140,7 @@ export default function FinanceModule() {
   const [cancellationTarget, setCancellationTarget] = useState<Movimiento | null>(null);
   const [cancellationReason, setCancellationReason] = useState('');
   const [cancellationError, setCancellationError] = useState('');
-  const [isCancellingExpense, setIsCancellingExpense] = useState(false);
+  const [isCancellingMovement, setIsCancellingMovement] = useState(false);
   const [egresoForm, setEgresoForm] = useState({
     monto: '',
     descripcion: '',
@@ -375,21 +377,27 @@ export default function FinanceModule() {
     Number(movement.reversion_version || 0) === 1 &&
     String(movement.estado || 'Activo').toLowerCase() !== 'anulado';
 
-  const openExpenseCancellation = (movement: Movimiento) => {
+  const canCancelClientPayment = (movement: Movimiento) =>
+    movement.tipo === 'ingreso' &&
+    movement.origen === 'cobranza' &&
+    Number(movement.reversion_version || 0) === 1 &&
+    String(movement.estado || 'Activo').toLowerCase() !== 'anulado';
+
+  const openMovementCancellation = (movement: Movimiento) => {
     setCancellationTarget(movement);
     setCancellationReason('');
     setCancellationError('');
   };
 
-  const closeExpenseCancellation = () => {
-    if (isCancellingExpense) return;
+  const closeMovementCancellation = () => {
+    if (isCancellingMovement) return;
     setCancellationTarget(null);
     setCancellationReason('');
     setCancellationError('');
   };
 
-  const handleCancelManualExpense = async () => {
-    if (!cancellationTarget || isCancellingExpense) return;
+  const handleCancelMovement = async () => {
+    if (!cancellationTarget || isCancellingMovement) return;
 
     const reason = cancellationReason.trim();
     if (reason.length < 3) {
@@ -397,26 +405,29 @@ export default function FinanceModule() {
       return;
     }
 
-    setIsCancellingExpense(true);
+    const isClientPayment = canCancelClientPayment(cancellationTarget);
+    const endpoint = isClientPayment ? 'client-payment-cancel' : 'manual-expense-cancel';
+
+    setIsCancellingMovement(true);
     setCancellationError('');
 
     try {
       const response = await apiFetch(
-        `/api/finanzas?endpoint=manual-expense-cancel&id=${cancellationTarget.id}`,
+        `/api/finanzas?endpoint=${endpoint}&id=${cancellationTarget.id}`,
         {
           method: 'POST',
           body: JSON.stringify({ motivo: reason }),
         }
       );
       await readApiJson(response);
-      setSuccessMessage('Egreso anulado correctamente.');
+      setSuccessMessage(isClientPayment ? 'Cobranza anulada correctamente.' : 'Egreso anulado correctamente.');
       setCancellationTarget(null);
       setCancellationReason('');
       await Promise.all([fetchMovimientos(), fetchCheques()]);
     } catch (error: any) {
-      setCancellationError(error?.message || 'No se pudo anular el egreso.');
+      setCancellationError(error?.message || (isClientPayment ? 'No se pudo anular la cobranza.' : 'No se pudo anular el egreso.'));
     } finally {
-      setIsCancellingExpense(false);
+      setIsCancellingMovement(false);
     }
   };
 
@@ -502,7 +513,8 @@ export default function FinanceModule() {
       ajuste: 'Ajuste',
       anulacion_venta: 'Anulación de venta',
       anulacion_compra: 'Anulación de compra',
-      anulacion_egreso_manual: 'Anulación de egreso manual'
+      anulacion_egreso_manual: 'Anulación de egreso manual',
+      anulacion_cobranza: 'Anulación de cobranza'
     };
 
     return labels[value || ''] || (value || 'Sin origen').replace(/_/g, ' ');
@@ -937,7 +949,7 @@ export default function FinanceModule() {
                       {hasPermission('current_accounts', 'delete') && canCancelManualExpense(expense) && (
                         <button
                           type="button"
-                          onClick={() => openExpenseCancellation(expense)}
+                          onClick={() => openMovementCancellation(expense)}
                           className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-black uppercase tracking-wide text-red-700 hover:bg-red-100"
                         >
                           <Ban size={17} />
@@ -1083,7 +1095,7 @@ export default function FinanceModule() {
 
                       {String(movement.estado || 'Activo').toLowerCase() === 'anulado' && (
                         <div className="mt-4 rounded-2xl border border-red-200 bg-white p-4 text-sm text-red-800">
-                          <p className="font-black">Egreso anulado</p>
+                          <p className="font-black">{movement.origen === 'cobranza' ? 'Cobranza anulada' : 'Movimiento anulado'}</p>
                           <p className="mt-1 break-words">Motivo: {movement.anulacion_motivo || 'Sin motivo informado'}</p>
                           <p className="mt-1 text-xs font-bold text-red-600">
                             {movement.anulada_por || 'Sistema'}
@@ -1095,7 +1107,7 @@ export default function FinanceModule() {
                       {hasPermission('current_accounts', 'delete') && canCancelManualExpense(movement) && (
                         <button
                           type="button"
-                          onClick={() => openExpenseCancellation(movement)}
+                          onClick={() => openMovementCancellation(movement)}
                           className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-black uppercase tracking-wide text-red-700 hover:bg-red-100"
                         >
                           <Ban size={17} />
@@ -1103,9 +1115,25 @@ export default function FinanceModule() {
                         </button>
                       )}
 
+                      {hasPermission('current_accounts', 'delete') && canCancelClientPayment(movement) && (
+                        <button
+                          type="button"
+                          onClick={() => openMovementCancellation(movement)}
+                          className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-black uppercase tracking-wide text-amber-800 hover:bg-amber-100"
+                        >
+                          <RotateCcw size={17} />
+                          Anular cobranza
+                        </button>
+                      )}
+
                       {movement.tipo === 'egreso' && movement.origen === 'egreso_manual' && Number(movement.reversion_version || 0) !== 1 && String(movement.estado || 'Activo').toLowerCase() !== 'anulado' && movement.categoria !== 'Cheque Rechazado' && (
                         <p className="mt-4 rounded-2xl bg-amber-50 p-3 text-xs font-bold text-amber-800">
                           Egreso histórico sin trazabilidad para anular.
+                        </p>
+                      )}
+                      {movement.tipo === 'ingreso' && movement.origen === 'cobranza' && Number(movement.reversion_version || 0) !== 1 && String(movement.estado || 'Activo').toLowerCase() !== 'anulado' && (
+                        <p className="mt-4 rounded-2xl bg-amber-50 p-3 text-xs font-bold text-amber-800">
+                          Cobranza histórica sin trazabilidad completa para anular.
                         </p>
                       )}
                     </article>
@@ -1404,17 +1432,17 @@ export default function FinanceModule() {
           <div className="w-full max-w-lg overflow-hidden rounded-3xl bg-white shadow-2xl">
             <header className="flex items-start justify-between gap-4 border-b border-slate-100 p-5 sm:p-6">
               <div className="min-w-0">
-                <h3 className="text-xl font-black text-slate-950">Anular egreso manual</h3>
+                <h3 className="text-xl font-black text-slate-950">{canCancelClientPayment(cancellationTarget) ? 'Anular cobranza de cliente' : 'Anular egreso manual'}</h3>
                 <p className="mt-1 break-words text-sm text-slate-500">
                   {cancellationTarget.descripcion} · {formatCurrency(cancellationTarget.monto)}
                 </p>
               </div>
               <button
                 type="button"
-                onClick={closeExpenseCancellation}
-                disabled={isCancellingExpense}
+                onClick={closeMovementCancellation}
+                disabled={isCancellingMovement}
                 className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-slate-500 hover:bg-slate-100 disabled:opacity-50"
-                aria-label="Cerrar anulación de egreso"
+                aria-label={canCancelClientPayment(cancellationTarget) ? 'Cerrar anulación de cobranza' : 'Cerrar anulación de egreso'}
               >
                 <X size={20} />
               </button>
@@ -1422,7 +1450,9 @@ export default function FinanceModule() {
 
             <div className="space-y-4 p-5 sm:p-6">
               <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-relaxed text-amber-900">
-                El egreso permanecerá como historial. Se creará un contramovimiento y, si utilizó un cheque todavía entregado al proveedor, volverá a quedar en cartera.
+                {canCancelClientPayment(cancellationTarget)
+                  ? 'La cobranza permanecerá como historial. Se restaurará el saldo pendiente del cliente y de cada venta, y se creará un contramovimiento financiero.'
+                  : 'El egreso permanecerá como historial. Se creará un contramovimiento y, si utilizó un cheque todavía entregado al proveedor, volverá a quedar en cartera.'}
               </div>
 
               <label className="block">
@@ -1436,7 +1466,7 @@ export default function FinanceModule() {
                   rows={4}
                   maxLength={500}
                   className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-red-500 focus:ring-4 focus:ring-red-100"
-                  placeholder="Ej.: Egreso cargado por duplicado"
+                  placeholder={canCancelClientPayment(cancellationTarget) ? 'Ej.: Cobranza cargada por duplicado' : 'Ej.: Egreso cargado por duplicado'}
                 />
               </label>
 
@@ -1450,20 +1480,20 @@ export default function FinanceModule() {
             <footer className="grid grid-cols-1 gap-3 border-t border-slate-100 p-5 sm:grid-cols-2 sm:p-6">
               <button
                 type="button"
-                onClick={closeExpenseCancellation}
-                disabled={isCancellingExpense}
+                onClick={closeMovementCancellation}
+                disabled={isCancellingMovement}
                 className="min-h-12 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black uppercase tracking-wide text-slate-700 hover:bg-slate-100 disabled:opacity-50"
               >
                 Volver
               </button>
               <button
                 type="button"
-                onClick={handleCancelManualExpense}
-                disabled={isCancellingExpense || cancellationReason.trim().length < 3}
+                onClick={handleCancelMovement}
+                disabled={isCancellingMovement || cancellationReason.trim().length < 3}
                 className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-red-600 px-4 py-3 text-sm font-black uppercase tracking-wide text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {isCancellingExpense ? <Loader2 size={18} className="animate-spin" /> : <Ban size={18} />}
-                {isCancellingExpense ? 'Anulando…' : 'Confirmar anulación'}
+                {isCancellingMovement ? <Loader2 size={18} className="animate-spin" /> : <Ban size={18} />}
+                {isCancellingMovement ? 'Anulando…' : 'Confirmar anulación'}
               </button>
             </footer>
           </div>

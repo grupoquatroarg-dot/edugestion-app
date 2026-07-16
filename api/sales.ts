@@ -41,6 +41,7 @@ const paymentSchema = z.object({
   metodo_pago: z.string().min(1, "Método de pago requerido"),
   observaciones: z.string().optional(),
   fecha: z.string().optional(),
+  route_item_id: z.number().int().positive().optional(),
 });
 
 const supplierOrderSchema = z.object({
@@ -1579,9 +1580,9 @@ const handleCustomerOrders = async (req: any, res: any) => {
         const nextPaymentNum = await getAndIncrementSetting(client, "next_payment_number");
         const movementResult = await client.query(
           `INSERT INTO movimientos_financieros
-             (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cliente_id, venta_id)
+             (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cliente_id, venta_id, estado, reversion_version)
            VALUES
-             ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
            RETURNING id`,
           [
             "ingreso",
@@ -1595,6 +1596,8 @@ const handleCustomerOrders = async (req: any, res: any) => {
             nextPaymentNum,
             order.cliente_id,
             sale.id,
+            'Activo',
+            1,
           ]
         );
 

@@ -771,7 +771,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                             : 'Sin referencia';
 
                       return (
-                        <article key={movement.id} className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                        <article key={movement.id} className={`min-w-0 overflow-hidden rounded-2xl border shadow-sm ${String(movement.estado || 'Activo').toLowerCase() === 'anulado' ? 'border-red-200 bg-red-50/60' : 'border-slate-200 bg-white'}`}>
                           <div className="p-4">
                             <div className="flex min-w-0 items-start justify-between gap-3">
                               <div className="min-w-0">
@@ -786,9 +786,15 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                                     {movement.operation_type}
                                   </span>
                                   <span className="break-all font-mono text-[10px] font-bold text-slate-500">{reference}</span>
+                                  {String(movement.estado || 'Activo').toLowerCase() === 'anulado' && (
+                                    <span className="rounded-full border border-red-200 bg-red-100 px-2 py-1 text-[9px] font-black uppercase tracking-wider text-red-700">Anulado</span>
+                                  )}
                                 </div>
-                                <h4 className="mt-2 break-words text-sm font-black leading-5 text-slate-950">{movement.descripcion || 'Movimiento de cuenta corriente'}</h4>
+                                <h4 className={`mt-2 break-words text-sm font-black leading-5 ${String(movement.estado || 'Activo').toLowerCase() === 'anulado' ? 'text-red-900 line-through' : 'text-slate-950'}`}>{movement.descripcion || 'Movimiento de cuenta corriente'}</h4>
                                 <p className="mt-1 text-xs text-slate-400">{formatMovementDate(movement)}</p>
+                                {String(movement.estado || 'Activo').toLowerCase() === 'anulado' && movement.anulacion_motivo && (
+                                  <p className="mt-2 break-words text-xs font-bold text-red-700">Motivo: {movement.anulacion_motivo}</p>
+                                )}
                               </div>
                               <button type="button" onClick={() => movement.venta_id ? fetchSaleDetails(Number(movement.venta_id)) : setSelectedMovement(movement)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50" title="Ver detalle" aria-label="Ver detalle del movimiento">
                                 <Eye size={17} />
@@ -936,9 +942,20 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-[10px] font-black uppercase text-slate-400">Descripción</p>
-                <p className="mt-1 break-words text-sm font-bold text-slate-950">{selectedMovement.descripcion}</p>
+              <div className={`rounded-2xl border p-4 ${String(selectedMovement.estado || 'Activo').toLowerCase() === 'anulado' ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-slate-50'}`}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-[10px] font-black uppercase text-slate-400">Descripción</p>
+                  {String(selectedMovement.estado || 'Activo').toLowerCase() === 'anulado' && (
+                    <span className="rounded-full border border-red-200 bg-red-100 px-2 py-1 text-[9px] font-black uppercase tracking-wide text-red-700">Anulado</span>
+                  )}
+                </div>
+                <p className={`mt-1 break-words text-sm font-bold ${String(selectedMovement.estado || 'Activo').toLowerCase() === 'anulado' ? 'text-red-900 line-through' : 'text-slate-950'}`}>{selectedMovement.descripcion}</p>
+                {String(selectedMovement.estado || 'Activo').toLowerCase() === 'anulado' && (
+                  <div className="mt-3 rounded-xl border border-red-200 bg-white p-3 text-xs text-red-800">
+                    <p className="font-black">Motivo: {selectedMovement.anulacion_motivo || 'Sin motivo informado'}</p>
+                    <p className="mt-1 font-bold">{selectedMovement.anulada_por || 'Sistema'}{selectedMovement.anulada_at ? ` · ${formatDateTime(selectedMovement.anulada_at)}` : ''}</p>
+                  </div>
+                )}
               </div>
               <div className="mt-3 grid grid-cols-1 gap-2 min-[430px]:grid-cols-2">
                 <div className="rounded-2xl border border-slate-200 p-4">

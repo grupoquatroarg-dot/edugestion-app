@@ -414,13 +414,14 @@ export default function RouteModule() {
           body: JSON.stringify({
             monto: paymentAmount,
             metodo_pago: paymentMethod,
-            fecha: new Date().toISOString()
+            fecha: new Date().toISOString(),
+            observaciones: actionNotes || undefined,
+            route_item_id: selectedItemForAction.id
           })
         });
         const body = await res.json();
         if (res.ok) {
           unwrapResponse(body);
-          await handleUpdateItemStatus(selectedItemForAction.id, 'visitado', `Pago registrado: $${paymentAmount}`, { cobranza_realizada: 1 });
           showNotification('success', 'Cobro registrado correctamente.');
         } else {
           const errorData = unwrapResponse(body);

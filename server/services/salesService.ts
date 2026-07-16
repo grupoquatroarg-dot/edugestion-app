@@ -442,9 +442,12 @@ export const salesService = {
   },
 
   async registerClientPayment(paymentData: any) {
-    const { cliente_id, monto, metodo_pago, fecha, observaciones, usuario } = paymentData;
+    const { cliente_id, monto, metodo_pago, fecha, observaciones, usuario, route_item_id } = paymentData;
     const clientId = Number(cliente_id);
+    const routeItemId = Number(route_item_id || 0);
     const paymentAmount = toNumber(monto);
+    const observationText = String(observaciones || '').trim();
+    const routePaymentNote = `Pago registrado: $${paymentAmount.toFixed(2)}${observationText ? ` - ${observationText}` : ''}`;
 
     if (!clientId) {
       throw new AppError('Cliente inválido', 400);
@@ -460,6 +463,20 @@ export const salesService = {
         const customer = db.prepare('SELECT id, nombre_apellido, saldo_cta_cte FROM clientes WHERE id = ?').get(clientId) as any;
         if (!customer) {
           throw new AppError('Cliente no encontrado', 404);
+        }
+
+        let routeItem: any = null;
+        if (routeItemId > 0) {
+          routeItem = db.prepare(
+            'SELECT id, route_id, client_id, cobranza_realizada FROM route_items WHERE id = ?'
+          ).get(routeItemId) as any;
+          if (!routeItem) throw new AppError('El ítem de ruta no existe', 409);
+          if (Number(routeItem.client_id) !== clientId) {
+            throw new AppError('El ítem de ruta no pertenece al cliente de la cobranza', 409);
+          }
+          if (Number(routeItem.cobranza_realizada || 0) !== 0) {
+            throw new AppError('El ítem de ruta ya tiene una cobranza activa', 409);
+          }
         }
 
         const saldoActual = toNumber(customer.saldo_cta_cte);
@@ -512,13 +529,33 @@ export const salesService = {
         const descriptionParts = [
           `Cobranza cliente ${customer.nombre_apellido}`,
           saleReferences ? `Aplicado a venta${allocations.length === 1 ? '' : 's'} ${saleReferences}` : '',
-          String(observaciones || '').trim(),
+          observationText,
         ].filter(Boolean);
 
-        db.prepare(
-          `INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cliente_id, venta_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        ).run('ingreso', 'cobranza', descriptionParts.join(' - '), 'Cobranzas', metodo_pago, paymentAmount, normalizeBusinessDateForStorage(fecha), usuario || 'Sistema', nextPaymentNum, clientId, linkedSaleId);
+        const movementInfo = db.prepare(
+          `INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cliente_id, venta_id, route_item_id, estado, reversion_version)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run('ingreso', 'cobranza', descriptionParts.join(' - '), 'Cobranzas', metodo_pago, paymentAmount, normalizeBusinessDateForStorage(fecha), usuario || 'Sistema', nextPaymentNum, clientId, linkedSaleId, routeItemId || null, 'Activo', 0);
+
+        if (routeItemId > 0) {
+          db.prepare(
+            `UPDATE route_items
+             SET cobranza_realizada = 1,
+                 visitado = 1,
+                 status = 'visitado',
+                 visited_at = CURRENT_TIMESTAMP,
+                 notes = CASE
+                   WHEN TRIM(COALESCE(notes, '')) = '' THEN ?
+                   ELSE notes || CHAR(10) || ?
+                 END
+             WHERE id = ?`
+          ).run(routePaymentNote, routePaymentNote, routeItemId);
+          db.prepare(
+            `UPDATE routes
+             SET status = 'en curso'
+             WHERE id = ? AND status IN ('planificada', 'pendiente')`
+          ).run(routeItem.route_id);
+        }
 
         const updatedCustomer = db.prepare('SELECT * FROM clientes WHERE id = ?').get(clientId);
         return {
@@ -526,6 +563,8 @@ export const salesService = {
           cliente_id: clientId,
           saldo_actual: toNumber(updatedCustomer?.saldo_cta_cte),
           monto_aplicado: paymentAmount,
+          movement_id: Number(movementInfo.lastInsertRowid),
+          route_item_id: routeItemId || null,
         };
       })();
     }
@@ -551,6 +590,31 @@ export const salesService = {
       }
 
       const customer = customerResult.rows[0];
+
+      let routeItem: any = null;
+      if (routeItemId > 0) {
+        const routeItemResult = await client.query(
+          `SELECT ri.id, ri.client_id, ri.cobranza_realizada, ri.status, ri.route_id
+           FROM route_items ri
+           WHERE ri.id = $1
+           LIMIT 1
+           FOR UPDATE OF ri`,
+          [routeItemId]
+        );
+
+        if (!routeItemResult.rowCount) {
+          throw new AppError('El ítem de ruta no existe', 409);
+        }
+
+        routeItem = routeItemResult.rows[0];
+        if (toNumber(routeItem.client_id) !== clientId) {
+          throw new AppError('El ítem de ruta no pertenece al cliente de la cobranza', 409);
+        }
+        if (toNumber(routeItem.cobranza_realizada) !== 0) {
+          throw new AppError('El ítem de ruta ya tiene una cobranza activa', 409);
+        }
+      }
+
       const saldoActual = toNumber(customer.saldo_cta_cte);
 
       if (saldoActual <= 0) {
@@ -620,8 +684,8 @@ export const salesService = {
       ].filter(Boolean);
 
       const movementResult = await client.query(
-        `INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cliente_id, venta_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        `INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cliente_id, venta_id, route_item_id, estado, reversion_version)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
          RETURNING id`,
         [
           'ingreso',
@@ -635,6 +699,9 @@ export const salesService = {
           nextPaymentNum,
           clientId,
           linkedSaleId,
+          routeItemId || null,
+          'Activo',
+          1,
         ]
       );
 
@@ -648,6 +715,29 @@ export const salesService = {
         }))
       );
 
+      if (routeItemId > 0) {
+        await client.query(
+          `UPDATE route_items
+           SET cobranza_realizada = 1,
+               visitado = 1,
+               status = 'visitado',
+               visited_at = now(),
+               notes = CASE
+                 WHEN btrim(COALESCE(notes, '')) = '' THEN $2
+                 ELSE notes || E'\n' || $2
+               END
+           WHERE id = $1`,
+          [routeItemId, routePaymentNote]
+        );
+        await client.query(
+          `UPDATE routes
+           SET status = 'en curso'
+           WHERE id = $1
+             AND status IN ('planificada', 'pendiente')`,
+          [toNumber(routeItem.route_id)]
+        );
+      }
+
       const updatedCustomerResult = await client.query(
         'SELECT saldo_cta_cte FROM clientes WHERE id = $1 LIMIT 1',
         [clientId]
@@ -660,6 +750,8 @@ export const salesService = {
         cliente_id: clientId,
         saldo_actual: toNumber(updatedCustomerResult.rows[0]?.saldo_cta_cte),
         monto_aplicado: paymentAmount,
+        movement_id: toNumber(movementResult.rows[0]?.id),
+        route_item_id: routeItemId || null,
       };
     } catch (error) {
       await client.query('ROLLBACK');

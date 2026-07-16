@@ -2022,6 +2022,14 @@ const handleCustomerPortal = async (req: any, res: any) => {
            mf.monto,
            mf.numero_pago,
            mf.venta_id,
+           mf.estado,
+           mf.reversion_version,
+           mf.anulada_at,
+           mf.anulada_por,
+           mf.anulacion_motivo,
+           mf.reversed_movement_id,
+           mf.client_payment_cancellation_id,
+           mf.route_item_id,
            s.numero_venta,
            co.numero_pedido
          FROM movimientos_financieros mf
@@ -2047,7 +2055,15 @@ const handleCustomerPortal = async (req: any, res: any) => {
         ...row,
         id: toNumber(row.id),
         monto: toNumber(row.monto),
-        payment_status: "paid",
+        payment_status: String(row.estado || "Activo").toLowerCase() === "anulado" ? "cancelled" : "paid",
+        estado: row.estado || "Activo",
+        reversion_version: toNumber(row.reversion_version),
+        anulada_at: row.anulada_at || null,
+        anulada_por: row.anulada_por || null,
+        anulacion_motivo: row.anulacion_motivo || null,
+        reversed_movement_id: row.reversed_movement_id ? toNumber(row.reversed_movement_id) : null,
+        client_payment_cancellation_id: row.client_payment_cancellation_id ? toNumber(row.client_payment_cancellation_id) : null,
+        route_item_id: row.route_item_id ? toNumber(row.route_item_id) : null,
       })),
     });
   }
@@ -2293,6 +2309,14 @@ const handleClientAccountAdmin = async (req: any, res: any) => {
              mf.monto,
              mf.numero_pago,
              mf.venta_id,
+             mf.estado,
+             mf.reversion_version,
+             mf.anulada_at,
+             mf.anulada_por,
+             mf.anulacion_motivo,
+             mf.reversed_movement_id,
+             mf.client_payment_cancellation_id,
+             mf.route_item_id,
              s.numero_venta,
              co.numero_pedido
            FROM movimientos_financieros mf
@@ -2353,8 +2377,15 @@ const handleClientAccountAdmin = async (req: any, res: any) => {
           metodo_pago: row.forma_pago || row.origen || "",
           forma_pago: row.forma_pago || row.origen || "",
           origen: row.origen,
-          payment_status: "paid",
-          estado: "Pagado",
+          payment_status: String(row.estado || "Activo").toLowerCase() === "anulado" ? "cancelled" : "paid",
+          estado: row.estado || (isIncome ? "Pagado" : "Activo"),
+          reversion_version: toNumber(row.reversion_version),
+          anulada_at: row.anulada_at || null,
+          anulada_por: row.anulada_por || null,
+          anulacion_motivo: row.anulacion_motivo || null,
+          reversed_movement_id: row.reversed_movement_id ? toNumber(row.reversed_movement_id) : null,
+          client_payment_cancellation_id: row.client_payment_cancellation_id ? toNumber(row.client_payment_cancellation_id) : null,
+          route_item_id: row.route_item_id ? toNumber(row.route_item_id) : null,
         };
       });
 

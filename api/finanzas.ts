@@ -4,6 +4,7 @@ import { UserRepository } from "../server/repositories/userRepository.js";
 import { requireBearerUser } from "../server/services/currentUserAuthService.js";
 import { sendError, sendSuccess } from "../server/utils/response.js";
 import { manualExpenseCancellationService } from "../server/services/manualExpenseCancellationService.js";
+import { clientPaymentCancellationService } from "../server/services/clientPaymentCancellationService.js";
 import { listActivePaymentMethods } from "../server/services/paymentMethodAvailabilityService.js";
 
 const getBody = (req: any) => {
@@ -157,6 +158,34 @@ export default async function handler(req: any, res: any) {
       return sendError(
         res,
         error?.message || "No se pudo anular el egreso",
+        error?.statusCode || 400,
+        error?.errors || []
+      );
+    }
+  }
+
+  if (req.method === "POST" && endpoint === "client-payment-cancel") {
+    const user = await requireCurrentAccountsPermission(req, res, "delete");
+    if (!user) return;
+
+    const movementId = Number(req.query?.id);
+    const body = getBody(req);
+
+    if (!Number.isInteger(movementId) || movementId <= 0) {
+      return sendError(res, "ID de cobranza inválido", 400);
+    }
+
+    try {
+      const result = await clientPaymentCancellationService.cancelClientPayment({
+        movementId,
+        motivo: body.motivo,
+        usuario: user.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Cobranza anulada correctamente");
+    } catch (error: any) {
+      return sendError(
+        res,
+        error?.message || "No se pudo anular la cobranza",
         error?.statusCode || 400,
         error?.errors || []
       );

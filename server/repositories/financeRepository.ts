@@ -70,6 +70,8 @@ const mapMovement = (row: any) => ({
   anulacion_motivo: row.anulacion_motivo || null,
   reversed_movement_id: row.reversed_movement_id === null || row.reversed_movement_id === undefined ? null : toNumber(row.reversed_movement_id),
   financial_movement_cancellation_id: row.financial_movement_cancellation_id === null || row.financial_movement_cancellation_id === undefined ? null : toNumber(row.financial_movement_cancellation_id),
+  client_payment_cancellation_id: row.client_payment_cancellation_id === null || row.client_payment_cancellation_id === undefined ? null : toNumber(row.client_payment_cancellation_id),
+  route_item_id: row.route_item_id === null || row.route_item_id === undefined ? null : toNumber(row.route_item_id),
   nombre_cliente: row.nombre_cliente || null,
 });
 

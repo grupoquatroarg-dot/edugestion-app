@@ -6,6 +6,7 @@ import { requireAuth, requirePermission } from '../middleware/authMiddleware.js'
 import { validate } from '../middleware/validate.js';
 import { sendError, sendSuccess } from '../utils/response.js';
 import { manualExpenseCancellationService } from '../services/manualExpenseCancellationService.js';
+import { clientPaymentCancellationService } from '../services/clientPaymentCancellationService.js';
 import { listActivePaymentMethods } from '../services/paymentMethodAvailabilityService.js';
 
 const router = Router();
@@ -50,6 +51,62 @@ const updateChequeStatusSchema = z.object({
   }),
 });
 
+router.post('/', requireAuth, async (req, res, next) => {
+  const endpoint = String(req.query.endpoint || '');
+
+  if (!['egresos', 'manual-expense-cancel', 'client-payment-cancel'].includes(endpoint)) {
+    return next();
+  }
+
+  const action = endpoint === 'egresos' ? 'create' : 'delete';
+  const permissionMiddleware = requirePermission('current_accounts', action);
+
+  return permissionMiddleware(req, res, async () => {
+    try {
+      if (endpoint === 'egresos') {
+        const parsed = expenseSchema.safeParse({ body: req.body });
+        if (!parsed.success) {
+          return sendError(res, parsed.error.issues[0]?.message || 'Datos de egreso inválidos', 400, parsed.error.issues);
+        }
+
+        await financeRepository.registerExpense({
+          ...parsed.data.body,
+          usuario: (req as any).user?.userName || 'Sistema',
+        });
+        return sendSuccess(res, null, 'Egreso registrado exitosamente', 201);
+      }
+
+      const movementId = Number(req.query.id);
+      if (!Number.isInteger(movementId) || movementId <= 0) {
+        return sendError(res, endpoint === 'client-payment-cancel' ? 'ID de cobranza inválido' : 'ID de movimiento inválido', 400);
+      }
+
+      if (endpoint === 'client-payment-cancel') {
+        const result = await clientPaymentCancellationService.cancelClientPayment({
+          movementId,
+          motivo: req.body?.motivo,
+          usuario: (req as any).user?.userName || 'Sistema',
+        });
+        return sendSuccess(res, result, 'Cobranza anulada correctamente');
+      }
+
+      const result = await manualExpenseCancellationService.cancelManualExpense({
+        movementId,
+        motivo: req.body?.motivo,
+        usuario: (req as any).user?.userName || 'Sistema',
+      });
+      return sendSuccess(res, result, 'Egreso anulado correctamente');
+    } catch (error: any) {
+      return sendError(
+        res,
+        error.message || (endpoint === 'client-payment-cancel' ? 'No se pudo anular la cobranza' : 'No se pudo completar la operación financiera'),
+        error.statusCode || 400,
+        error.errors || []
+      );
+    }
+  });
+});
+
 router.get('/movimientos', requireAuth, requirePermission('current_accounts', 'view'), async (req, res) => {
   try {
     const movimientos = await financeRepository.getMovements();
@@ -86,6 +143,30 @@ router.post(
       return sendError(
         res,
         error.message || 'No se pudo anular el egreso',
+        error.statusCode || 400,
+        error.errors || []
+      );
+    }
+  }
+);
+
+router.post(
+  '/movimientos/:id/cancel-client-payment',
+  requireAuth,
+  requirePermission('current_accounts', 'delete'),
+  async (req, res) => {
+    try {
+      const movementId = parseInt(req.params.id, 10);
+      const result = await clientPaymentCancellationService.cancelClientPayment({
+        movementId,
+        motivo: req.body?.motivo,
+        usuario: (req as any).user?.userName || 'Sistema',
+      });
+      return sendSuccess(res, result, 'Cobranza anulada correctamente');
+    } catch (error: any) {
+      return sendError(
+        res,
+        error.message || 'No se pudo anular la cobranza',
         error.statusCode || 400,
         error.errors || []
       );

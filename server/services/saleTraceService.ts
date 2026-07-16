@@ -63,9 +63,10 @@ export const saleTraceService = {
            sale_id,
            movimiento_financiero_id,
            monto,
-           allocation_type
+           allocation_type,
+           estado
          )
-         VALUES ($1, $2, $3, $4)
+         VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (sale_id, movimiento_financiero_id)
          DO UPDATE SET
            monto = EXCLUDED.monto,
@@ -75,6 +76,7 @@ export const saleTraceService = {
           movementId,
           allocation.monto,
           allocation.allocation_type,
+          'Activo',
         ]
       );
     }

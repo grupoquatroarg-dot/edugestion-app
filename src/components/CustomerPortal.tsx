@@ -1619,13 +1619,18 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                   {filteredAccountMovements.map((movement: any) => (
                     <article
                       key={movement.id}
-                      className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                      className={`min-w-0 rounded-2xl border p-4 ${String(movement.estado || 'Activo').toLowerCase() === 'anulado' ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-slate-50'}`}
                     >
                       <div className="flex min-w-0 flex-col gap-3 min-[460px]:flex-row min-[460px]:items-start min-[460px]:justify-between">
                         <div className="min-w-0">
-                          <p className="break-words font-black text-slate-950">
-                            {movement.descripcion}
-                          </p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className={`break-words font-black ${String(movement.estado || 'Activo').toLowerCase() === 'anulado' ? 'text-red-900 line-through' : 'text-slate-950'}`}>
+                              {movement.descripcion}
+                            </p>
+                            {String(movement.estado || 'Activo').toLowerCase() === 'anulado' && (
+                              <span className="rounded-full border border-red-200 bg-red-100 px-2 py-1 text-[9px] font-black uppercase tracking-wide text-red-700">Anulado</span>
+                            )}
+                          </div>
                           <p className="mt-2 break-words text-xs font-bold leading-5 text-slate-500">
                             {formatDate(movement.fecha)} ·{' '}
                             {movement.forma_pago || movement.origen}
@@ -1639,19 +1644,24 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                               ? ` · Pedido #${movement.numero_pedido}`
                               : ''}
                           </p>
+                          {String(movement.estado || 'Activo').toLowerCase() === 'anulado' && movement.anulacion_motivo && (
+                            <p className="mt-2 break-words text-xs font-bold text-red-700">Motivo: {movement.anulacion_motivo}</p>
+                          )}
                         </div>
 
                         <div className="flex items-center justify-between gap-3 min-[460px]:justify-end">
                           <p
                             className={`break-words font-black ${
-                              movement.tipo === 'ingreso'
-                                ? 'text-emerald-700'
-                                : 'text-red-700'
+                              String(movement.estado || 'Activo').toLowerCase() === 'anulado'
+                                ? 'text-red-500 line-through'
+                                : movement.tipo === 'ingreso'
+                                  ? 'text-emerald-700'
+                                  : 'text-red-700'
                             }`}
                           >
-                            {formatCurrency(movement.monto)}
+                            {movement.tipo === 'ingreso' ? '+' : '-'}{formatCurrency(movement.monto)}
                           </p>
-                          {movement.tipo === 'ingreso' && (
+                          {movement.tipo === 'ingreso' && String(movement.estado || 'Activo').toLowerCase() !== 'anulado' && (
                             <button
                               type="button"
                               onClick={() =>

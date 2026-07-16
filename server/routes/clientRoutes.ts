@@ -43,6 +43,7 @@ const paymentSchema = z.object({
     metodo_pago: z.string().min(1, 'La forma de pago es requerida'),
     fecha: z.string().optional(),
     observaciones: z.string().optional(),
+    route_item_id: z.number().int().positive().optional(),
   }),
 });
 

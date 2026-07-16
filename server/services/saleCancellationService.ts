@@ -308,6 +308,7 @@ export const saleCancellationService = {
          FROM sale_payment_allocations spa
          JOIN movimientos_financieros mf ON mf.id = spa.movimiento_financiero_id
          WHERE spa.sale_id = $1
+           AND COALESCE(spa.estado, 'Activo') = 'Activo'
          ORDER BY spa.id ASC
          FOR UPDATE OF spa, mf`,
         [saleId]

@@ -11,7 +11,7 @@
     "lint": "tsc --noEmit",
     "check:encoding": "node scripts/check-encoding.mjs",
     "check:audit": "tsx scripts/check-functional-audit.ts",
-    "validate:audit": "npm run check:encoding && npm run check:routes && npm run check:sql-parameters && npm run check:inventory-endpoints && npm run check:purchase-invoice-traceability && npm run check:purchase-invoice-cancellation && npm run check:supplier-order-cancellation && npm run check:customer-order-cancellation && npm run check:manual-expense-cancellation && npm run check:product-lifecycle && npm run check:customer-lifecycle && npm run check:provider-lifecycle && npm run check:configuration-lifecycle && npm run check:user-lifecycle && npm run check:sale-cancellation && npm run check:audit && npm run lint && npm run build",
+    "validate:audit": "npm run check:encoding && npm run check:routes && npm run check:sql-parameters && npm run check:inventory-endpoints && npm run check:purchase-invoice-traceability && npm run check:purchase-invoice-cancellation && npm run check:supplier-order-cancellation && npm run check:customer-order-cancellation && npm run check:manual-expense-cancellation && npm run check:client-payment-cancellation && npm run check:product-lifecycle && npm run check:customer-lifecycle && npm run check:provider-lifecycle && npm run check:configuration-lifecycle && npm run check:user-lifecycle && npm run check:sale-cancellation && npm run check:audit && npm run lint && npm run build",
     "start": "tsx server.ts",
     "check:routes": "node scripts/check-vercel-routes.mjs",
     "check:inventory-endpoints": "tsx scripts/check-product-inventory-endpoints.ts",
@@ -26,7 +26,8 @@
     "check:customer-lifecycle": "tsx scripts/check-customer-lifecycle.ts",
     "check:provider-lifecycle": "tsx scripts/check-provider-lifecycle.ts",
     "check:configuration-lifecycle": "tsx scripts/check-configuration-item-lifecycle.ts",
-    "check:user-lifecycle": "tsx scripts/check-user-lifecycle.ts"
+    "check:user-lifecycle": "tsx scripts/check-user-lifecycle.ts",
+    "check:client-payment-cancellation": "tsx scripts/check-client-payment-cancellation.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
