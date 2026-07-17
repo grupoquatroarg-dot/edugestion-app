@@ -1,5 +1,5 @@
-import { UserRepository } from "../../server/repositories/userRepository.js";
 import { requireBearerUser } from "../../server/services/currentUserAuthService.js";
+import { serverlessUserService } from "../../server/services/serverlessUserService.js";
 import { sendError, sendSuccess } from "../../server/utils/response.js";
 
 export default async function handler(req: any, res: any) {
@@ -11,14 +11,15 @@ export default async function handler(req: any, res: any) {
     const authUser = await requireBearerUser(req, res);
     if (!authUser) return;
 
-    const user = (await UserRepository.findById(authUser.userId)) as any;
-    if (!user) {
-      return sendError(res, "Usuario no encontrado", 404);
+    const user = (await serverlessUserService.findById(authUser.userId)) as any;
+    if (!user || Number(user.active ?? 0) !== 1) {
+      return sendError(res, "Usuario no encontrado o inactivo", 404);
     }
 
-    const permissions = await UserRepository.getPermissions(authUser.userId);
+    const permissions = await serverlessUserService.getPermissions(authUser.userId);
     return sendSuccess(res, { ...user, permissions });
   } catch (error: any) {
+    console.error("[auth/me]", error);
     return sendError(res, error?.message || "Error al obtener usuario actual", 500);
   }
 }

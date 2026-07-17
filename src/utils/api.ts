@@ -13,19 +13,19 @@ export interface ApiResponse<T = any> {
  */
 export const apiFetch = async (url: string, options: RequestInit = {}) => {
   const token = localStorage.getItem('auth_token');
-  
+  const isLoginRequest = url.includes('/api/auth/login');
+
   const defaultOptions: RequestInit = {
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      ...(!isLoginRequest && token ? { 'Authorization': `Bearer ${token}` } : {}),
       ...options.headers,
     },
   };
 
   const response = await fetch(url, { ...defaultOptions, ...options });
 
-  const isLoginRequest = url.includes('/api/auth/login');
   if (response.status === 401 && token && !isLoginRequest) {
     localStorage.removeItem('auth_token');
     window.dispatchEvent(new CustomEvent('auth:session-invalidated'));
