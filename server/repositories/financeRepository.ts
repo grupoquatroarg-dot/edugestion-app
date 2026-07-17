@@ -93,6 +93,7 @@ const mapCheque = (row: any) => ({
   estado_actualizado_at: row.estado_actualizado_at || null,
   estado_actualizado_por: row.estado_actualizado_por || null,
   ultimo_cambio_estado_id: row.ultimo_cambio_estado_id === null || row.ultimo_cambio_estado_id === undefined ? null : toNumber(row.ultimo_cambio_estado_id),
+  financial_movement_id: row.financial_movement_id === null || row.financial_movement_id === undefined ? null : toNumber(row.financial_movement_id),
   ultimo_estado_anterior: row.ultimo_estado_anterior || null,
   ultimo_cambio_motivo: row.ultimo_cambio_motivo || null,
   ultimo_cambio_por: row.ultimo_cambio_por || null,

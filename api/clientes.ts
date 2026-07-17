@@ -2099,6 +2099,7 @@ const handleClientAccountAdmin = async (req: any, res: any) => {
         metodo_pago: String(body?.metodo_pago || "").trim(),
         fecha: body?.fecha || undefined,
         observaciones: body?.observaciones || undefined,
+        cheque_data: body?.cheque_data || undefined,
         usuario: user.userName || "Sistema",
       });
 

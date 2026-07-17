@@ -17,6 +17,35 @@ const toNumber = (value: any, fallback: number = 0) => {
   return Number.isNaN(parsed) ? fallback : parsed;
 };
 
+const roundMoney = (value: any) => Math.round((toNumber(value) + Number.EPSILON) * 100) / 100;
+
+const isChequePayment = (method: unknown) => String(method || '').toLowerCase().includes('cheque');
+
+const normalizeChequeData = (method: unknown, chequeData: any, expectedAmount: number) => {
+  if (!isChequePayment(method)) return null;
+
+  if (!chequeData || typeof chequeData !== 'object') {
+    throw new AppError('Completá los datos del cheque', 400);
+  }
+
+  const numeroCheque = String(chequeData.numero_cheque || chequeData.numero || '').trim();
+  const banco = String(chequeData.banco || '').trim();
+  const fechaVencimiento = String(chequeData.fecha_vencimiento || chequeData.vencimiento || '').trim();
+  const importe = roundMoney(chequeData.importe ?? expectedAmount);
+  const expected = roundMoney(expectedAmount);
+
+  if (!numeroCheque) throw new AppError('El número de cheque es obligatorio', 400);
+  if (!banco) throw new AppError('El banco del cheque es obligatorio', 400);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaVencimiento)) {
+    throw new AppError('La fecha de vencimiento del cheque es obligatoria', 400);
+  }
+  if (importe <= 0 || Math.abs(importe - expected) > 0.01) {
+    throw new AppError('El importe del cheque debe coincidir con el monto pagado', 400);
+  }
+
+  return { numero_cheque: numeroCheque, banco, fecha_vencimiento: fechaVencimiento, importe };
+};
+
 const getAndIncrementSetting = async (client: TransactionClient, key: string, defaultValue: number = 1) => {
   await client.query(
     `INSERT INTO settings (key, value)
@@ -292,6 +321,7 @@ export const salesService = {
 
       const nextSaleNum = await getAndIncrementSetting(client, 'next_sale_number');
       const realPayment = toNumber(monto_pagado);
+      const normalizedCheque = normalizeChequeData(metodo_pago, cheque_data, realPayment);
       const montoPendiente = Math.max(0, totalVenta - realPayment);
 
       const saleDataToInsert: Sale = {
@@ -382,6 +412,7 @@ export const salesService = {
         }
       }
 
+      let paymentMovementId: number | null = null;
       if (realPayment > 0) {
         const nextPaymentNum = await getAndIncrementSetting(client, 'next_payment_number');
         const movementResult = await client.query(
@@ -391,9 +422,10 @@ export const salesService = {
           ['ingreso', 'venta', `Venta N° ${nextSaleNum}`, 'Ventas', metodo_pago, realPayment, cliente_id || null, saleId, usuario || 'Sistema', nextPaymentNum]
         );
 
+        paymentMovementId = toNumber(movementResult.rows[0]?.id);
         await saleTraceService.recordPaymentAllocations(
           client,
-          toNumber(movementResult.rows[0]?.id),
+          paymentMovementId,
           [{ sale_id: saleId, monto: realPayment, allocation_type: 'initial_payment' }]
         );
       }
@@ -407,19 +439,35 @@ export const salesService = {
         );
       }
 
-      if (typeof metodo_pago === 'string' && metodo_pago.toLowerCase().includes('cheque') && cheque_data) {
-        await client.query(
-          `INSERT INTO cheques (numero_cheque, banco, importe, fecha_vencimiento, cliente_id, venta_id, estado)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      if (normalizedCheque) {
+        if (!paymentMovementId) {
+          throw new AppError('El cheque no posee un movimiento de pago trazable', 409);
+        }
+
+        const chequeResult = await client.query(
+          `INSERT INTO cheques (
+             numero_cheque, banco, importe, fecha_vencimiento, cliente_id, venta_id,
+             estado, financial_movement_id
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           RETURNING id`,
           [
-            cheque_data.numero_cheque || cheque_data.numero || null,
-            cheque_data.banco || null,
-            toNumber(cheque_data.importe, totalVenta),
-            cheque_data.fecha_vencimiento || cheque_data.vencimiento || null,
+            normalizedCheque.numero_cheque,
+            normalizedCheque.banco,
+            normalizedCheque.importe,
+            normalizedCheque.fecha_vencimiento,
             cliente_id || null,
             saleId,
             'en_cartera',
+            paymentMovementId,
           ]
+        );
+
+        await client.query(
+          `UPDATE movimientos_financieros
+           SET cheque_id = $1
+           WHERE id = $2`,
+          [toNumber(chequeResult.rows[0]?.id), paymentMovementId]
         );
       }
 
@@ -442,10 +490,11 @@ export const salesService = {
   },
 
   async registerClientPayment(paymentData: any) {
-    const { cliente_id, monto, metodo_pago, fecha, observaciones, usuario, route_item_id } = paymentData;
+    const { cliente_id, monto, metodo_pago, fecha, observaciones, usuario, route_item_id, cheque_data } = paymentData;
     const clientId = Number(cliente_id);
     const routeItemId = Number(route_item_id || 0);
     const paymentAmount = toNumber(monto);
+    const normalizedCheque = normalizeChequeData(metodo_pago, cheque_data, paymentAmount);
     const observationText = String(observaciones || '').trim();
     const routePaymentNote = `Pago registrado: $${paymentAmount.toFixed(2)}${observationText ? ` - ${observationText}` : ''}`;
 
@@ -536,6 +585,26 @@ export const salesService = {
           `INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cliente_id, venta_id, route_item_id, estado, reversion_version)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run('ingreso', 'cobranza', descriptionParts.join(' - '), 'Cobranzas', metodo_pago, paymentAmount, normalizeBusinessDateForStorage(fecha), usuario || 'Sistema', nextPaymentNum, clientId, linkedSaleId, routeItemId || null, 'Activo', 0);
+
+        if (normalizedCheque) {
+          const chequeInfo = db.prepare(
+            `INSERT INTO cheques (
+               numero_cheque, banco, importe, fecha_vencimiento, cliente_id, venta_id,
+               estado, financial_movement_id
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(
+            normalizedCheque.numero_cheque,
+            normalizedCheque.banco,
+            normalizedCheque.importe,
+            normalizedCheque.fecha_vencimiento,
+            clientId,
+            linkedSaleId,
+            'en_cartera',
+            Number(movementInfo.lastInsertRowid)
+          );
+          db.prepare('UPDATE movimientos_financieros SET cheque_id = ? WHERE id = ?')
+            .run(Number(chequeInfo.lastInsertRowid), Number(movementInfo.lastInsertRowid));
+        }
 
         if (routeItemId > 0) {
           db.prepare(
@@ -705,15 +774,41 @@ export const salesService = {
         ]
       );
 
+      const movementId = toNumber(movementResult.rows[0]?.id);
       await saleTraceService.recordPaymentAllocations(
         client,
-        toNumber(movementResult.rows[0]?.id),
+        movementId,
         allocations.map((allocation) => ({
           sale_id: allocation.id,
           monto: allocation.amount,
           allocation_type: 'client_payment' as const,
         }))
       );
+
+      if (normalizedCheque) {
+        const chequeResult = await client.query(
+          `INSERT INTO cheques (
+             numero_cheque, banco, importe, fecha_vencimiento, cliente_id, venta_id,
+             estado, financial_movement_id
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           RETURNING id`,
+          [
+            normalizedCheque.numero_cheque,
+            normalizedCheque.banco,
+            normalizedCheque.importe,
+            normalizedCheque.fecha_vencimiento,
+            clientId,
+            linkedSaleId,
+            'en_cartera',
+            movementId,
+          ]
+        );
+        await client.query(
+          `UPDATE movimientos_financieros SET cheque_id = $1 WHERE id = $2`,
+          [toNumber(chequeResult.rows[0]?.id), movementId]
+        );
+      }
 
       if (routeItemId > 0) {
         await client.query(

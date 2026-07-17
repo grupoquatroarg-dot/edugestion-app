@@ -67,11 +67,17 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
     metodo_pago: '',
     observaciones: ''
   });
+  const [paymentChequeData, setPaymentChequeData] = useState({
+    numero_cheque: '',
+    banco: '',
+    fecha_vencimiento: ''
+  });
   const [submittingPayment, setSubmittingPayment] = useState(false);
   const detailPanelRef = useRef<HTMLDivElement | null>(null);
   const detailScrollRef = useRef<HTMLDivElement | null>(null);
   const detailHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const paymentAmountRef = useRef<HTMLInputElement | null>(null);
+  const isChequePayment = paymentForm.metodo_pago.toLowerCase().includes('cheque');
 
   const fetchStats = async (): Promise<boolean> => {
     try {
@@ -177,7 +183,11 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
           monto: parseFloat(paymentForm.monto),
           fecha: paymentForm.fecha,
           metodo_pago: paymentForm.metodo_pago,
-          observaciones: paymentForm.observaciones
+          observaciones: paymentForm.observaciones,
+          cheque_data: isChequePayment ? {
+            ...paymentChequeData,
+            importe: parseFloat(paymentForm.monto)
+          } : undefined
         })
       });
       const body = await res.json();
@@ -195,6 +205,7 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
         metodo_pago: paymentMethods.length > 0 ? paymentMethods[0].name : '',
         observaciones: ''
       });
+      setPaymentChequeData({ numero_cheque: '', banco: '', fecha_vencimiento: '' });
       alert("Pago registrado con éxito");
     } catch (error: any) {
       console.error("Error registering payment:", error);
@@ -907,6 +918,53 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
                     </select>
                   </div>
                 </div>
+
+                {isChequePayment && (
+                  <section className="rounded-2xl border border-indigo-200 bg-indigo-50/70 p-4">
+                    <div className="flex items-start gap-3">
+                      <CreditCard size={20} className="mt-0.5 shrink-0 text-indigo-600" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-black text-indigo-950">Datos obligatorios del cheque</p>
+                        <p className="mt-1 text-xs font-bold text-indigo-700">El cheque quedará vinculado a esta cobranza y aparecerá en Finanzas.</p>
+                      </div>
+                    </div>
+                    <div className="mt-4 grid grid-cols-1 gap-3 min-[480px]:grid-cols-2">
+                      <label className="min-w-0">
+                        <span className="mb-1.5 block text-[10px] font-black uppercase text-indigo-500">Número</span>
+                        <input
+                          type="text"
+                          required
+                          maxLength={80}
+                          value={paymentChequeData.numero_cheque}
+                          onChange={(event) => setPaymentChequeData({ ...paymentChequeData, numero_cheque: event.target.value })}
+                          className="min-h-11 w-full min-w-0 rounded-xl border border-indigo-200 bg-white px-4 py-2.5 text-sm font-bold outline-none focus:ring-4 focus:ring-indigo-100"
+                        />
+                      </label>
+                      <label className="min-w-0">
+                        <span className="mb-1.5 block text-[10px] font-black uppercase text-indigo-500">Banco</span>
+                        <input
+                          type="text"
+                          required
+                          maxLength={120}
+                          value={paymentChequeData.banco}
+                          onChange={(event) => setPaymentChequeData({ ...paymentChequeData, banco: event.target.value })}
+                          className="min-h-11 w-full min-w-0 rounded-xl border border-indigo-200 bg-white px-4 py-2.5 text-sm font-bold outline-none focus:ring-4 focus:ring-indigo-100"
+                        />
+                      </label>
+                      <label className="min-w-0 min-[480px]:col-span-2">
+                        <span className="mb-1.5 block text-[10px] font-black uppercase text-indigo-500">Fecha de vencimiento</span>
+                        <input
+                          type="date"
+                          required
+                          value={paymentChequeData.fecha_vencimiento}
+                          onChange={(event) => setPaymentChequeData({ ...paymentChequeData, fecha_vencimiento: event.target.value })}
+                          className="min-h-11 w-full min-w-0 rounded-xl border border-indigo-200 bg-white px-4 py-2.5 text-sm font-bold outline-none focus:ring-4 focus:ring-indigo-100"
+                        />
+                      </label>
+                    </div>
+                    <p className="mt-3 text-xs font-bold text-indigo-800">Importe vinculado: {paymentForm.monto ? `$${Number(paymentForm.monto).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0,00'}</p>
+                  </section>
+                )}
 
                 <div>
                   <label className="mb-1.5 block text-[10px] font-black uppercase text-slate-400">Observaciones</label>

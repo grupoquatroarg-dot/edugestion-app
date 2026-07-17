@@ -1402,7 +1402,9 @@ export default function FinanceModule() {
 
                         {hasPermission('current_accounts', 'edit') ? (
                           <div className="grid min-w-0 grid-cols-1 gap-2">
-                            {chequeNextStates(cheque.estado).map((nextState) => (
+                            {chequeNextStates(cheque.estado)
+                              .filter((nextState) => nextState !== 'rechazado' || Boolean(cheque.financial_movement_id))
+                              .map((nextState) => (
                               <button
                                 key={nextState}
                                 type="button"
@@ -1417,6 +1419,12 @@ export default function FinanceModule() {
                                 Marcar {chequeStatusLabel(nextState)}
                               </button>
                             ))}
+
+                            {cheque.estado === 'depositado' && !cheque.financial_movement_id && (
+                              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-bold text-amber-800">
+                                Cheque histórico sin trazabilidad de pago: puede marcarse cobrado, pero el rechazo requiere revisión manual.
+                              </div>
+                            )}
 
                             {cheque.puede_revertir_estado && (
                               <button

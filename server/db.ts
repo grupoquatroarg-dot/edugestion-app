@@ -436,10 +436,12 @@ export function initDb() {
       estado_actualizado_at TEXT,
       estado_actualizado_por TEXT,
       ultimo_cambio_estado_id INTEGER,
+      financial_movement_id INTEGER,
       FOREIGN KEY (cliente_id) REFERENCES clientes(id),
       FOREIGN KEY (venta_id) REFERENCES sales(id),
       FOREIGN KEY (proveedor_id) REFERENCES proveedores(id),
-      FOREIGN KEY (purchase_invoice_id) REFERENCES purchase_invoices(id)
+      FOREIGN KEY (purchase_invoice_id) REFERENCES purchase_invoices(id),
+      FOREIGN KEY (financial_movement_id) REFERENCES movimientos_financieros(id)
     );
 
     CREATE TABLE IF NOT EXISTS cheque_status_changes (
@@ -460,6 +462,24 @@ export function initDb() {
       FOREIGN KEY (cheque_id) REFERENCES cheques(id),
       FOREIGN KEY (financial_movement_id) REFERENCES movimientos_financieros(id),
       FOREIGN KEY (reversal_movement_id) REFERENCES movimientos_financieros(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS cheque_rejection_allocations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cheque_status_change_id INTEGER NOT NULL,
+      cheque_id INTEGER NOT NULL,
+      sale_payment_allocation_id INTEGER NOT NULL,
+      sale_id INTEGER NOT NULL,
+      monto REAL NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      reverted_at TEXT,
+      reverted_by TEXT,
+      reversion_reason TEXT,
+      UNIQUE (cheque_status_change_id, sale_payment_allocation_id),
+      FOREIGN KEY (cheque_status_change_id) REFERENCES cheque_status_changes(id),
+      FOREIGN KEY (cheque_id) REFERENCES cheques(id),
+      FOREIGN KEY (sale_payment_allocation_id) REFERENCES sale_payment_allocations(id),
+      FOREIGN KEY (sale_id) REFERENCES sales(id)
     );
 
     CREATE TABLE IF NOT EXISTS stock_movimientos (
@@ -637,6 +657,7 @@ export function initDb() {
   try { db.exec("ALTER TABLE cheques ADD COLUMN estado_actualizado_at TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE cheques ADD COLUMN estado_actualizado_por TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE cheques ADD COLUMN ultimo_cambio_estado_id INTEGER"); } catch (e) {}
+  try { db.exec("ALTER TABLE cheques ADD COLUMN financial_movement_id INTEGER"); } catch (e) {}
 
   try { db.exec("ALTER TABLE supplier_orders ADD COLUMN customer_order_id INTEGER"); } catch (e) {}
   try { db.exec("ALTER TABLE supplier_orders ADD COLUMN cancelled_at DATETIME"); } catch (e) {}

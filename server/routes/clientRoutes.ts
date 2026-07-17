@@ -44,6 +44,12 @@ const paymentSchema = z.object({
     fecha: z.string().optional(),
     observaciones: z.string().optional(),
     route_item_id: z.number().int().positive().optional(),
+    cheque_data: z.object({
+      numero_cheque: z.string().trim().min(1, 'Número de cheque requerido'),
+      banco: z.string().trim().min(1, 'Banco requerido'),
+      fecha_vencimiento: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha de vencimiento inválida'),
+      importe: z.number().positive(),
+    }).optional(),
   }),
 });
 
