@@ -6,6 +6,7 @@ import { sendError, sendSuccess } from "../server/utils/response.js";
 import { manualExpenseCancellationService } from "../server/services/manualExpenseCancellationService.js";
 import { clientPaymentCancellationService } from "../server/services/clientPaymentCancellationService.js";
 import { listActivePaymentMethods } from "../server/services/paymentMethodAvailabilityService.js";
+import { chequeStatusService } from "../server/services/chequeStatusService.js";
 
 const getBody = (req: any) => {
   if (req.body && typeof req.body === "object") return req.body;
@@ -192,6 +193,22 @@ export default async function handler(req: any, res: any) {
     }
   }
 
+  if (req.method === "GET" && endpoint === "cheques-historial") {
+    const user = await requireCurrentAccountsPermission(req, res, "view");
+    if (!user) return;
+
+    const chequeId = Number(req.query?.id);
+    if (!Number.isInteger(chequeId) || chequeId <= 0) {
+      return sendError(res, "ID de cheque inválido", 400);
+    }
+
+    try {
+      return sendSuccess(res, await chequeStatusService.getHistory(chequeId));
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al obtener el historial del cheque", error?.statusCode || 400, error?.errors || []);
+    }
+  }
+
   if (req.method === "PATCH" && endpoint === "cheques-estado") {
     const user = await requireCurrentAccountsPermission(req, res, "edit");
     if (!user) return;
@@ -199,14 +216,42 @@ export default async function handler(req: any, res: any) {
     const chequeId = Number(req.query?.id);
     const body = getBody(req);
 
-    if (!Number.isFinite(chequeId) || chequeId <= 0) return sendError(res, "ID de cheque inválido", 400);
+    if (!Number.isInteger(chequeId) || chequeId <= 0) return sendError(res, "ID de cheque inválido", 400);
     if (!body.estado) return sendError(res, "Estado requerido", 400);
+    if (String(body.motivo || "").trim().length < 3) return sendError(res, "El motivo debe tener al menos 3 caracteres", 400);
 
     try {
-      await financeRepository.updateChequeStatus(chequeId, body.estado, body.observaciones);
-      return sendSuccess(res, null, "Estado de cheque actualizado");
+      const result = await chequeStatusService.changeStatus({
+        chequeId,
+        estado: body.estado,
+        motivo: body.motivo,
+        usuario: user.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Estado de cheque actualizado");
     } catch (error: any) {
       return sendError(res, error?.message || "Error al actualizar cheque", error?.statusCode || 400, error?.errors || []);
+    }
+  }
+
+  if (req.method === "POST" && endpoint === "cheques-estado-revertir") {
+    const user = await requireCurrentAccountsPermission(req, res, "edit");
+    if (!user) return;
+
+    const chequeId = Number(req.query?.id);
+    const body = getBody(req);
+
+    if (!Number.isInteger(chequeId) || chequeId <= 0) return sendError(res, "ID de cheque inválido", 400);
+    if (String(body.motivo || "").trim().length < 3) return sendError(res, "El motivo debe tener al menos 3 caracteres", 400);
+
+    try {
+      const result = await chequeStatusService.revertLastStatus({
+        chequeId,
+        motivo: body.motivo,
+        usuario: user.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Último cambio de cheque revertido");
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al revertir el cheque", error?.statusCode || 400, error?.errors || []);
     }
   }
 

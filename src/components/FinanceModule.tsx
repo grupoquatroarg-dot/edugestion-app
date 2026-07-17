@@ -49,7 +49,7 @@ type Movimiento = {
   fecha: string;
   fecha_dia?: string;
   tipo: 'ingreso' | 'egreso';
-  origen: 'venta' | 'pago_cc' | 'egreso_manual' | 'ajuste' | 'compra' | 'cobranza' | 'anulacion_venta' | 'anulacion_compra' | 'anulacion_egreso_manual' | 'anulacion_cobranza';
+  origen: 'venta' | 'pago_cc' | 'egreso_manual' | 'ajuste' | 'compra' | 'cobranza' | 'anulacion_venta' | 'anulacion_compra' | 'anulacion_egreso_manual' | 'anulacion_cobranza' | 'cheque_rechazado' | 'anulacion_cheque_rechazado';
   cliente_id: number | null;
   venta_id: number | null;
   descripcion: string;
@@ -67,6 +67,22 @@ type Movimiento = {
   financial_movement_cancellation_id?: number | null;
   client_payment_cancellation_id?: number | null;
   route_item_id?: number | null;
+};
+
+type ChequeHistoryEntry = {
+  id: number;
+  cheque_id: number;
+  estado_anterior: string;
+  estado_nuevo: string;
+  motivo: string;
+  cambiado_por: string;
+  cambiado_at: string;
+  origen: string;
+  financial_movement_id?: number | null;
+  revertido_at?: string | null;
+  revertido_por?: string | null;
+  reversion_motivo?: string | null;
+  reversal_movement_id?: number | null;
 };
 
 type ConfigPaymentMethod = {
@@ -131,6 +147,15 @@ export default function FinanceModule() {
   const [proveedoresError, setProveedoresError] = useState('');
   const [selectedCheque, setSelectedCheque] = useState<any>(null);
   const [showChequeDetailModal, setShowChequeDetailModal] = useState(false);
+  const [chequeHistory, setChequeHistory] = useState<ChequeHistoryEntry[]>([]);
+  const [chequeHistoryLoading, setChequeHistoryLoading] = useState(false);
+  const [chequeHistoryError, setChequeHistoryError] = useState('');
+  const [chequeActionTarget, setChequeActionTarget] = useState<any>(null);
+  const [chequeActionMode, setChequeActionMode] = useState<'change' | 'revert'>('change');
+  const [chequeActionState, setChequeActionState] = useState('');
+  const [chequeActionReason, setChequeActionReason] = useState('');
+  const [chequeActionError, setChequeActionError] = useState('');
+  const [isSubmittingChequeAction, setIsSubmittingChequeAction] = useState(false);
   const [dataError, setDataError] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSubmittingEgreso, setIsSubmittingEgreso] = useState(false);
@@ -275,6 +300,7 @@ export default function FinanceModule() {
   const NON_METRIC_REVERSAL_ORIGINS = new Set([
     'anulacion_egreso_manual',
     'anulacion_cobranza',
+    'anulacion_cheque_rechazado',
   ]);
 
   const metricMovements = useMemo(
@@ -352,27 +378,99 @@ export default function FinanceModule() {
     return movimientos.filter(m => m.tipo === 'egreso' && m.origen !== 'anulacion_egreso_manual');
   }, [movimientos]);
 
-  const handleUpdateChequeStatus = async (id: number, nuevoEstado: string) => {
-    if (updatingChequeId === id) return;
+  const chequeNextStates = (estado?: string) => {
+    if (estado === 'en_cartera') return ['depositado'];
+    if (estado === 'depositado') return ['cobrado', 'rechazado'];
+    return [];
+  };
 
-    setUpdatingChequeId(id);
+  const fetchChequeHistory = async (chequeId: number) => {
+    setChequeHistoryLoading(true);
+    setChequeHistoryError('');
+
+    try {
+      const response = await apiFetch(`/api/finanzas?endpoint=cheques-historial&id=${chequeId}`);
+      const data = await readApiJson(response);
+      setChequeHistory(Array.isArray(data) ? data : []);
+    } catch (error: any) {
+      console.error('Error fetching cheque history:', error);
+      setChequeHistory([]);
+      setChequeHistoryError(error?.message || 'No se pudo cargar el historial del cheque.');
+    } finally {
+      setChequeHistoryLoading(false);
+    }
+  };
+
+  const openChequeDetail = (cheque: any) => {
+    setSelectedCheque(cheque);
+    setShowChequeDetailModal(true);
+    void fetchChequeHistory(cheque.id);
+  };
+
+  const openChequeStatusAction = (cheque: any, mode: 'change' | 'revert', nextState = '') => {
+    if (updatingChequeId === cheque.id || isSubmittingChequeAction) return;
+    setChequeActionTarget(cheque);
+    setChequeActionMode(mode);
+    setChequeActionState(nextState);
+    setChequeActionReason('');
+    setChequeActionError('');
+  };
+
+  const closeChequeStatusAction = () => {
+    if (isSubmittingChequeAction) return;
+    setChequeActionTarget(null);
+    setChequeActionReason('');
+    setChequeActionError('');
+    setChequeActionState('');
+  };
+
+  const handleSubmitChequeStatusAction = async () => {
+    if (!chequeActionTarget || isSubmittingChequeAction) return;
+
+    const reason = chequeActionReason.trim();
+    if (reason.length < 3) {
+      setChequeActionError('El motivo debe tener al menos 3 caracteres.');
+      return;
+    }
+
+    setIsSubmittingChequeAction(true);
+    setUpdatingChequeId(chequeActionTarget.id);
+    setChequeActionError('');
     setDataError('');
 
     try {
-      const res = await apiFetch(`/api/finanzas?endpoint=cheques/${id}/estado`, {
-        method: 'PATCH',
-        body: JSON.stringify({ estado: nuevoEstado })
-      });
+      const isRevert = chequeActionMode === 'revert';
+      const endpoint = isRevert ? 'cheques-estado-revertir' : 'cheques-estado';
+      const response = await apiFetch(
+        `/api/finanzas?endpoint=${endpoint}&id=${chequeActionTarget.id}`,
+        {
+          method: isRevert ? 'POST' : 'PATCH',
+          body: JSON.stringify(
+            isRevert
+              ? { motivo: reason }
+              : { estado: chequeActionState, motivo: reason }
+          ),
+        }
+      );
 
-      const body = await res.json();
-      unwrapResponse(body);
-      setSuccessMessage('Estado del cheque actualizado.');
-      await fetchCheques();
+      await readApiJson(response);
+      setSuccessMessage(isRevert ? 'Último cambio del cheque revertido.' : 'Estado del cheque actualizado.');
+      setChequeActionTarget(null);
+      setChequeActionReason('');
+      setChequeActionError('');
+      setChequeActionState('');
+      await Promise.all([fetchCheques(), fetchMovimientos()]);
+      if (showChequeDetailModal && selectedCheque?.id === chequeActionTarget.id) {
+        setShowChequeDetailModal(false);
+        setSelectedCheque(null);
+        setChequeHistory([]);
+      }
     } catch (error: any) {
-      console.error("Error updating cheque status:", error);
-      setDataError(error?.message || 'No se pudo actualizar el estado del cheque.');
+      console.error('Error updating cheque status:', error);
+      setChequeActionError(error?.message || 'No se pudo actualizar el estado del cheque.');
     } finally {
       setUpdatingChequeId(null);
+      setIsSubmittingChequeAction(false);
     }
   };
 
@@ -519,7 +617,9 @@ export default function FinanceModule() {
       anulacion_venta: 'Anulación de venta',
       anulacion_compra: 'Anulación de compra',
       anulacion_egreso_manual: 'Anulación de egreso manual',
-      anulacion_cobranza: 'Anulación de cobranza'
+      anulacion_cobranza: 'Anulación de cobranza',
+      cheque_rechazado: 'Cheque rechazado',
+      anulacion_cheque_rechazado: 'Reversión de cheque rechazado'
     };
 
     return labels[value || ''] || (value || 'Sin origen').replace(/_/g, ' ');
@@ -1291,10 +1391,7 @@ export default function FinanceModule() {
                       <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
                         <button
                           type="button"
-                          onClick={() => {
-                            setSelectedCheque(cheque);
-                            setShowChequeDetailModal(true);
-                          }}
+                          onClick={() => openChequeDetail(cheque)}
                           className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-black uppercase tracking-wide text-slate-700 hover:bg-slate-100"
                           title="Ver detalle del cheque"
                           aria-label={`Ver detalle del cheque ${cheque.numero_cheque}`}
@@ -1304,23 +1401,46 @@ export default function FinanceModule() {
                         </button>
 
                         {hasPermission('current_accounts', 'edit') ? (
-                          <label className="min-w-0">
-                            <span className="sr-only">Cambiar estado del cheque</span>
-                            <select
-                              value={cheque.estado}
-                              disabled={updatingChequeId === cheque.id || cheque.estado === 'anulado'}
-                              onChange={(event) => handleUpdateChequeStatus(cheque.id, event.target.value)}
-                              className="min-h-11 w-full min-w-0 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs font-black uppercase tracking-wide text-slate-800 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
-                              aria-label={`Cambiar estado del cheque ${cheque.numero_cheque}`}
-                            >
-                              <option value="en_cartera">En cartera</option>
-                              <option value="depositado">Depositado</option>
-                              <option value="entregado_proveedor">Entregado a proveedor</option>
-                              <option value="cobrado">Cobrado</option>
-                              <option value="rechazado">Rechazado</option>
-                              {cheque.estado === 'anulado' && <option value="anulado">Anulado</option>}
-                            </select>
-                          </label>
+                          <div className="grid min-w-0 grid-cols-1 gap-2">
+                            {chequeNextStates(cheque.estado).map((nextState) => (
+                              <button
+                                key={nextState}
+                                type="button"
+                                disabled={updatingChequeId === cheque.id}
+                                onClick={() => openChequeStatusAction(cheque, 'change', nextState)}
+                                className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl px-4 py-3 text-xs font-black uppercase tracking-wide text-white disabled:cursor-not-allowed disabled:opacity-60 ${
+                                  nextState === 'rechazado' ? 'bg-red-700 hover:bg-red-800' : 'bg-indigo-700 hover:bg-indigo-800'
+                                }`}
+                                aria-label={`Marcar cheque ${cheque.numero_cheque} como ${chequeStatusLabel(nextState)}`}
+                              >
+                                {nextState === 'rechazado' ? <Ban size={16} /> : <CheckCircle2 size={16} />}
+                                Marcar {chequeStatusLabel(nextState)}
+                              </button>
+                            ))}
+
+                            {cheque.puede_revertir_estado && (
+                              <button
+                                type="button"
+                                disabled={updatingChequeId === cheque.id}
+                                onClick={() => openChequeStatusAction(cheque, 'revert')}
+                                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs font-black uppercase tracking-wide text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                aria-label={`Revertir último cambio del cheque ${cheque.numero_cheque}`}
+                              >
+                                <RotateCcw size={16} />
+                                Revertir último cambio
+                              </button>
+                            )}
+
+                            {chequeNextStates(cheque.estado).length === 0 && !cheque.puede_revertir_estado && (
+                              <div className="flex min-h-11 items-center justify-center rounded-2xl bg-slate-100 px-4 py-3 text-center text-[11px] font-black uppercase tracking-wide text-slate-500">
+                                {cheque.estado === 'entregado_proveedor'
+                                  ? 'Se restaura anulando el egreso'
+                                  : cheque.estado === 'anulado'
+                                    ? 'Anulado desde su operación'
+                                    : 'Sin acciones manuales'}
+                              </div>
+                            )}
+                          </div>
                         ) : (
                           <div className="flex min-h-11 items-center justify-center rounded-2xl bg-slate-100 px-4 py-3 text-xs font-black uppercase tracking-wide text-slate-500">
                             {chequeStatusLabel(cheque.estado)}
@@ -1417,6 +1537,56 @@ export default function FinanceModule() {
                   <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{selectedCheque.observaciones}</p>
                 </div>
               )}
+
+              <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="flex min-w-0 items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Historial auditado</p>
+                    <p className="mt-1 text-sm font-bold text-slate-700">Cambios manuales y reversiones de estado.</p>
+                  </div>
+                  <History size={18} className="shrink-0 text-indigo-600" />
+                </div>
+
+                {chequeHistoryLoading ? (
+                  <div className="mt-4 flex items-center justify-center gap-2 rounded-xl bg-indigo-50 px-3 py-4 text-sm font-bold text-indigo-700">
+                    <Loader2 size={16} className="animate-spin" />
+                    Cargando historial…
+                  </div>
+                ) : chequeHistoryError ? (
+                  <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-3 text-sm font-bold text-red-700">
+                    {chequeHistoryError}
+                  </div>
+                ) : chequeHistory.length > 0 ? (
+                  <div className="mt-4 space-y-3">
+                    {chequeHistory.map((entry) => (
+                      <article key={entry.id} className={`rounded-xl border p-3 ${entry.revertido_at ? 'border-amber-200 bg-amber-50/70' : 'border-slate-200 bg-slate-50'}`}>
+                        <div className="flex flex-wrap items-center gap-2 text-[10px] font-black uppercase tracking-wide">
+                          <span className="rounded-full bg-white px-2 py-1 text-slate-600">{chequeStatusLabel(entry.estado_anterior)}</span>
+                          <ChevronRight size={14} className="text-slate-400" />
+                          <span className="rounded-full bg-indigo-100 px-2 py-1 text-indigo-700">{chequeStatusLabel(entry.estado_nuevo)}</span>
+                          {entry.revertido_at && (
+                            <span className="rounded-full bg-amber-200 px-2 py-1 text-amber-800">Revertido</span>
+                          )}
+                        </div>
+                        <p className="mt-2 whitespace-pre-wrap break-words text-sm font-bold text-slate-800">{entry.motivo}</p>
+                        <p className="mt-2 text-xs text-slate-500">
+                          {entry.cambiado_por} · {formatBusinessDateTime(entry.cambiado_at)}
+                        </p>
+                        {entry.revertido_at && (
+                          <div className="mt-3 rounded-lg border border-amber-200 bg-white/70 p-2 text-xs text-amber-900">
+                            <p className="font-black">Reversión: {entry.reversion_motivo || 'Sin motivo informado'}</p>
+                            <p className="mt-1">{entry.revertido_por || 'Sistema'} · {formatBusinessDateTime(entry.revertido_at)}</p>
+                          </div>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-4 rounded-xl bg-slate-50 px-3 py-4 text-sm font-bold text-slate-500">
+                    Este cheque todavía no tiene cambios manuales auditados.
+                  </p>
+                )}
+              </section>
             </div>
 
             <footer className="shrink-0 border-t border-slate-100 bg-white p-4 sm:p-5">
@@ -1426,6 +1596,107 @@ export default function FinanceModule() {
                 className="min-h-11 w-full rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black uppercase tracking-wide text-white hover:bg-slate-800"
               >
                 Cerrar detalle
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {chequeActionTarget && (
+        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/65 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+          <div className="flex max-h-[100dvh] w-full min-w-0 flex-col overflow-hidden rounded-t-[30px] bg-white shadow-2xl sm:max-h-[90dvh] sm:max-w-lg sm:rounded-[30px]">
+            <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-100 bg-slate-950 p-5 text-white sm:p-6">
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-300">
+                  {chequeActionMode === 'revert' ? 'Revertir último cambio' : 'Actualizar estado'}
+                </p>
+                <h3 className="mt-2 break-words text-xl font-black">
+                  Cheque N.º {chequeActionTarget.numero_cheque}
+                </h3>
+                <p className="mt-1 text-sm font-bold text-slate-300">
+                  {chequeActionMode === 'revert'
+                    ? `${chequeStatusLabel(chequeActionTarget.estado)} → ${chequeStatusLabel(chequeActionTarget.ultimo_estado_anterior)}`
+                    : `${chequeStatusLabel(chequeActionTarget.estado)} → ${chequeStatusLabel(chequeActionState)}`}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeChequeStatusAction}
+                disabled={isSubmittingChequeAction}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/10 hover:bg-white/15 disabled:opacity-50"
+                aria-label="Cerrar cambio de estado del cheque"
+                title="Cerrar"
+              >
+                <X size={20} />
+              </button>
+            </header>
+
+            <div className="min-w-0 flex-1 overflow-y-auto p-5 sm:p-6">
+              <div className={`rounded-2xl border p-4 ${
+                chequeActionState === 'rechazado' || (chequeActionMode === 'revert' && chequeActionTarget.estado === 'rechazado')
+                  ? 'border-red-200 bg-red-50'
+                  : 'border-indigo-200 bg-indigo-50'
+              }`}>
+                <p className="text-sm font-black text-slate-900">
+                  {chequeActionMode === 'revert'
+                    ? 'Se restaurará únicamente la última transición auditada.'
+                    : chequeActionState === 'rechazado'
+                      ? 'El rechazo generará un egreso financiero vinculado al cheque.'
+                      : 'El cambio quedará registrado con usuario, fecha y motivo.'}
+                </p>
+                {chequeActionMode === 'revert' && chequeActionTarget.estado === 'rechazado' && (
+                  <p className="mt-2 text-sm font-bold text-red-800">
+                    El egreso del rechazo quedará anulado y se generará su contramovimiento auditado.
+                  </p>
+                )}
+              </div>
+
+              <label className="mt-5 block min-w-0">
+                <span className="mb-2 block text-[11px] font-black uppercase tracking-wide text-slate-500">Motivo obligatorio</span>
+                <textarea
+                  value={chequeActionReason}
+                  onChange={(event) => {
+                    setChequeActionReason(event.target.value);
+                    setChequeActionError('');
+                  }}
+                  maxLength={500}
+                  rows={4}
+                  disabled={isSubmittingChequeAction}
+                  placeholder="Describí el motivo del cambio..."
+                  className="w-full min-w-0 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:opacity-60"
+                />
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <span className="text-xs font-bold text-slate-400">Mínimo 3 caracteres</span>
+                  <span className="text-xs font-bold text-slate-400">{chequeActionReason.length}/500</span>
+                </div>
+              </label>
+
+              {chequeActionError && (
+                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-3 text-sm font-bold text-red-700">
+                  {chequeActionError}
+                </div>
+              )}
+            </div>
+
+            <footer className="grid shrink-0 grid-cols-1 gap-3 border-t border-slate-100 bg-white p-4 sm:grid-cols-2 sm:p-5">
+              <button
+                type="button"
+                onClick={closeChequeStatusAction}
+                disabled={isSubmittingChequeAction}
+                className="min-h-11 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black uppercase tracking-wide text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmitChequeStatusAction}
+                disabled={isSubmittingChequeAction}
+                className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-black uppercase tracking-wide text-white disabled:cursor-not-allowed disabled:opacity-60 ${
+                  chequeActionState === 'rechazado' ? 'bg-red-700 hover:bg-red-800' : 'bg-indigo-700 hover:bg-indigo-800'
+                }`}
+              >
+                {isSubmittingChequeAction ? <Loader2 size={17} className="animate-spin" /> : chequeActionMode === 'revert' ? <RotateCcw size={17} /> : <CheckCircle2 size={17} />}
+                {isSubmittingChequeAction ? 'Procesando…' : chequeActionMode === 'revert' ? 'Confirmar reversión' : 'Confirmar cambio'}
               </button>
             </footer>
           </div>

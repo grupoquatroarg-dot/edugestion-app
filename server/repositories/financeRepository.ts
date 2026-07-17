@@ -44,7 +44,7 @@ const getAndIncrementSetting = async (client: Queryable, key: string, defaultVal
   return currentValue;
 };
 
-const DATE_BASED_MOVEMENT_ORIGINS = new Set(['egreso_manual', 'compra', 'cobranza', 'pago_cc']);
+const DATE_BASED_MOVEMENT_ORIGINS = new Set(['egreso_manual', 'compra', 'cobranza', 'pago_cc', 'cheque_rechazado']);
 
 const mapMovement = (row: any) => ({
   id: toNumber(row.id),
@@ -90,6 +90,14 @@ const mapCheque = (row: any) => ({
   nombre_cliente: row.nombre_cliente || null,
   numero_venta: row.numero_venta || null,
   nombre_proveedor: row.nombre_proveedor || null,
+  estado_actualizado_at: row.estado_actualizado_at || null,
+  estado_actualizado_por: row.estado_actualizado_por || null,
+  ultimo_cambio_estado_id: row.ultimo_cambio_estado_id === null || row.ultimo_cambio_estado_id === undefined ? null : toNumber(row.ultimo_cambio_estado_id),
+  ultimo_estado_anterior: row.ultimo_estado_anterior || null,
+  ultimo_cambio_motivo: row.ultimo_cambio_motivo || null,
+  ultimo_cambio_por: row.ultimo_cambio_por || null,
+  ultimo_cambio_at: row.ultimo_cambio_at || null,
+  puede_revertir_estado: Boolean(row.puede_revertir_estado),
 });
 
 export const financeRepository = {
@@ -117,11 +125,26 @@ export const financeRepository = {
   getCheques(executor?: Queryable) {
     if (!isPostgresConfigured()) {
       return db.prepare(`
-        SELECT ch.*, c.nombre_apellido as nombre_cliente, s.numero_venta, p.nombre as nombre_proveedor
+        SELECT
+          ch.*,
+          c.nombre_apellido as nombre_cliente,
+          s.numero_venta,
+          p.nombre as nombre_proveedor,
+          csc.estado_anterior as ultimo_estado_anterior,
+          csc.motivo as ultimo_cambio_motivo,
+          csc.cambiado_por as ultimo_cambio_por,
+          csc.cambiado_at as ultimo_cambio_at,
+          CASE
+            WHEN csc.id IS NOT NULL
+              AND csc.revertido_at IS NULL
+              AND csc.estado_nuevo = ch.estado
+            THEN 1 ELSE 0
+          END as puede_revertir_estado
         FROM cheques ch
-        JOIN clientes c ON ch.cliente_id = c.id
+        LEFT JOIN clientes c ON ch.cliente_id = c.id
         LEFT JOIN sales s ON ch.venta_id = s.id
         LEFT JOIN proveedores p ON ch.proveedor_id = p.id
+        LEFT JOIN cheque_status_changes csc ON csc.id = ch.ultimo_cambio_estado_id
         ORDER BY ch.fecha_vencimiento ASC, ch.id ASC
       `).all().map(mapCheque);
     }
@@ -129,105 +152,28 @@ export const financeRepository = {
     const queryable = getExecutor(executor);
     return queryable
       .query(
-        `SELECT ch.*, c.nombre_apellido AS nombre_cliente, s.numero_venta, p.nombre AS nombre_proveedor
+        `SELECT
+           ch.*,
+           c.nombre_apellido AS nombre_cliente,
+           s.numero_venta,
+           p.nombre AS nombre_proveedor,
+           csc.estado_anterior AS ultimo_estado_anterior,
+           csc.motivo AS ultimo_cambio_motivo,
+           csc.cambiado_por AS ultimo_cambio_por,
+           csc.cambiado_at AS ultimo_cambio_at,
+           (
+             csc.id IS NOT NULL
+             AND csc.revertido_at IS NULL
+             AND csc.estado_nuevo = ch.estado
+           ) AS puede_revertir_estado
          FROM cheques ch
          LEFT JOIN clientes c ON ch.cliente_id = c.id
          LEFT JOIN sales s ON ch.venta_id = s.id
          LEFT JOIN proveedores p ON ch.proveedor_id = p.id
+         LEFT JOIN cheque_status_changes csc ON csc.id = ch.ultimo_cambio_estado_id
          ORDER BY ch.fecha_vencimiento ASC NULLS LAST, ch.id ASC`
       )
       .then((result) => result.rows.map(mapCheque));
-  },
-
-  updateChequeStatus(id: number, estado: string, observaciones?: string | null) {
-    if (!isPostgresConfigured()) {
-      return db.transaction(() => {
-        const cheque = db.prepare('SELECT * FROM cheques WHERE id = ?').get(id) as any;
-        if (!cheque) throw new AppError('Cheque no encontrado', 404);
-
-        db.prepare('UPDATE cheques SET estado = ?, observaciones = ? WHERE id = ?')
-          .run(estado, observaciones || null, id);
-
-        if (estado === 'rechazado' && cheque.estado !== 'rechazado') {
-          const nextPaymentNum = parseInt(db.prepare("SELECT value FROM settings WHERE key = 'next_payment_number'").get()?.value || '1', 10);
-          db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('next_payment_number', '1')").run();
-          db.prepare("UPDATE settings SET value = ? WHERE key = 'next_payment_number'").run(String(nextPaymentNum + 1));
-
-          db.prepare(`
-            INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cheque_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(
-            'egreso',
-            'egreso_manual',
-            `Cheque Rechazado N° ${cheque.numero_cheque} - ${cheque.banco}`,
-            'Cheque Rechazado',
-            'cheque',
-            cheque.importe,
-            normalizeBusinessDateForStorage(),
-            'Sistema',
-            nextPaymentNum,
-            id
-          );
-        }
-      })();
-    }
-
-    const pool = getPostgresPool();
-    return pool.connect().then(async (client) => {
-      try {
-        await client.query('BEGIN');
-
-        const chequeResult = await client.query(
-          `SELECT *
-           FROM cheques
-           WHERE id = $1
-           LIMIT 1`,
-          [id]
-        );
-
-        if (!chequeResult.rowCount) {
-          throw new AppError('Cheque no encontrado', 404);
-        }
-
-        const cheque = chequeResult.rows[0];
-
-        await client.query(
-          `UPDATE cheques
-           SET estado = $1,
-               observaciones = $2
-           WHERE id = $3`,
-          [estado, observaciones || null, id]
-        );
-
-        if (estado === 'rechazado' && cheque.estado !== 'rechazado') {
-          const nextPaymentNum = await getAndIncrementSetting(client, 'next_payment_number');
-
-          await client.query(
-            `INSERT INTO movimientos_financieros (tipo, origen, descripcion, categoria, forma_pago, monto, fecha, usuario, numero_pago, cheque_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-            [
-              'egreso',
-              'egreso_manual',
-              `Cheque Rechazado N° ${cheque.numero_cheque || ''} - ${cheque.banco || ''}`.trim(),
-              'Cheque Rechazado',
-              'cheque',
-              toNumber(cheque.importe),
-              normalizeBusinessDateForStorage(),
-              'Sistema',
-              nextPaymentNum,
-              id,
-            ]
-          );
-        }
-
-        await client.query('COMMIT');
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      } finally {
-        client.release();
-      }
-    });
   },
 
   async registerExpense(expenseData: any) {

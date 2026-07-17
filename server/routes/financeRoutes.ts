@@ -8,6 +8,7 @@ import { sendError, sendSuccess } from '../utils/response.js';
 import { manualExpenseCancellationService } from '../services/manualExpenseCancellationService.js';
 import { clientPaymentCancellationService } from '../services/clientPaymentCancellationService.js';
 import { listActivePaymentMethods } from '../services/paymentMethodAvailabilityService.js';
+import { chequeStatusService } from '../services/chequeStatusService.js';
 
 const router = Router();
 
@@ -46,8 +47,17 @@ const updateChequeStatusSchema = z.object({
     id: z.string().min(1),
   }),
   body: z.object({
-    estado: z.string().min(1),
-    observaciones: z.string().optional(),
+    estado: z.enum(['depositado', 'cobrado', 'rechazado']),
+    motivo: z.string().trim().min(3).max(500),
+  }),
+});
+
+const revertChequeStatusSchema = z.object({
+  params: z.object({
+    id: z.string().min(1),
+  }),
+  body: z.object({
+    motivo: z.string().trim().min(3).max(500),
   }),
 });
 
@@ -174,6 +184,20 @@ router.post(
   }
 );
 
+router.get(
+  '/cheques/:id/historial',
+  requireAuth,
+  requirePermission('current_accounts', 'view'),
+  async (req, res) => {
+    try {
+      const chequeId = parseInt(req.params.id, 10);
+      return sendSuccess(res, await chequeStatusService.getHistory(chequeId));
+    } catch (error: any) {
+      return sendError(res, error.message || 'Error al obtener el historial del cheque', error.statusCode || 400, error.errors || []);
+    }
+  }
+);
+
 router.patch(
   '/cheques/:id/estado',
   requireAuth,
@@ -182,10 +206,35 @@ router.patch(
   async (req, res) => {
     try {
       const chequeId = parseInt(req.params.id, 10);
-      await financeRepository.updateChequeStatus(chequeId, req.body.estado, req.body.observaciones);
-      return sendSuccess(res, null, 'Estado de cheque actualizado');
+      const result = await chequeStatusService.changeStatus({
+        chequeId,
+        estado: req.body.estado,
+        motivo: req.body.motivo,
+        usuario: (req as any).user?.userName || 'Sistema',
+      });
+      return sendSuccess(res, result, 'Estado de cheque actualizado');
     } catch (error: any) {
       return sendError(res, error.message || 'Error al actualizar cheque', error.statusCode || 400, error.errors || []);
+    }
+  }
+);
+
+router.post(
+  '/cheques/:id/estado/revertir',
+  requireAuth,
+  requirePermission('current_accounts', 'edit'),
+  validate(revertChequeStatusSchema),
+  async (req, res) => {
+    try {
+      const chequeId = parseInt(req.params.id, 10);
+      const result = await chequeStatusService.revertLastStatus({
+        chequeId,
+        motivo: req.body.motivo,
+        usuario: (req as any).user?.userName || 'Sistema',
+      });
+      return sendSuccess(res, result, 'Último cambio de cheque revertido');
+    } catch (error: any) {
+      return sendError(res, error.message || 'Error al revertir el cheque', error.statusCode || 400, error.errors || []);
     }
   }
 );

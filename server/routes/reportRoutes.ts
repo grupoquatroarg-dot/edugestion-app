@@ -188,7 +188,7 @@ router.get("/", requirePermission('dashboard', 'view'), validate(reportParamsSch
       SUM(CASE WHEN tipo = 'egreso' THEN monto ELSE 0 END) as egresos
     FROM movimientos_financieros
     WHERE COALESCE(estado, 'Activo') <> 'Anulado'
-      AND COALESCE(origen, '') NOT IN ('anulacion_egreso_manual', 'anulacion_cobranza')
+      AND COALESCE(origen, '') NOT IN ('anulacion_egreso_manual', 'anulacion_cobranza', 'anulacion_cheque_rechazado')
       AND fecha BETWEEN ? AND ?
   `).get(fromDate, toDate) as any;
 
@@ -197,7 +197,7 @@ router.get("/", requirePermission('dashboard', 'view'), validate(reportParamsSch
     FROM movimientos_financieros
     WHERE tipo = 'egreso'
       AND COALESCE(estado, 'Activo') <> 'Anulado'
-      AND COALESCE(origen, '') NOT IN ('anulacion_egreso_manual', 'anulacion_cobranza')
+      AND COALESCE(origen, '') NOT IN ('anulacion_egreso_manual', 'anulacion_cobranza', 'anulacion_cheque_rechazado')
       AND fecha BETWEEN ? AND ?
     GROUP BY categoria
   `).all(fromDate, toDate);
@@ -209,7 +209,7 @@ router.get("/", requirePermission('dashboard', 'view'), validate(reportParamsSch
       SUM(CASE WHEN tipo = 'egreso' THEN monto ELSE 0 END) as egresos
     FROM movimientos_financieros
     WHERE COALESCE(estado, 'Activo') <> 'Anulado'
-      AND COALESCE(origen, '') NOT IN ('anulacion_egreso_manual', 'anulacion_cobranza')
+      AND COALESCE(origen, '') NOT IN ('anulacion_egreso_manual', 'anulacion_cobranza', 'anulacion_cheque_rechazado')
       AND fecha BETWEEN ? AND ?
     GROUP BY date(fecha)
     ORDER BY fecha ASC

@@ -433,10 +433,33 @@ export function initDb() {
       purchase_invoice_id INTEGER,
       fecha_entrega TEXT,
       observaciones TEXT,
+      estado_actualizado_at TEXT,
+      estado_actualizado_por TEXT,
+      ultimo_cambio_estado_id INTEGER,
       FOREIGN KEY (cliente_id) REFERENCES clientes(id),
       FOREIGN KEY (venta_id) REFERENCES sales(id),
       FOREIGN KEY (proveedor_id) REFERENCES proveedores(id),
       FOREIGN KEY (purchase_invoice_id) REFERENCES purchase_invoices(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS cheque_status_changes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cheque_id INTEGER NOT NULL,
+      estado_anterior TEXT NOT NULL,
+      estado_nuevo TEXT NOT NULL,
+      motivo TEXT NOT NULL,
+      cambiado_por TEXT NOT NULL,
+      cambiado_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      origen TEXT NOT NULL DEFAULT 'manual',
+      financial_movement_id INTEGER,
+      revertido_at TEXT,
+      revertido_por TEXT,
+      reversion_motivo TEXT,
+      reversal_movement_id INTEGER,
+      snapshot TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (cheque_id) REFERENCES cheques(id),
+      FOREIGN KEY (financial_movement_id) REFERENCES movimientos_financieros(id),
+      FOREIGN KEY (reversal_movement_id) REFERENCES movimientos_financieros(id)
     );
 
     CREATE TABLE IF NOT EXISTS stock_movimientos (
@@ -611,6 +634,9 @@ export function initDb() {
   try { db.exec("ALTER TABLE sale_payment_allocations ADD COLUMN anulacion_motivo TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE sale_payment_allocations ADD COLUMN client_payment_cancellation_id INTEGER"); } catch (e) {}
   try { db.exec("ALTER TABLE cheques ADD COLUMN purchase_invoice_id INTEGER"); } catch (e) {}
+  try { db.exec("ALTER TABLE cheques ADD COLUMN estado_actualizado_at TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE cheques ADD COLUMN estado_actualizado_por TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE cheques ADD COLUMN ultimo_cambio_estado_id INTEGER"); } catch (e) {}
 
   try { db.exec("ALTER TABLE supplier_orders ADD COLUMN customer_order_id INTEGER"); } catch (e) {}
   try { db.exec("ALTER TABLE supplier_orders ADD COLUMN cancelled_at DATETIME"); } catch (e) {}
