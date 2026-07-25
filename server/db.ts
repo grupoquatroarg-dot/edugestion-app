@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { createRequire } from "node:module";
 import path from "path";
 import bcrypt from "bcryptjs";
 
@@ -12,8 +12,34 @@ const sqliteTarget = isServerlessRuntime
   ? ":memory:"
   : path.resolve(process.cwd(), "database.db");
 
-const db = new Database(sqliteTarget);
-db.pragma("foreign_keys = ON");
+const require = createRequire(import.meta.url);
+let sqliteDb: any = null;
+
+const getSqliteDb = () => {
+  if (sqliteDb) return sqliteDb;
+
+  // better-sqlite3 es una dependencia nativa y solo debe cargarse cuando el
+  // servidor local realmente usa SQLite. Las funciones Vercel trabajan con
+  // PostgreSQL y deben poder importarse sin inicializar este binario.
+  const DatabaseModule = require("better-sqlite3");
+  const Database = DatabaseModule.default || DatabaseModule;
+  sqliteDb = new Database(sqliteTarget);
+  sqliteDb.pragma("foreign_keys = ON");
+  return sqliteDb;
+};
+
+const db = new Proxy({} as any, {
+  get(_target, property) {
+    const instance = getSqliteDb();
+    const value = instance[property];
+    return typeof value === "function" ? value.bind(instance) : value;
+  },
+  set(_target, property, value) {
+    const instance = getSqliteDb();
+    instance[property] = value;
+    return true;
+  },
+});
 
 // Initialize database schema
 export function initDb() {
