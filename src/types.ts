@@ -127,6 +127,12 @@ export interface ChecklistTemplate {
   description: string;
   type: 'Apertura' | 'Cierre' | 'Ruta' | 'General';
   active: number;
+  deactivated_at?: string | null;
+  deactivated_by?: string | null;
+  deactivation_reason?: string | null;
+  reactivated_at?: string | null;
+  reactivated_by?: string | null;
+  reactivation_reason?: string | null;
   created_at: string;
   items?: ChecklistTemplateItem[];
 }

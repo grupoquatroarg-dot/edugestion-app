@@ -318,7 +318,26 @@ export function initDb() {
       description TEXT,
       type TEXT CHECK(type IN ('Apertura', 'Cierre', 'Ruta', 'General')) NOT NULL DEFAULT 'General',
       active INTEGER DEFAULT 1,
+      deactivated_at DATETIME,
+      deactivated_by TEXT,
+      deactivation_reason TEXT,
+      reactivated_at DATETIME,
+      reactivated_by TEXT,
+      reactivation_reason TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS checklist_template_status_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      template_id INTEGER NOT NULL,
+      action TEXT NOT NULL CHECK(action IN ('deactivate', 'reactivate')),
+      reason TEXT NOT NULL,
+      performed_by TEXT NOT NULL,
+      performed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      previous_status TEXT NOT NULL,
+      new_status TEXT NOT NULL,
+      snapshot TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (template_id) REFERENCES checklist_templates(id)
     );
 
     CREATE TABLE IF NOT EXISTS checklist_template_items (
@@ -729,6 +748,12 @@ export function initDb() {
   try { db.exec("ALTER TABLE sales ADD COLUMN ganancia REAL DEFAULT 0"); } catch (e) {}
   try { db.exec("ALTER TABLE sales ADD COLUMN estado TEXT DEFAULT 'Pagada'"); } catch (e) {}
   try { db.exec("ALTER TABLE checklist_items RENAME COLUMN user_id TO completed_by"); } catch (e) {}
+  try { db.exec("ALTER TABLE checklist_templates ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE checklist_templates ADD COLUMN deactivated_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE checklist_templates ADD COLUMN deactivation_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE checklist_templates ADD COLUMN reactivated_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE checklist_templates ADD COLUMN reactivated_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE checklist_templates ADD COLUMN reactivation_reason TEXT"); } catch (e) {}
 
   try { db.exec("ALTER TABLE clientes ADD COLUMN razon_social TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN cuit TEXT"); } catch (e) {}

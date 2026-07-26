@@ -10,6 +10,7 @@ import { customerOrderCancellationService } from "../server/services/customerOrd
 import { customerLifecycleService, type CustomerLifecycleAction } from "../server/services/customerLifecycleService.js";
 import { userLifecycleService, type UserLifecycleAction } from "../server/services/userLifecycleService.js";
 import { requireBearerUser } from "../server/services/currentUserAuthService.js";
+import { checklistTemplateLifecycleService, type ChecklistTemplateLifecycleAction } from "../server/services/checklistTemplateLifecycleService.js";
 
 const clientSchema = z.object({
   nombre_apellido: z.string().min(2, "El nombre es requerido"),
@@ -921,8 +922,9 @@ const checklistTemplateSchema = z.object({
   items: z.array(z.string().min(1)).min(1, "Debe incluir al menos una tarea"),
 });
 
-const checklistTemplateStatusSchema = z.object({
-  active: z.union([z.number(), z.boolean()]),
+const checklistTemplateLifecycleSchema = z.object({
+  action: z.enum(["deactivate", "reactivate"]),
+  motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
 });
 
 const checklistCreateSchema = z.object({
@@ -947,6 +949,12 @@ const mapChecklistTemplate = (row: any) => ({
   description: row.description || "",
   type: row.type || "General",
   active: toNumber(row.active, 1),
+  deactivated_at: row.deactivated_at || null,
+  deactivated_by: row.deactivated_by || null,
+  deactivation_reason: row.deactivation_reason || null,
+  reactivated_at: row.reactivated_at || null,
+  reactivated_by: row.reactivated_by || null,
+  reactivation_reason: row.reactivation_reason || null,
   created_at: row.created_at || null,
 });
 
@@ -1028,7 +1036,10 @@ const handleChecklist = async (req: any, res: any) => {
       try {
         const result = await pool.query(
           `
-            SELECT id, name, description, type, active, created_at
+            SELECT id, name, description, type, active,
+                   deactivated_at, deactivated_by, deactivation_reason,
+                   reactivated_at, reactivated_by, reactivation_reason,
+                   created_at
             FROM checklist_templates
             ORDER BY created_at DESC, id DESC
           `
@@ -1102,7 +1113,10 @@ const handleChecklist = async (req: any, res: any) => {
       try {
         const templateResult = await pool.query(
           `
-            SELECT id, name, description, type, active, created_at
+            SELECT id, name, description, type, active,
+                   deactivated_at, deactivated_by, deactivation_reason,
+                   reactivated_at, reactivated_by, reactivation_reason,
+                   created_at
             FROM checklist_templates
             WHERE id = $1
             LIMIT 1
@@ -1151,6 +1165,20 @@ const handleChecklist = async (req: any, res: any) => {
       try {
         await client.query("BEGIN");
 
+        const currentTemplateResult = await client.query(
+          `SELECT id, active FROM checklist_templates WHERE id = $1 LIMIT 1 FOR UPDATE`,
+          [id]
+        );
+        if (!currentTemplateResult.rowCount) {
+          throw Object.assign(new Error("Plantilla no encontrada"), { statusCode: 404 });
+        }
+        if (toNumber(currentTemplateResult.rows[0]?.active) !== 1) {
+          throw Object.assign(
+            new Error("La plantilla está inactiva. Reactivala antes de editarla."),
+            { statusCode: 409 }
+          );
+        }
+
         await client.query(
           `
             UPDATE checklist_templates
@@ -1178,7 +1206,7 @@ const handleChecklist = async (req: any, res: any) => {
         return sendSuccess(res, null, "Plantilla actualizada exitosamente");
       } catch (error: any) {
         await client.query("ROLLBACK");
-        return sendError(res, error?.message || "Error al actualizar plantilla", 400);
+        return sendError(res, error?.message || "Error al actualizar plantilla", error?.statusCode || 400);
       } finally {
         client.release();
       }
@@ -1187,34 +1215,21 @@ const handleChecklist = async (req: any, res: any) => {
     if (req.method === "DELETE") {
       const user = await requireChecklistPermission(req, res, "delete");
       if (!user) return;
-
-      const client = await pool.connect();
-      try {
-        await client.query("BEGIN");
-        await client.query(`DELETE FROM checklist_template_items WHERE template_id = $1`, [id]);
-        const result = await client.query(`DELETE FROM checklist_templates WHERE id = $1`, [id]);
-        await client.query("COMMIT");
-
-        if (!result.rowCount) return sendError(res, "Plantilla no encontrada", 404);
-        return sendSuccess(res, null, "Plantilla eliminada exitosamente");
-      } catch (error: any) {
-        await client.query("ROLLBACK");
-        return sendError(res, error?.message || "Error al eliminar plantilla", 400);
-      } finally {
-        client.release();
-      }
+      return sendError(
+        res,
+        "La eliminación física de plantillas está deshabilitada. Usá Dar de baja.",
+        405
+      );
     }
 
     return sendError(res, "Method not allowed", 405);
   }
 
   if (endpoint === "checklist-template-status") {
-    const user = await requireChecklistPermission(req, res, "edit");
-    if (!user) return;
     if (!id) return sendError(res, "ID de plantilla inválido", 400);
     if (req.method !== "PATCH") return sendError(res, "Method not allowed", 405);
 
-    const parsed = checklistTemplateStatusSchema.safeParse(getBody(req));
+    const parsed = checklistTemplateLifecycleSchema.safeParse(getBody(req));
     if (!parsed.success) {
       return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
         path: issue.path.join("."),
@@ -1222,15 +1237,30 @@ const handleChecklist = async (req: any, res: any) => {
       })));
     }
 
-    try {
-      await pool.query(
-        `UPDATE checklist_templates SET active = $1 WHERE id = $2`,
-        [toIntFlag(parsed.data.active), id]
-      );
+    const action = parsed.data.action as ChecklistTemplateLifecycleAction;
+    const permission = action === "deactivate" ? "delete" : "edit";
+    const user = await requireChecklistPermission(req, res, permission);
+    if (!user) return;
 
-      return sendSuccess(res, null, "Estado de plantilla actualizado");
+    try {
+      const result = await checklistTemplateLifecycleService.changeStatus({
+        templateId: id,
+        action,
+        motivo: parsed.data.motivo,
+        usuario: user.userName || "Sistema",
+      });
+
+      return sendSuccess(
+        res,
+        result,
+        action === "deactivate" ? "Plantilla dada de baja correctamente" : "Plantilla reactivada correctamente"
+      );
     } catch (error: any) {
-      return sendError(res, error?.message || "Error al actualizar estado", 400);
+      return sendError(
+        res,
+        error?.message || "Error al actualizar el estado de la plantilla",
+        error?.statusCode || 400
+      );
     }
   }
 
@@ -1283,6 +1313,20 @@ const handleChecklist = async (req: any, res: any) => {
       try {
         await client.query("BEGIN");
 
+        const templateResult = await client.query(
+          `SELECT id, active FROM checklist_templates WHERE id = $1 LIMIT 1 FOR SHARE`,
+          [parsed.data.template_id]
+        );
+        if (!templateResult.rowCount) {
+          throw Object.assign(new Error("Plantilla no encontrada"), { statusCode: 404 });
+        }
+        if (toNumber(templateResult.rows[0]?.active) !== 1) {
+          throw Object.assign(
+            new Error("La plantilla está inactiva y no puede iniciar nuevos checklists."),
+            { statusCode: 409 }
+          );
+        }
+
         const checklistResult = await client.query(
           `
             INSERT INTO checklists (template_id, date, notes, status)
@@ -1320,7 +1364,7 @@ const handleChecklist = async (req: any, res: any) => {
         return sendSuccess(res, { id: checklistId }, "Checklist iniciado exitosamente", 201);
       } catch (error: any) {
         await client.query("ROLLBACK");
-        return sendError(res, error?.message || "Error al iniciar checklist", 400);
+        return sendError(res, error?.message || "Error al iniciar checklist", error?.statusCode || 400);
       } finally {
         client.release();
       }

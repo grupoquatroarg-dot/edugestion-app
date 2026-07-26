@@ -30,7 +30,9 @@ import {
   Map,
   ClipboardList,
   Loader2,
-  RefreshCw
+  RefreshCw,
+  Archive,
+  RotateCcw
 } from 'lucide-react';
 
 export default function ChecklistModule() {
@@ -53,8 +55,12 @@ export default function ChecklistModule() {
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [editingTemplateLoading, setEditingTemplateLoading] = useState(false);
   const [finishingChecklistId, setFinishingChecklistId] = useState<number | null>(null);
-  const [deletingTemplateId, setDeletingTemplateId] = useState<number | null>(null);
-  const [templateStatusId, setTemplateStatusId] = useState<number | null>(null);
+  const [templateLifecycleTarget, setTemplateLifecycleTarget] = useState<{
+    template: Template;
+    action: 'deactivate' | 'reactivate';
+  } | null>(null);
+  const [templateLifecycleReason, setTemplateLifecycleReason] = useState('');
+  const [templateLifecycleLoading, setTemplateLifecycleLoading] = useState(false);
   const [updatingRouteKeys, setUpdatingRouteKeys] = useState<string[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -256,24 +262,45 @@ export default function ChecklistModule() {
     }
   };
 
-  const handleToggleTemplateStatus = async (id: number, currentActive: number) => {
-    if (templateStatusId !== null) return;
-    setTemplateStatusId(id);
+  const openTemplateLifecycle = (template: Template, action: 'deactivate' | 'reactivate') => {
+    setTemplateLifecycleTarget({ template, action });
+    setTemplateLifecycleReason('');
+  };
+
+  const handleTemplateLifecycle = async () => {
+    if (!templateLifecycleTarget || templateLifecycleLoading) return;
+    const motivo = templateLifecycleReason.trim();
+    if (motivo.length < 3) {
+      showNotification('error', 'Ingresá un motivo de al menos 3 caracteres.');
+      return;
+    }
+
+    setTemplateLifecycleLoading(true);
     try {
-      const res = await apiFetch(`/api/clientes?endpoint=checklist-template-status&id=${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ active: currentActive === 1 ? 0 : 1 })
-      });
+      const res = await apiFetch(
+        `/api/clientes?endpoint=checklist-template-status&id=${templateLifecycleTarget.template.id}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ action: templateLifecycleTarget.action, motivo })
+        }
+      );
       if (!res.ok) {
         throw new Error(await readApiError(res, 'No se pudo cambiar el estado de la plantilla.'));
       }
-      showNotification('success', currentActive === 1 ? 'Plantilla desactivada.' : 'Plantilla activada.');
+      showNotification(
+        'success',
+        templateLifecycleTarget.action === 'deactivate'
+          ? 'Plantilla dada de baja correctamente.'
+          : 'Plantilla reactivada correctamente.'
+      );
+      setTemplateLifecycleTarget(null);
+      setTemplateLifecycleReason('');
       await fetchInitialData(false);
     } catch (error: any) {
-      console.error('Error toggling template status:', error);
+      console.error('Error updating template lifecycle:', error);
       showNotification('error', error?.message || 'No se pudo cambiar el estado de la plantilla.');
     } finally {
-      setTemplateStatusId(null);
+      setTemplateLifecycleLoading(false);
     }
   };
 
@@ -467,23 +494,6 @@ export default function ChecklistModule() {
       showNotification('error', error?.message || 'No se pudo finalizar el checklist.');
     } finally {
       setFinishingChecklistId(null);
-    }
-  };
-
-  const handleDeleteTemplate = async () => {
-    if (deletingTemplateId === null) return;
-    const id = deletingTemplateId;
-    try {
-      const res = await apiFetch(`/api/clientes?endpoint=checklist-template&id=${id}`, { method: 'DELETE' });
-      if (!res.ok) {
-        throw new Error(await readApiError(res, 'No se pudo eliminar la plantilla.'));
-      }
-      setDeletingTemplateId(null);
-      showNotification('success', 'Plantilla eliminada correctamente.');
-      await fetchInitialData(false);
-    } catch (error: any) {
-      console.error('Error deleting template:', error);
-      showNotification('error', error?.message || 'No se pudo eliminar la plantilla.');
     }
   };
 
@@ -929,29 +939,41 @@ export default function ChecklistModule() {
                             <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${active ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-100 text-slate-400'}`}><Layout size={21} /></div>
                           </div>
 
-                          <div className="mt-5 grid grid-cols-2 gap-2">
+                          <div className="mt-5 grid gap-2 sm:grid-cols-2">
                             {hasPermission('checklist', 'edit') && (
-                              <button type="button" onClick={() => handleEditTemplate(template)} disabled={editingTemplateLoading} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-60">
+                              <button type="button" onClick={() => handleEditTemplate(template)} disabled={!active || editingTemplateLoading} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-indigo-300 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">
                                 {editingTemplateLoading ? <Loader2 size={16} className="animate-spin" /> : <Edit3 size={16} />} Editar
                               </button>
                             )}
-                            {hasPermission('checklist', 'delete') && (
-                              <button type="button" onClick={() => setDeletingTemplateId(template.id)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100">
-                                <Trash2 size={16} /> Eliminar
+                            {active && hasPermission('checklist', 'delete') && (
+                              <button type="button" onClick={() => openTemplateLifecycle(template, 'deactivate')} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800 hover:bg-amber-100">
+                                <Archive size={16} /> Dar de baja
+                              </button>
+                            )}
+                            {!active && hasPermission('checklist', 'edit') && (
+                              <button type="button" onClick={() => openTemplateLifecycle(template, 'reactivate')} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-100">
+                                <RotateCcw size={16} /> Reactivar
                               </button>
                             )}
                           </div>
 
+                          {!active && template.deactivation_reason && (
+                            <div className="mt-3 rounded-xl border border-amber-100 bg-amber-50 p-3 text-xs text-amber-900">
+                              <p className="font-black">Motivo de baja</p>
+                              <p className="mt-1 break-words">{template.deactivation_reason}</p>
+                              {(template.deactivated_by || template.deactivated_at) && (
+                                <p className="mt-2 text-[11px] text-amber-700">
+                                  {template.deactivated_by || 'Sistema'}
+                                  {template.deactivated_at ? ` · ${formatBusinessDate(template.deactivated_at)} ${formatBusinessTime(template.deactivated_at)}` : ''}
+                                </p>
+                              )}
+                            </div>
+                          )}
+
                           <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                            <button
-                              type="button"
-                              onClick={() => hasPermission('checklist', 'edit') && handleToggleTemplateStatus(template.id, template.active)}
-                              disabled={!hasPermission('checklist', 'edit') || templateStatusId !== null}
-                              className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold disabled:opacity-60 ${active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}
-                            >
-                              {templateStatusId === template.id && <Loader2 size={15} className="animate-spin" />}
+                            <div className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ${active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
                               {active ? 'Plantilla activa' : 'Plantilla inactiva'}
-                            </button>
+                            </div>
                             {hasPermission('checklist', 'create') && (
                               <button type="button" onClick={() => handleStartTodayChecklist(template.id)} disabled={!active || startingTemplateId !== null} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800 disabled:opacity-50">
                                 {startingTemplateId === template.id ? <Loader2 size={15} className="animate-spin" /> : <ChevronRight size={15} />}
@@ -1092,13 +1114,41 @@ export default function ChecklistModule() {
         </div>
       )}
 
-      {deletingTemplateId !== null && (
+      {templateLifecycleTarget && (
         <div className="fixed inset-0 z-[75] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
-          <motion.div initial={{ opacity: 0, y: 25 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md rounded-t-[28px] bg-white p-5 shadow-2xl sm:rounded-[28px] sm:p-6">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-red-50 text-red-700"><Trash2 size={25} /></div>
-            <h2 className="mt-4 text-xl font-black text-slate-900">Eliminar plantilla</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-500">La plantilla dejará de estar disponible para iniciar nuevos controles. Esta acción no afecta los controles históricos.</p>
-            <div className="mt-6 grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => setDeletingTemplateId(null)} className="min-h-12 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700">Cancelar</button><button type="button" onClick={handleDeleteTemplate} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-3 text-sm font-bold text-white hover:bg-red-700"><Trash2 size={17} /> Eliminar</button></div>
+          <motion.div initial={{ opacity: 0, y: 25 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md rounded-t-[28px] bg-white p-5 shadow-2xl sm:rounded-[28px] sm:p-6" role="dialog" aria-modal="true" aria-labelledby="template-lifecycle-title">
+            <div className={`flex h-14 w-14 items-center justify-center rounded-2xl ${templateLifecycleTarget.action === 'deactivate' ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'}`}>
+              {templateLifecycleTarget.action === 'deactivate' ? <Archive size={25} /> : <RotateCcw size={25} />}
+            </div>
+            <h2 id="template-lifecycle-title" className="mt-4 text-xl font-black text-slate-900">
+              {templateLifecycleTarget.action === 'deactivate' ? 'Dar de baja plantilla' : 'Reactivar plantilla'}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              {templateLifecycleTarget.action === 'deactivate'
+                ? 'La plantilla no podrá usarse para iniciar nuevos controles. Los checklists históricos conservarán todo su contenido.'
+                : 'La plantilla volverá a estar disponible para iniciar nuevos controles.'}
+            </p>
+            <div className="mt-4 rounded-xl bg-slate-50 p-3 text-sm font-bold text-slate-800">
+              {templateLifecycleTarget.template.name}
+            </div>
+            <label htmlFor="template-lifecycle-reason" className="mt-5 block text-xs font-black uppercase tracking-wider text-slate-600">Motivo obligatorio</label>
+            <textarea
+              id="template-lifecycle-reason"
+              value={templateLifecycleReason}
+              onChange={event => setTemplateLifecycleReason(event.target.value)}
+              maxLength={500}
+              autoFocus
+              placeholder={templateLifecycleTarget.action === 'deactivate' ? 'Ej.: plantilla reemplazada por una nueva versión' : 'Ej.: vuelve a utilizarse en la operación diaria'}
+              className="mt-2 min-h-28 w-full resize-none rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+            />
+            <p className="mt-1 text-right text-[11px] text-slate-400">{templateLifecycleReason.trim().length}/500</p>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <button type="button" onClick={() => { setTemplateLifecycleTarget(null); setTemplateLifecycleReason(''); }} disabled={templateLifecycleLoading} className="min-h-12 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 disabled:opacity-50">Cancelar</button>
+              <button type="button" onClick={handleTemplateLifecycle} disabled={templateLifecycleReason.trim().length < 3 || templateLifecycleLoading} className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-white disabled:opacity-50 ${templateLifecycleTarget.action === 'deactivate' ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
+                {templateLifecycleLoading && <Loader2 size={17} className="animate-spin" />}
+                {templateLifecycleLoading ? 'Guardando...' : templateLifecycleTarget.action === 'deactivate' ? 'Dar de baja' : 'Reactivar'}
+              </button>
+            </div>
           </motion.div>
         </div>
       )}

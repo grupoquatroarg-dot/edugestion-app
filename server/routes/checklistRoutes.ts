@@ -3,6 +3,7 @@ import db from "../db.js";
 import { requireAuth, requirePermission } from "../middleware/authMiddleware.js";
 import { sendSuccess, sendError } from "../utils/response.js";
 import { getBusinessDate } from "../utils/businessDate.js";
+import { checklistTemplateLifecycleService } from "../services/checklistTemplateLifecycleService.js";
 
 const router = Router();
 
@@ -37,6 +38,11 @@ router.put("/checklist-templates/:id", requireAuth, requirePermission('checklist
   const { id } = req.params;
   const { name, description, type, items } = req.body;
   db.transaction(() => {
+    const template = db.prepare("SELECT id, active FROM checklist_templates WHERE id = ? LIMIT 1").get(id) as any;
+    if (!template) throw new Error("Plantilla no encontrada");
+    if (Number(template.active || 0) !== 1) {
+      throw new Error("La plantilla está inactiva. Reactivala antes de editarla.");
+    }
     db.prepare("UPDATE checklist_templates SET name = ?, description = ?, type = ? WHERE id = ?").run(name, description, type, id);
     db.prepare("DELETE FROM checklist_template_items WHERE template_id = ?").run(id);
     const insertItem = db.prepare("INSERT INTO checklist_template_items (template_id, task_name) VALUES (?, ?)");
@@ -47,16 +53,54 @@ router.put("/checklist-templates/:id", requireAuth, requirePermission('checklist
   return sendSuccess(res, null, "Template actualizado exitosamente");
 });
 
-router.patch("/checklist-templates/:id/status", requireAuth, requirePermission('checklist', 'edit'), (req, res) => {
-  const { id } = req.params;
-  const { active } = req.body;
-  db.prepare("UPDATE checklist_templates SET active = ? WHERE id = ?").run(active, id);
-  return sendSuccess(res, null, "Estado del template actualizado");
+router.post(
+  "/checklist-templates/:id/deactivate",
+  requireAuth,
+  requirePermission('checklist', 'delete'),
+  async (req, res) => {
+    try {
+      const result = await checklistTemplateLifecycleService.changeStatus({
+        templateId: Number(req.params.id),
+        action: "deactivate",
+        motivo: String(req.body?.motivo || ""),
+        usuario: (req as any).user?.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Plantilla dada de baja correctamente");
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al dar de baja la plantilla", error?.statusCode || 400);
+    }
+  }
+);
+
+router.post(
+  "/checklist-templates/:id/reactivate",
+  requireAuth,
+  requirePermission('checklist', 'edit'),
+  async (req, res) => {
+    try {
+      const result = await checklistTemplateLifecycleService.changeStatus({
+        templateId: Number(req.params.id),
+        action: "reactivate",
+        motivo: String(req.body?.motivo || ""),
+        usuario: (req as any).user?.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Plantilla reactivada correctamente");
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al reactivar la plantilla", error?.statusCode || 400);
+    }
+  }
+);
+
+router.patch("/checklist-templates/:id/status", requireAuth, (_req, res) => {
+  return sendError(
+    res,
+    "El estado de la plantilla debe cambiarse desde Dar de baja o Reactivar para conservar la auditoría.",
+    405
+  );
 });
 
-router.delete("/checklist-templates/:id", requireAuth, requirePermission('checklist', 'delete'), (req, res) => {
-  db.prepare("DELETE FROM checklist_templates WHERE id = ?").run(req.params.id);
-  return sendSuccess(res, null, "Template eliminado exitosamente");
+router.delete("/checklist-templates/:id", requireAuth, requirePermission('checklist', 'delete'), (_req, res) => {
+  return sendError(res, "La eliminación física de plantillas está deshabilitada. Usá Dar de baja.", 405);
 });
 
 // --- Checklists ---
@@ -122,6 +166,11 @@ router.post("/checklists", requireAuth, requirePermission('checklist', 'create')
   const { template_id, date, notes } = req.body;
   let checklistId: number | bigint;
   db.transaction(() => {
+    const template = db.prepare("SELECT id, active FROM checklist_templates WHERE id = ? LIMIT 1").get(template_id) as any;
+    if (!template) throw new Error("Plantilla no encontrada");
+    if (Number(template.active || 0) !== 1) {
+      throw new Error("La plantilla está inactiva y no puede iniciar nuevos checklists.");
+    }
     const info = db.prepare("INSERT INTO checklists (template_id, date, notes) VALUES (?, ?, ?)").run(template_id, date, notes);
     checklistId = info.lastInsertRowid;
     
