@@ -49,7 +49,7 @@ type Movimiento = {
   fecha: string;
   fecha_dia?: string;
   tipo: 'ingreso' | 'egreso';
-  origen: 'venta' | 'pago_cc' | 'egreso_manual' | 'ajuste' | 'compra' | 'cobranza' | 'anulacion_venta' | 'anulacion_compra' | 'anulacion_egreso_manual' | 'anulacion_cobranza' | 'cheque_rechazado' | 'anulacion_cheque_rechazado';
+  origen: 'venta' | 'pago_cc' | 'egreso_manual' | 'ajuste' | 'compra' | 'cobranza' | 'anulacion_venta' | 'anulacion_compra' | 'anulacion_egreso_manual' | 'anulacion_cobranza' | 'cheque_rechazado' | 'anulacion_cheque_rechazado' | 'anulacion_pago_proveedor';
   cliente_id: number | null;
   venta_id: number | null;
   descripcion: string;
@@ -301,6 +301,7 @@ export default function FinanceModule() {
     'anulacion_egreso_manual',
     'anulacion_cobranza',
     'anulacion_cheque_rechazado',
+    'anulacion_pago_proveedor',
   ]);
 
   const metricMovements = useMemo(
@@ -618,6 +619,7 @@ export default function FinanceModule() {
       anulacion_compra: 'Anulación de compra',
       anulacion_egreso_manual: 'Anulación de egreso manual',
       anulacion_cobranza: 'Anulación de cobranza',
+      anulacion_pago_proveedor: 'Anulación de pago a proveedor',
       cheque_rechazado: 'Cheque rechazado',
       anulacion_cheque_rechazado: 'Reversión de cheque rechazado'
     };

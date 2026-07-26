@@ -3,6 +3,7 @@ import {
   createPurchaseInvoice,
   getPurchaseInvoiceById,
   listPurchaseInvoices,
+  listAvailablePurchaseCheques,
   payPurchaseInvoice,
   purchaseInvoiceBodySchema,
   purchaseInvoicePaymentSchema,
@@ -13,6 +14,7 @@ import { getRequestBody, requirePurchaseInvoicePermission } from "../../server/s
 import { purchaseInvoiceCancellationService } from "../../server/services/purchaseInvoiceCancellationService.js";
 import { providerLifecycleService } from "../../server/services/providerLifecycleService.js";
 import { listActivePaymentMethods } from "../../server/services/paymentMethodAvailabilityService.js";
+import { supplierPaymentCancellationService } from "../../server/services/supplierPaymentCancellationService.js";
 
 const providerSchema = z.object({
   nombre: z.string().min(2, "El nombre debe tener al menos 2 caracteres"),
@@ -44,6 +46,17 @@ export default async function handler(req: any, res: any) {
       return sendSuccess(res, await listActivePaymentMethods());
     } catch (error: any) {
       return sendError(res, error?.message || "Error al obtener formas de pago", error?.statusCode || 400);
+    }
+  }
+
+  if (endpoint === "available-cheques" && req.method === "GET") {
+    const user = await requirePurchaseInvoicePermission(req, res, "view");
+    if (!user) return;
+
+    try {
+      return sendSuccess(res, await listAvailablePurchaseCheques());
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al obtener cheques en cartera", error?.statusCode || 400);
     }
   }
 
@@ -130,6 +143,33 @@ export default async function handler(req: any, res: any) {
       "La eliminación física de proveedores está deshabilitada. Usá Dar de baja para conservar el historial.",
       409
     );
+  }
+
+  if (endpoint === "cancel-payment" && req.method === "POST") {
+    const user = await requirePurchaseInvoicePermission(req, res, "delete");
+    if (!user) return;
+
+    const movementId = Number(req.query?.id);
+    if (!Number.isInteger(movementId) || movementId <= 0) {
+      return sendError(res, "ID de pago a proveedor inválido", 400);
+    }
+
+    const motivo = String(getRequestBody(req)?.motivo || "").trim();
+
+    try {
+      const result = await supplierPaymentCancellationService.cancelSupplierPayment({
+        movementId,
+        motivo,
+        usuario: user.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Pago a proveedor anulado correctamente");
+    } catch (error: any) {
+      return sendError(
+        res,
+        error?.message || "Error al anular el pago a proveedor",
+        error?.statusCode || 400
+      );
+    }
   }
 
   if (endpoint === "cancel" && req.method === "POST") {

@@ -57,6 +57,9 @@ export interface PurchaseInvoice {
   anulada_at?: string | null;
   anulada_por?: string | null;
   anulacion_motivo?: string | null;
+  supplier_payment_movement_id?: number | null;
+  supplier_payment_method?: string | null;
+  supplier_payment_cheque_id?: number | null;
   created_at: string;
   items?: PurchaseInvoiceItem[];
 }

@@ -56,6 +56,15 @@ type ConfigPaymentMethod = {
   tipo?: string;
 };
 
+type AvailableCheque = {
+  id: number;
+  numero_cheque: string;
+  banco: string;
+  importe: number;
+  fecha_vencimiento: string;
+  estado: string;
+};
+
 type ModuleView = 'invoices' | 'providers';
 type InvoiceFilter = 'all' | 'paid' | 'pending' | 'cancelled';
 
@@ -99,7 +108,8 @@ const getPaymentMethodLabel = (method: unknown) => {
     efectivo: 'Efectivo',
     transferencia: 'Transferencia',
     mercado_pago: 'Mercado Pago',
-    cheque: 'Cheque',
+    cheque: 'Cheque en cartera',
+    cheque_en_cartera: 'Cheque en cartera',
     'cta cte': 'Cuenta corriente',
   };
 
@@ -109,22 +119,31 @@ const getPaymentMethodLabel = (method: unknown) => {
 const isCurrentAccountMethod = (method: unknown) =>
   String(method || '').trim().toLowerCase() === 'cta cte';
 
+const isChequePaymentMethod = (method: unknown) => {
+  const value = String(method || '').trim().toLowerCase();
+  return value === 'cheque' || value === 'cheque_en_cartera' || value === 'cheque en cartera';
+};
+
 const toPurchasePaymentValue = (name: string) => {
   const normalized = name.trim().toLowerCase();
   const aliases: Record<string, string> = {
     efectivo: 'efectivo',
     transferencia: 'transferencia',
     'mercado pago': 'mercado_pago',
-    cheque: 'cheque',
+    cheque: 'cheque_en_cartera',
     'cta cte': 'Cta Cte',
   };
   return aliases[normalized] || name.trim();
 };
 
-const getPreferredPurchasePayment = (methods: ConfigPaymentMethod[], allowCurrentAccount: boolean) => {
+const getPreferredPurchasePayment = (
+  methods: ConfigPaymentMethod[],
+  allowCurrentAccount: boolean,
+  allowCheque: boolean = true,
+) => {
   const available = methods
     .map((method) => toPurchasePaymentValue(method.name))
-    .filter((method) => allowCurrentAccount || !isCurrentAccountMethod(method));
+    .filter((method) => (allowCurrentAccount || !isCurrentAccountMethod(method)) && (allowCheque || !isChequePaymentMethod(method)));
   return available.find((method) => String(method).toLowerCase() === 'efectivo') || available[0] || '';
 };
 
@@ -134,6 +153,9 @@ export default function PurchaseInvoiceModule() {
   const [products, setProducts] = useState<Product[]>([]);
   const [proveedores, setProveedores] = useState<Provider[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<ConfigPaymentMethod[]>([]);
+  const [availableCheques, setAvailableCheques] = useState<AvailableCheque[]>([]);
+  const [availableChequesLoading, setAvailableChequesLoading] = useState(false);
+  const [availableChequesError, setAvailableChequesError] = useState('');
   const [activeView, setActiveView] = useState<ModuleView>('invoices');
   const [invoiceFilter, setInvoiceFilter] = useState<InvoiceFilter>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -146,10 +168,12 @@ export default function PurchaseInvoiceModule() {
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isProviderModalOpen, setIsProviderModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [isPaymentCancellationModalOpen, setIsPaymentCancellationModalOpen] = useState(false);
   const [isCancellationModalOpen, setIsCancellationModalOpen] = useState(false);
   const [isProviderLifecycleModalOpen, setIsProviderLifecycleModalOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<PurchaseInvoice | null>(null);
   const [selectedInvoiceForPayment, setSelectedInvoiceForPayment] = useState<PurchaseInvoice | null>(null);
+  const [selectedInvoiceForPaymentCancellation, setSelectedInvoiceForPaymentCancellation] = useState<PurchaseInvoice | null>(null);
   const [selectedInvoiceForCancellation, setSelectedInvoiceForCancellation] = useState<PurchaseInvoice | null>(null);
   const [selectedProviderForLifecycle, setSelectedProviderForLifecycle] = useState<Provider | null>(null);
   const [providerLifecycleAction, setProviderLifecycleAction] = useState<'deactivate' | 'reactivate'>('deactivate');
@@ -166,6 +190,9 @@ export default function PurchaseInvoiceModule() {
   const [isChangingProviderStatus, setIsChangingProviderStatus] = useState(false);
   const [isPayingInvoice, setIsPayingInvoice] = useState(false);
   const [paymentSubmitError, setPaymentSubmitError] = useState('');
+  const [isCancellingSupplierPayment, setIsCancellingSupplierPayment] = useState(false);
+  const [supplierPaymentCancellationReason, setSupplierPaymentCancellationReason] = useState('');
+  const [supplierPaymentCancellationError, setSupplierPaymentCancellationError] = useState('');
   const [isCancellingInvoice, setIsCancellingInvoice] = useState(false);
   const [cancellationReason, setCancellationReason] = useState('');
   const [cancellationSubmitError, setCancellationSubmitError] = useState('');
@@ -176,6 +203,7 @@ export default function PurchaseInvoiceModule() {
   const [paymentForm, setPaymentForm] = useState({
     metodo_pago_real: '',
     fecha_pago: getToday(),
+    cheque_id: '',
   });
 
   const [formData, setFormData] = useState({
@@ -220,6 +248,23 @@ export default function PurchaseInvoiceModule() {
     setProducts(Array.isArray(data) ? data : []);
   };
 
+  const fetchAvailableCheques = async () => {
+    setAvailableChequesLoading(true);
+    setAvailableChequesError('');
+
+    try {
+      const res = await apiFetch('/api/purchase-invoices?endpoint=available-cheques');
+      const data = await handleApiJson<AvailableCheque[]>(res);
+      setAvailableCheques(Array.isArray(data) ? data : []);
+    } catch (error: any) {
+      console.error('Error loading available cheques:', error);
+      setAvailableCheques([]);
+      setAvailableChequesError(error?.message || 'No se pudieron cargar los cheques en cartera.');
+    } finally {
+      setAvailableChequesLoading(false);
+    }
+  };
+
   const fetchPaymentMethods = async () => {
     const res = await apiFetch('/api/purchase-invoices?endpoint=payment-methods');
     const data = await handleApiJson<ConfigPaymentMethod[]>(res);
@@ -229,15 +274,15 @@ export default function PurchaseInvoiceModule() {
     const availableValues = activeMethods.map((method) => toPurchasePaymentValue(method.name));
     setFormData((previous) => ({
       ...previous,
-      metodo_pago: availableValues.includes(previous.metodo_pago)
+      metodo_pago: availableValues.includes(previous.metodo_pago) && !isChequePaymentMethod(previous.metodo_pago)
         ? previous.metodo_pago
-        : getPreferredPurchasePayment(activeMethods, true),
+        : getPreferredPurchasePayment(activeMethods, true, false),
     }));
     setPaymentForm((previous) => ({
       ...previous,
       metodo_pago_real: availableValues.includes(previous.metodo_pago_real) && !isCurrentAccountMethod(previous.metodo_pago_real)
         ? previous.metodo_pago_real
-        : getPreferredPurchasePayment(activeMethods, false),
+        : getPreferredPurchasePayment(activeMethods, false, true),
     }));
   };
 
@@ -248,7 +293,7 @@ export default function PurchaseInvoiceModule() {
     setLoadError('');
 
     try {
-      await Promise.all([fetchInvoices(), fetchProducts(), fetchProveedores(), fetchPaymentMethods()]);
+      await Promise.all([fetchInvoices(), fetchProducts(), fetchProveedores(), fetchPaymentMethods(), fetchAvailableCheques()]);
     } catch (error: any) {
       console.error('Error loading purchase invoice module:', error);
       setLoadError(error?.message || 'No se pudieron cargar las facturas y proveedores.');
@@ -297,7 +342,7 @@ export default function PurchaseInvoiceModule() {
       numero_factura: '',
       proveedor_id: 0,
       fecha_compra: getToday(),
-      metodo_pago: getPreferredPurchasePayment(paymentMethods, true),
+      metodo_pago: getPreferredPurchasePayment(paymentMethods, true, false),
       items: [],
     });
     resetCurrentItem();
@@ -416,7 +461,11 @@ export default function PurchaseInvoiceModule() {
   const openPaymentModal = (invoice: PurchaseInvoice) => {
     setSelectedInvoiceForPayment(invoice);
     setPaymentSubmitError('');
-    setPaymentForm({ metodo_pago_real: getPreferredPurchasePayment(paymentMethods, false), fecha_pago: getToday() });
+    setPaymentForm({
+      metodo_pago_real: getPreferredPurchasePayment(paymentMethods, false, true),
+      fecha_pago: getToday(),
+      cheque_id: '',
+    });
     setIsPaymentModalOpen(true);
   };
 
@@ -435,6 +484,18 @@ export default function PurchaseInvoiceModule() {
       return;
     }
 
+    if (isChequePaymentMethod(paymentForm.metodo_pago_real)) {
+      const selectedCheque = availableCheques.find((cheque) => cheque.id === Number(paymentForm.cheque_id));
+      if (!selectedCheque) {
+        setPaymentSubmitError('Seleccione un cheque que continúe en cartera.');
+        return;
+      }
+      if (Math.abs(Number(selectedCheque.importe || 0) - saldoPendiente) > 0.01) {
+        setPaymentSubmitError('El importe del cheque debe coincidir exactamente con el saldo pendiente.');
+        return;
+      }
+    }
+
     setIsPayingInvoice(true);
     setPaymentSubmitError('');
 
@@ -447,13 +508,63 @@ export default function PurchaseInvoiceModule() {
       await handleApiJson(res);
       setIsPaymentModalOpen(false);
       setSelectedInvoiceForPayment(null);
-      await fetchInvoices();
+      await Promise.all([fetchInvoices(), fetchAvailableCheques()]);
       setSuccessMessage('Pago de proveedor registrado correctamente.');
     } catch (error: any) {
       console.error('Error paying supplier invoice:', error);
       setPaymentSubmitError(error?.message || 'No se pudo registrar el pago del proveedor.');
     } finally {
       setIsPayingInvoice(false);
+    }
+  };
+
+  const openSupplierPaymentCancellationModal = (invoice: PurchaseInvoice) => {
+    setSelectedInvoiceForPaymentCancellation(invoice);
+    setSupplierPaymentCancellationReason('');
+    setSupplierPaymentCancellationError('');
+    setIsPaymentCancellationModalOpen(true);
+  };
+
+  const handleCancelSupplierPayment = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedInvoiceForPaymentCancellation || isCancellingSupplierPayment) return;
+
+    const movementId = Number(selectedInvoiceForPaymentCancellation.supplier_payment_movement_id || 0);
+    const reason = supplierPaymentCancellationReason.trim();
+
+    if (!movementId) {
+      setSupplierPaymentCancellationError('El pago no tiene trazabilidad suficiente para anularse.');
+      return;
+    }
+    if (reason.length < 3) {
+      setSupplierPaymentCancellationError('El motivo debe tener al menos 3 caracteres.');
+      return;
+    }
+    if (reason.length > 500) {
+      setSupplierPaymentCancellationError('El motivo no puede superar los 500 caracteres.');
+      return;
+    }
+
+    setIsCancellingSupplierPayment(true);
+    setSupplierPaymentCancellationError('');
+
+    try {
+      const res = await apiFetch(`/api/purchase-invoices?endpoint=cancel-payment&id=${movementId}`, {
+        method: 'POST',
+        body: JSON.stringify({ motivo: reason }),
+      });
+
+      await handleApiJson(res);
+      setIsPaymentCancellationModalOpen(false);
+      setSelectedInvoiceForPaymentCancellation(null);
+      setSupplierPaymentCancellationReason('');
+      await Promise.all([fetchInvoices(), fetchAvailableCheques()]);
+      setSuccessMessage('Pago a proveedor anulado correctamente.');
+    } catch (error: any) {
+      console.error('Error cancelling supplier payment:', error);
+      setSupplierPaymentCancellationError(error?.message || 'No se pudo anular el pago a proveedor.');
+    } finally {
+      setIsCancellingSupplierPayment(false);
     }
   };
 
@@ -960,6 +1071,12 @@ export default function PurchaseInvoiceModule() {
                   !cancelled &&
                   hasTraceability &&
                   hasPermission('suppliers', 'delete');
+                const canCancelSupplierPayment =
+                  !cancelled &&
+                  paid &&
+                  isCurrentAccountMethod((invoice as any).metodo_pago) &&
+                  Number((invoice as any).supplier_payment_movement_id || 0) > 0 &&
+                  hasPermission('suppliers', 'delete');
 
                 return (
                   <article
@@ -1017,7 +1134,7 @@ export default function PurchaseInvoiceModule() {
                       </div>
                     </div>
 
-                    <div className="mt-4 grid grid-cols-1 gap-2 min-[420px]:grid-cols-2 xl:grid-cols-3">
+                    <div className="mt-4 grid grid-cols-1 gap-2 min-[420px]:grid-cols-2 xl:grid-cols-4">
                       <button
                         type="button"
                         onClick={() => void fetchInvoiceDetails(invoice.id)}
@@ -1037,6 +1154,18 @@ export default function PurchaseInvoiceModule() {
                         >
                           <WalletCards size={17} aria-hidden="true" />
                           Registrar pago
+                        </button>
+                      )}
+
+                      {canCancelSupplierPayment && (
+                        <button
+                          type="button"
+                          onClick={() => openSupplierPaymentCancellationModal(invoice)}
+                          className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-black text-amber-800 shadow-sm hover:bg-amber-100"
+                          aria-label={`Anular pago de factura ${invoice.numero_factura}`}
+                        >
+                          <Ban size={17} aria-hidden="true" />
+                          Anular pago
                         </button>
                       )}
 
@@ -1364,13 +1493,20 @@ export default function PurchaseInvoiceModule() {
                         onChange={(event) => setFormData({ ...formData, metodo_pago: event.target.value })}
                         className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
                       >
-                        {paymentMethods.length === 0 && <option value="">No hay formas de pago activas</option>}
-                        {paymentMethods.map((method) => (
-                          <option key={method.id} value={toPurchasePaymentValue(method.name)}>
-                            {getPaymentMethodLabel(toPurchasePaymentValue(method.name))}
-                          </option>
-                        ))}
+                        {paymentMethods.filter((method) => !isChequePaymentMethod(toPurchasePaymentValue(method.name))).length === 0 && (
+                          <option value="">No hay formas de pago disponibles</option>
+                        )}
+                        {paymentMethods
+                          .filter((method) => !isChequePaymentMethod(toPurchasePaymentValue(method.name)))
+                          .map((method) => (
+                            <option key={method.id} value={toPurchasePaymentValue(method.name)}>
+                              {getPaymentMethodLabel(toPurchasePaymentValue(method.name))}
+                            </option>
+                          ))}
                       </select>
+                      <span className="mt-2 block text-xs font-semibold text-slate-500">
+                        Para pagar con un cheque en cartera, registrá la factura en Cuenta corriente y luego usá Registrar pago.
+                      </span>
                     </label>
                   </div>
                 </section>
@@ -1711,6 +1847,82 @@ export default function PurchaseInvoiceModule() {
         </div>
       )}
 
+      {isPaymentCancellationModalOpen && selectedInvoiceForPaymentCancellation && (
+        <div className="fixed inset-0 z-[85] flex items-end justify-center bg-slate-950/65 backdrop-blur-sm sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="supplier-payment-cancellation-title">
+          <div className="w-full overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-w-md sm:rounded-3xl">
+            <div className="flex items-start justify-between gap-3 border-b border-amber-200 bg-amber-50 px-4 py-4 sm:px-6">
+              <div className="min-w-0">
+                <h2 id="supplier-payment-cancellation-title" className="text-lg font-black text-slate-950">Anular pago a proveedor</h2>
+                <p className="mt-1 break-words text-xs font-semibold text-slate-600">
+                  Factura {selectedInvoiceForPaymentCancellation.numero_factura} · {(selectedInvoiceForPaymentCancellation as any).proveedor}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !isCancellingSupplierPayment && setIsPaymentCancellationModalOpen(false)}
+                disabled={isCancellingSupplierPayment}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-white disabled:opacity-40"
+                aria-label="Cerrar anulación de pago"
+              >
+                <X size={21} />
+              </button>
+            </div>
+
+            <form onSubmit={handleCancelSupplierPayment} className="p-4 sm:p-6">
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                <p className="font-black">La factura volverá a quedar pendiente.</p>
+                <p className="mt-1">
+                  El egreso original permanecerá como historial, se generará un contramovimiento no contabilizable y, si se utilizó un cheque, volverá a quedar en cartera.
+                </p>
+              </div>
+
+              {supplierPaymentCancellationError && (
+                <div role="alert" className="mt-4 flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-900">
+                  <AlertCircle size={20} className="mt-0.5 shrink-0" />
+                  <p className="text-sm font-bold">{supplierPaymentCancellationError}</p>
+                </div>
+              )}
+
+              <label className="mt-4 block">
+                <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Motivo de anulación</span>
+                <textarea
+                  required
+                  minLength={3}
+                  maxLength={500}
+                  rows={4}
+                  value={supplierPaymentCancellationReason}
+                  onChange={(event) => setSupplierPaymentCancellationReason(event.target.value)}
+                  className="w-full resize-none rounded-xl border border-slate-200 px-3 py-3 text-sm font-semibold outline-none focus:border-amber-400 focus:ring-4 focus:ring-amber-100"
+                  placeholder="Ej.: pago cargado por error"
+                />
+                <span className="mt-1 block text-right text-xs font-semibold text-slate-400">
+                  {supplierPaymentCancellationReason.length}/500
+                </span>
+              </label>
+
+              <div className="mt-6 grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => setIsPaymentCancellationModalOpen(false)}
+                  disabled={isCancellingSupplierPayment}
+                  className="min-h-11 rounded-xl border border-slate-200 px-5 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Volver
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCancellingSupplierPayment || supplierPaymentCancellationReason.trim().length < 3}
+                  className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-amber-600 px-5 text-sm font-black text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isCancellingSupplierPayment ? <Loader2 size={18} className="animate-spin" /> : <Ban size={18} />}
+                  {isCancellingSupplierPayment ? 'Anulando…' : 'Confirmar anulación'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {isCancellationModalOpen && selectedInvoiceForCancellation && (
         <div
           className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/70 backdrop-blur-sm sm:items-center sm:p-4"
@@ -1840,7 +2052,16 @@ export default function PurchaseInvoiceModule() {
               <div className="mt-4 space-y-4">
                 <label className="block">
                   <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Método de pago</span>
-                  <select required value={paymentForm.metodo_pago_real} onChange={(event) => setPaymentForm({ ...paymentForm, metodo_pago_real: event.target.value })} className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100">
+                  <select
+                    required
+                    value={paymentForm.metodo_pago_real}
+                    onChange={(event) => setPaymentForm({
+                      ...paymentForm,
+                      metodo_pago_real: event.target.value,
+                      cheque_id: isChequePaymentMethod(event.target.value) ? paymentForm.cheque_id : '',
+                    })}
+                    className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                  >
                     {paymentMethods.filter((method) => !isCurrentAccountMethod(method.name)).length === 0 && (
                       <option value="">No hay formas de pago activas</option>
                     )}
@@ -1853,6 +2074,40 @@ export default function PurchaseInvoiceModule() {
                       ))}
                   </select>
                 </label>
+                {isChequePaymentMethod(paymentForm.metodo_pago_real) && (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                    <label className="block">
+                      <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-amber-800">Cheque en cartera</span>
+                      <select
+                        required
+                        disabled={availableChequesLoading || Boolean(availableChequesError)}
+                        value={paymentForm.cheque_id}
+                        onChange={(event) => setPaymentForm({ ...paymentForm, cheque_id: event.target.value })}
+                        className="min-h-11 w-full rounded-xl border border-amber-200 bg-white px-3 text-sm font-semibold outline-none focus:border-amber-400 focus:ring-4 focus:ring-amber-100 disabled:opacity-60"
+                      >
+                        <option value="">
+                          {availableChequesLoading
+                            ? 'Cargando cheques…'
+                            : availableCheques.length === 0
+                              ? 'No hay cheques en cartera'
+                              : 'Seleccionar cheque…'}
+                        </option>
+                        {availableCheques.map((cheque) => (
+                          <option key={cheque.id} value={cheque.id}>
+                            N.º {cheque.numero_cheque} · {cheque.banco} · {formatCurrency(cheque.importe)} · {formatDate(cheque.fecha_vencimiento)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {availableChequesError && (
+                      <p className="mt-2 text-xs font-bold text-red-700" role="alert">{availableChequesError}</p>
+                    )}
+                    <p className="mt-2 text-xs font-semibold text-amber-800">
+                      El importe debe coincidir con el saldo pendiente de {formatCurrency(getInvoiceBalance(selectedInvoiceForPayment))}.
+                    </p>
+                  </div>
+                )}
+
                 <label className="block">
                   <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Fecha de pago</span>
                   <input required type="date" value={paymentForm.fecha_pago} onChange={(event) => setPaymentForm({ ...paymentForm, fecha_pago: event.target.value })} className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" />

@@ -44,7 +44,7 @@ const getAndIncrementSetting = async (client: Queryable, key: string, defaultVal
   return currentValue;
 };
 
-const DATE_BASED_MOVEMENT_ORIGINS = new Set(['egreso_manual', 'compra', 'cobranza', 'pago_cc', 'cheque_rechazado']);
+const DATE_BASED_MOVEMENT_ORIGINS = new Set(['egreso_manual', 'compra', 'cobranza', 'pago_cc', 'cheque_rechazado', 'anulacion_pago_proveedor']);
 
 const mapMovement = (row: any) => ({
   id: toNumber(row.id),
@@ -71,6 +71,7 @@ const mapMovement = (row: any) => ({
   reversed_movement_id: row.reversed_movement_id === null || row.reversed_movement_id === undefined ? null : toNumber(row.reversed_movement_id),
   financial_movement_cancellation_id: row.financial_movement_cancellation_id === null || row.financial_movement_cancellation_id === undefined ? null : toNumber(row.financial_movement_cancellation_id),
   client_payment_cancellation_id: row.client_payment_cancellation_id === null || row.client_payment_cancellation_id === undefined ? null : toNumber(row.client_payment_cancellation_id),
+  supplier_payment_cancellation_id: row.supplier_payment_cancellation_id === null || row.supplier_payment_cancellation_id === undefined ? null : toNumber(row.supplier_payment_cancellation_id),
   route_item_id: row.route_item_id === null || row.route_item_id === undefined ? null : toNumber(row.route_item_id),
   nombre_cliente: row.nombre_cliente || null,
 });

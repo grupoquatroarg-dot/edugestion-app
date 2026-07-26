@@ -8,11 +8,15 @@ import {
   createPurchaseInvoice,
   getPurchaseInvoiceById,
   listPurchaseInvoices,
+  listAvailablePurchaseCheques,
+  payPurchaseInvoice,
   purchaseInvoiceBodySchema,
+  purchaseInvoicePaymentSchema,
 } from "../services/purchaseInvoiceService.js";
 import { purchaseInvoiceCancellationService } from "../services/purchaseInvoiceCancellationService.js";
 import { listActivePaymentMethods } from "../services/paymentMethodAvailabilityService.js";
 import { providerRepository } from "../repositories/providerRepository.js";
+import { supplierPaymentCancellationService } from "../services/supplierPaymentCancellationService.js";
 
 const router = Router();
 
@@ -30,6 +34,9 @@ router.get("/", requirePermission("suppliers", "view"), async (req, res) => {
     if (endpoint === "proveedores") {
       const activeOnly = String(req.query.active_only || "").toLowerCase() === "true";
       return sendSuccess(res, await providerRepository.findAll({ activeOnly }));
+    }
+    if (endpoint === "available-cheques") {
+      return sendSuccess(res, await listAvailablePurchaseCheques());
     }
 
     const invoices = await listPurchaseInvoices();
@@ -76,6 +83,43 @@ router.post("/:id/cancel", requirePermission("suppliers", "delete"), async (req,
       error.message || "Error al anular la factura de compra",
       error.statusCode || 400
     );
+  }
+});
+
+router.post("/", async (req, res, next) => {
+  if (String(req.query.endpoint || "") !== "cancel-payment") return next();
+
+  return requirePermission("suppliers", "delete")(req, res, async () => {
+    try {
+      const movementId = Number(req.query.id);
+      const result = await supplierPaymentCancellationService.cancelSupplierPayment({
+        movementId,
+        motivo: String(req.body?.motivo || ""),
+        usuario: (req as any).user?.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Pago a proveedor anulado correctamente");
+    } catch (error: any) {
+      return sendError(
+        res,
+        error.message || "Error al anular el pago a proveedor",
+        error.statusCode || 400
+      );
+    }
+  });
+});
+
+router.patch("/", requirePermission("suppliers", "create"), async (req, res) => {
+  const parsed = purchaseInvoicePaymentSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return sendError(res, parsed.error.issues[0]?.message || "Datos de pago inválidos", 400, parsed.error.issues);
+  }
+
+  try {
+    const id = Number(req.query.id);
+    const invoice = await payPurchaseInvoice(id, parsed.data, (req as any).user?.userName || "Sistema");
+    return sendSuccess(res, invoice, "Pago de proveedor registrado");
+  } catch (error: any) {
+    return sendError(res, error.message || "Error al registrar pago de proveedor", error.statusCode || 400);
   }
 });
 

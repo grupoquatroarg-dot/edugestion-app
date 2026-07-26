@@ -29,6 +29,7 @@ export const purchaseInvoiceBodySchema = z.object({
 export const purchaseInvoicePaymentSchema = z.object({
   metodo_pago_real: z.string().min(1, "Método de pago requerido"),
   fecha_pago: z.string().optional(),
+  cheque_id: z.union([z.number(), z.string()]).optional(),
 });
 
 const CTA_CTE = "Cta Cte";
@@ -42,6 +43,15 @@ const toNumber = (value: any, fallback: number = 0) => {
 const getExecutor = (executor?: Queryable) => executor || getPostgresPool();
 
 const isCurrentAccount = (method?: string | null) => String(method || "").trim().toLowerCase() === CTA_CTE.toLowerCase();
+const isChequePayment = (method?: string | null) => {
+  const value = String(method || "").trim().toLowerCase();
+  return value === "cheque" || value === "cheque_en_cartera" || value === "cheque en cartera";
+};
+
+const appendAuditNote = (current: unknown, note: string) => {
+  const base = String(current || "").trim();
+  return base ? `${base}\n${note}` : note;
+};
 
 const sanitizeBaseCode = (name: string) => {
   const cleaned = name
@@ -87,6 +97,15 @@ const mapInvoice = (row: any) => {
     anulada_at: row.anulada_at || null,
     anulada_por: row.anulada_por || null,
     anulacion_motivo: row.anulacion_motivo || null,
+    supplier_payment_movement_id:
+      row.supplier_payment_movement_id === null || row.supplier_payment_movement_id === undefined
+        ? null
+        : toNumber(row.supplier_payment_movement_id),
+    supplier_payment_method: row.supplier_payment_method || null,
+    supplier_payment_cheque_id:
+      row.supplier_payment_cheque_id === null || row.supplier_payment_cheque_id === undefined
+        ? null
+        : toNumber(row.supplier_payment_cheque_id),
   };
 };
 
@@ -228,6 +247,8 @@ const insertPurchaseFinancialMovementPg = async (
     fecha: string;
     usuario: string;
     allocationType: "initial_payment" | "supplier_payment";
+    chequeId?: number | null;
+    reversionVersion?: 0 | 1;
   }
 ) => {
   const nextPaymentNum = await getNextPaymentNumberPg(client);
@@ -245,9 +266,12 @@ const insertPurchaseFinancialMovementPg = async (
         fecha,
         usuario,
         numero_pago,
-        purchase_invoice_id
+        cheque_id,
+        purchase_invoice_id,
+        estado,
+        reversion_version
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING id
     `,
     [
@@ -260,7 +284,10 @@ const insertPurchaseFinancialMovementPg = async (
       params.fecha,
       params.usuario || "Sistema",
       nextPaymentNum,
+      params.chequeId || null,
       params.purchaseInvoiceId,
+      "Activo",
+      params.reversionVersion ?? 0,
     ]
   );
 
@@ -276,15 +303,17 @@ const insertPurchaseFinancialMovementPg = async (
         purchase_invoice_id,
         movimiento_financiero_id,
         monto,
-        allocation_type
+        allocation_type,
+        estado
       )
-      VALUES ($1, $2, $3, $4)
+      VALUES ($1, $2, $3, $4, $5)
     `,
     [
       params.purchaseInvoiceId,
       movementId,
       params.total,
       params.allocationType,
+      "Activo",
     ]
   );
 
@@ -298,7 +327,40 @@ export const listPurchaseInvoices = async (executor?: Queryable) => {
         `
           SELECT pi.id, pi.proveedor_id, pi.numero_factura, pi.total, pi.fecha AS fecha_compra, pi.metodo_pago, p.nombre AS proveedor,
                  pi.estado_pago, pi.monto_pagado, pi.fecha_pago, pi.metodo_pago_real,
-                 pi.estado, pi.reversion_version, pi.anulada_at, pi.anulada_por, pi.anulacion_motivo
+                 pi.estado, pi.reversion_version, pi.anulada_at, pi.anulada_por, pi.anulacion_motivo,
+                 (
+                   SELECT pia.movimiento_financiero_id
+                   FROM purchase_invoice_payment_allocations pia
+                   JOIN movimientos_financieros mf ON mf.id = pia.movimiento_financiero_id
+                   WHERE pia.purchase_invoice_id = pi.id
+                     AND pia.allocation_type = 'supplier_payment'
+                     AND COALESCE(pia.estado, 'Activo') = 'Activo'
+                     AND COALESCE(mf.estado, 'Activo') <> 'Anulado'
+                   ORDER BY pia.id DESC
+                   LIMIT 1
+                 ) AS supplier_payment_movement_id,
+                 (
+                   SELECT mf.forma_pago
+                   FROM purchase_invoice_payment_allocations pia
+                   JOIN movimientos_financieros mf ON mf.id = pia.movimiento_financiero_id
+                   WHERE pia.purchase_invoice_id = pi.id
+                     AND pia.allocation_type = 'supplier_payment'
+                     AND COALESCE(pia.estado, 'Activo') = 'Activo'
+                     AND COALESCE(mf.estado, 'Activo') <> 'Anulado'
+                   ORDER BY pia.id DESC
+                   LIMIT 1
+                 ) AS supplier_payment_method,
+                 (
+                   SELECT mf.cheque_id
+                   FROM purchase_invoice_payment_allocations pia
+                   JOIN movimientos_financieros mf ON mf.id = pia.movimiento_financiero_id
+                   WHERE pia.purchase_invoice_id = pi.id
+                     AND pia.allocation_type = 'supplier_payment'
+                     AND COALESCE(pia.estado, 'Activo') = 'Activo'
+                     AND COALESCE(mf.estado, 'Activo') <> 'Anulado'
+                   ORDER BY pia.id DESC
+                   LIMIT 1
+                 ) AS supplier_payment_cheque_id
           FROM purchase_invoices pi
           JOIN proveedores p ON pi.proveedor_id = p.id
           ORDER BY pi.fecha DESC, pi.id DESC
@@ -314,7 +376,40 @@ export const listPurchaseInvoices = async (executor?: Queryable) => {
     `
       SELECT pi.id, pi.proveedor_id, pi.numero_factura, pi.total, pi.fecha AS fecha_compra, pi.metodo_pago, p.nombre AS proveedor,
              pi.estado_pago, pi.monto_pagado, pi.fecha_pago, pi.metodo_pago_real,
-             pi.estado, pi.reversion_version, pi.anulada_at, pi.anulada_por, pi.anulacion_motivo
+             pi.estado, pi.reversion_version, pi.anulada_at, pi.anulada_por, pi.anulacion_motivo,
+                 (
+                   SELECT pia.movimiento_financiero_id
+                   FROM purchase_invoice_payment_allocations pia
+                   JOIN movimientos_financieros mf ON mf.id = pia.movimiento_financiero_id
+                   WHERE pia.purchase_invoice_id = pi.id
+                     AND pia.allocation_type = 'supplier_payment'
+                     AND COALESCE(pia.estado, 'Activo') = 'Activo'
+                     AND COALESCE(mf.estado, 'Activo') <> 'Anulado'
+                   ORDER BY pia.id DESC
+                   LIMIT 1
+                 ) AS supplier_payment_movement_id,
+                 (
+                   SELECT mf.forma_pago
+                   FROM purchase_invoice_payment_allocations pia
+                   JOIN movimientos_financieros mf ON mf.id = pia.movimiento_financiero_id
+                   WHERE pia.purchase_invoice_id = pi.id
+                     AND pia.allocation_type = 'supplier_payment'
+                     AND COALESCE(pia.estado, 'Activo') = 'Activo'
+                     AND COALESCE(mf.estado, 'Activo') <> 'Anulado'
+                   ORDER BY pia.id DESC
+                   LIMIT 1
+                 ) AS supplier_payment_method,
+                 (
+                   SELECT mf.cheque_id
+                   FROM purchase_invoice_payment_allocations pia
+                   JOIN movimientos_financieros mf ON mf.id = pia.movimiento_financiero_id
+                   WHERE pia.purchase_invoice_id = pi.id
+                     AND pia.allocation_type = 'supplier_payment'
+                     AND COALESCE(pia.estado, 'Activo') = 'Activo'
+                     AND COALESCE(mf.estado, 'Activo') <> 'Anulado'
+                   ORDER BY pia.id DESC
+                   LIMIT 1
+                 ) AS supplier_payment_cheque_id
       FROM purchase_invoices pi
       JOIN proveedores p ON pi.proveedor_id = p.id
       ORDER BY pi.fecha DESC, pi.id DESC
@@ -331,7 +426,40 @@ export const getPurchaseInvoiceById = async (id: number, executor?: Queryable) =
         `
           SELECT pi.id, pi.proveedor_id, pi.numero_factura, pi.total, pi.fecha AS fecha_compra, pi.metodo_pago, p.nombre AS proveedor,
                  pi.estado_pago, pi.monto_pagado, pi.fecha_pago, pi.metodo_pago_real,
-                 pi.estado, pi.reversion_version, pi.anulada_at, pi.anulada_por, pi.anulacion_motivo
+                 pi.estado, pi.reversion_version, pi.anulada_at, pi.anulada_por, pi.anulacion_motivo,
+                 (
+                   SELECT pia.movimiento_financiero_id
+                   FROM purchase_invoice_payment_allocations pia
+                   JOIN movimientos_financieros mf ON mf.id = pia.movimiento_financiero_id
+                   WHERE pia.purchase_invoice_id = pi.id
+                     AND pia.allocation_type = 'supplier_payment'
+                     AND COALESCE(pia.estado, 'Activo') = 'Activo'
+                     AND COALESCE(mf.estado, 'Activo') <> 'Anulado'
+                   ORDER BY pia.id DESC
+                   LIMIT 1
+                 ) AS supplier_payment_movement_id,
+                 (
+                   SELECT mf.forma_pago
+                   FROM purchase_invoice_payment_allocations pia
+                   JOIN movimientos_financieros mf ON mf.id = pia.movimiento_financiero_id
+                   WHERE pia.purchase_invoice_id = pi.id
+                     AND pia.allocation_type = 'supplier_payment'
+                     AND COALESCE(pia.estado, 'Activo') = 'Activo'
+                     AND COALESCE(mf.estado, 'Activo') <> 'Anulado'
+                   ORDER BY pia.id DESC
+                   LIMIT 1
+                 ) AS supplier_payment_method,
+                 (
+                   SELECT mf.cheque_id
+                   FROM purchase_invoice_payment_allocations pia
+                   JOIN movimientos_financieros mf ON mf.id = pia.movimiento_financiero_id
+                   WHERE pia.purchase_invoice_id = pi.id
+                     AND pia.allocation_type = 'supplier_payment'
+                     AND COALESCE(pia.estado, 'Activo') = 'Activo'
+                     AND COALESCE(mf.estado, 'Activo') <> 'Anulado'
+                   ORDER BY pia.id DESC
+                   LIMIT 1
+                 ) AS supplier_payment_cheque_id
           FROM purchase_invoices pi
           JOIN proveedores p ON pi.proveedor_id = p.id
           WHERE pi.id = ?
@@ -366,7 +494,40 @@ export const getPurchaseInvoiceById = async (id: number, executor?: Queryable) =
     `
       SELECT pi.id, pi.proveedor_id, pi.numero_factura, pi.total, pi.fecha AS fecha_compra, pi.metodo_pago, p.nombre AS proveedor,
              pi.estado_pago, pi.monto_pagado, pi.fecha_pago, pi.metodo_pago_real,
-             pi.estado, pi.reversion_version, pi.anulada_at, pi.anulada_por, pi.anulacion_motivo
+             pi.estado, pi.reversion_version, pi.anulada_at, pi.anulada_por, pi.anulacion_motivo,
+                 (
+                   SELECT pia.movimiento_financiero_id
+                   FROM purchase_invoice_payment_allocations pia
+                   JOIN movimientos_financieros mf ON mf.id = pia.movimiento_financiero_id
+                   WHERE pia.purchase_invoice_id = pi.id
+                     AND pia.allocation_type = 'supplier_payment'
+                     AND COALESCE(pia.estado, 'Activo') = 'Activo'
+                     AND COALESCE(mf.estado, 'Activo') <> 'Anulado'
+                   ORDER BY pia.id DESC
+                   LIMIT 1
+                 ) AS supplier_payment_movement_id,
+                 (
+                   SELECT mf.forma_pago
+                   FROM purchase_invoice_payment_allocations pia
+                   JOIN movimientos_financieros mf ON mf.id = pia.movimiento_financiero_id
+                   WHERE pia.purchase_invoice_id = pi.id
+                     AND pia.allocation_type = 'supplier_payment'
+                     AND COALESCE(pia.estado, 'Activo') = 'Activo'
+                     AND COALESCE(mf.estado, 'Activo') <> 'Anulado'
+                   ORDER BY pia.id DESC
+                   LIMIT 1
+                 ) AS supplier_payment_method,
+                 (
+                   SELECT mf.cheque_id
+                   FROM purchase_invoice_payment_allocations pia
+                   JOIN movimientos_financieros mf ON mf.id = pia.movimiento_financiero_id
+                   WHERE pia.purchase_invoice_id = pi.id
+                     AND pia.allocation_type = 'supplier_payment'
+                     AND COALESCE(pia.estado, 'Activo') = 'Activo'
+                     AND COALESCE(mf.estado, 'Activo') <> 'Anulado'
+                   ORDER BY pia.id DESC
+                   LIMIT 1
+                 ) AS supplier_payment_cheque_id
       FROM purchase_invoices pi
       JOIN proveedores p ON pi.proveedor_id = p.id
       WHERE pi.id = $1
@@ -397,7 +558,47 @@ export const getPurchaseInvoiceById = async (id: number, executor?: Queryable) =
   };
 };
 
+export const listAvailablePurchaseCheques = async (executor?: Queryable) => {
+  if (!isPostgresConfigured()) {
+    return (db
+      .prepare(
+        `SELECT id, numero_cheque, banco, importe, fecha_vencimiento, estado, cliente_id, venta_id, observaciones
+         FROM cheques
+         WHERE LOWER(COALESCE(estado, 'en_cartera')) = 'en_cartera'
+         ORDER BY fecha_vencimiento ASC, id ASC`
+      )
+      .all() as any[]).map((row) => ({
+        ...row,
+        id: toNumber(row.id),
+        importe: toNumber(row.importe),
+        fecha_vencimiento: toStoredDateOnly(row.fecha_vencimiento),
+      }));
+  }
+
+  const queryable = getExecutor(executor);
+  const result = await queryable.query(
+    `SELECT id, numero_cheque, banco, importe, fecha_vencimiento, estado, cliente_id, venta_id, observaciones
+     FROM cheques
+     WHERE LOWER(COALESCE(estado, 'en_cartera')) = 'en_cartera'
+     ORDER BY fecha_vencimiento ASC NULLS LAST, id ASC`
+  );
+
+  return result.rows.map((row) => ({
+    ...row,
+    id: toNumber(row.id),
+    importe: toNumber(row.importe),
+    fecha_vencimiento: toStoredDateOnly(row.fecha_vencimiento),
+  }));
+};
+
 export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvoiceBodySchema>, userName: string) => {
+  if (isChequePayment(payload.metodo_pago)) {
+    throw new AppError(
+      "Para pagar con un cheque en cartera, registrá primero la factura en Cta Cte y luego utilizá Registrar pago.",
+      400
+    );
+  }
+
   const invoiceDate = normalizeBusinessDateForStorage(payload.fecha);
   const isDebt = isCurrentAccount(payload.metodo_pago);
   const estadoPago = isDebt ? "pendiente" : "pagado";
@@ -819,13 +1020,23 @@ export const payPurchaseInvoice = async (
   userName: string
 ) => {
   const paymentDate = normalizeBusinessDateForStorage(payload.fecha_pago);
+  const chequePayment = isChequePayment(payload.metodo_pago_real);
+  const paymentMethod = chequePayment ? "cheque_en_cartera" : payload.metodo_pago_real;
+  const rawChequeId = payload.cheque_id === null || payload.cheque_id === undefined || payload.cheque_id === ""
+    ? null
+    : Number(payload.cheque_id);
+  const chequeId = chequePayment ? rawChequeId : null;
 
-  if (isCurrentAccount(payload.metodo_pago_real)) {
+  if (isCurrentAccount(paymentMethod)) {
     throw new AppError("El pago de una cuenta corriente debe registrarse con un método real de pago.", 400);
   }
 
+  if (chequePayment && (!Number.isInteger(chequeId) || Number(chequeId) <= 0)) {
+    throw new AppError("Seleccioná un cheque en cartera para registrar el pago.", 400);
+  }
+
   if (!isPostgresConfigured()) {
-    await assertPaymentMethodActive(payload.metodo_pago_real);
+    await assertPaymentMethodActive(paymentMethod);
     const runTransaction = db.transaction(() => {
       const invoice = db
         .prepare(
@@ -850,8 +1061,23 @@ export const payPurchaseInvoice = async (
       const montoPagadoActual = toNumber(invoice.monto_pagado);
       const saldo = Math.max(0, total - montoPagadoActual);
 
-      if (saldo <= 0 || invoice.estado_pago === "pagado") {
+      if (saldo <= 0 || String(invoice.estado_pago || "").toLowerCase() === "pagado") {
         throw new AppError("Esta factura ya está pagada.", 400);
+      }
+
+      let cheque: any = null;
+      if (chequePayment) {
+        cheque = db
+          .prepare("SELECT * FROM cheques WHERE id = ? LIMIT 1")
+          .get(chequeId) as any;
+
+        if (!cheque) throw new AppError("Cheque no encontrado", 404);
+        if (String(cheque.estado || "").toLowerCase() !== "en_cartera") {
+          throw new AppError("El cheque seleccionado ya no está en cartera.", 409);
+        }
+        if (Math.abs(toNumber(cheque.importe) - saldo) > 0.01) {
+          throw new AppError("El importe del cheque debe coincidir exactamente con el saldo de la factura.", 409);
+        }
       }
 
       db.prepare(
@@ -860,7 +1086,7 @@ export const payPurchaseInvoice = async (
           SET estado_pago = ?, monto_pagado = ?, fecha_pago = ?, metodo_pago_real = ?
           WHERE id = ?
         `
-      ).run("pagado", total, paymentDate, payload.metodo_pago_real, id);
+      ).run("pagado", total, paymentDate, paymentMethod, id);
 
       const nextPaymentNum = getNextPaymentNumberSqlite();
       const movementInsert = db
@@ -876,9 +1102,12 @@ export const payPurchaseInvoice = async (
               fecha,
               usuario,
               numero_pago,
-              purchase_invoice_id
+              cheque_id,
+              purchase_invoice_id,
+              estado,
+              reversion_version
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `
         )
         .run(
@@ -886,13 +1115,18 @@ export const payPurchaseInvoice = async (
           "compra",
           `Pago Factura Compra #${invoice.numero_factura} - ${invoice.proveedor || ""}`,
           "Compras",
-          payload.metodo_pago_real,
+          paymentMethod,
           saldo,
           paymentDate,
           userName || "Sistema",
           nextPaymentNum,
-          id
+          chequeId,
+          id,
+          "Activo",
+          1
         );
+
+      const movementId = Number(movementInsert.lastInsertRowid);
 
       db.prepare(
         `
@@ -900,16 +1134,33 @@ export const payPurchaseInvoice = async (
             purchase_invoice_id,
             movimiento_financiero_id,
             monto,
-            allocation_type
+            allocation_type,
+            estado
           )
-          VALUES (?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?)
         `
-      ).run(
-        id,
-        Number(movementInsert.lastInsertRowid),
-        saldo,
-        "supplier_payment"
-      );
+      ).run(id, movementId, saldo, "supplier_payment", "Activo");
+
+      if (chequePayment && chequeId) {
+        db.prepare(
+          `UPDATE cheques
+           SET estado = 'entregado_proveedor',
+               proveedor_id = ?,
+               purchase_invoice_id = ?,
+               fecha_entrega = ?,
+               observaciones = ?
+           WHERE id = ?`
+        ).run(
+          invoice.proveedor_id,
+          id,
+          paymentDate,
+          appendAuditNote(
+            cheque?.observaciones,
+            `Entregado como pago de Factura Compra #${invoice.numero_factura}`
+          ),
+          chequeId
+        );
+      }
     });
 
     runTransaction();
@@ -921,7 +1172,7 @@ export const payPurchaseInvoice = async (
 
   try {
     await client.query("BEGIN");
-    await assertPaymentMethodActive(payload.metodo_pago_real, client);
+    await assertPaymentMethodActive(paymentMethod, client);
 
     const invoiceResult = await client.query(
       `
@@ -949,8 +1200,29 @@ export const payPurchaseInvoice = async (
     const montoPagadoActual = toNumber(invoice.monto_pagado);
     const saldo = Math.max(0, total - montoPagadoActual);
 
-    if (saldo <= 0 || invoice.estado_pago === "pagado") {
+    if (saldo <= 0 || String(invoice.estado_pago || "").toLowerCase() === "pagado") {
       throw new AppError("Esta factura ya está pagada.", 400);
+    }
+
+    let cheque: any = null;
+    if (chequePayment) {
+      const chequeResult = await client.query(
+        `SELECT *
+         FROM cheques
+         WHERE id = $1
+         LIMIT 1
+         FOR UPDATE`,
+        [chequeId]
+      );
+
+      cheque = chequeResult.rows[0];
+      if (!cheque) throw new AppError("Cheque no encontrado", 404);
+      if (String(cheque.estado || "").toLowerCase() !== "en_cartera") {
+        throw new AppError("El cheque seleccionado ya no está en cartera.", 409);
+      }
+      if (Math.abs(toNumber(cheque.importe) - saldo) > 0.01) {
+        throw new AppError("El importe del cheque debe coincidir exactamente con el saldo de la factura.", 409);
+      }
     }
 
     await client.query(
@@ -962,19 +1234,47 @@ export const payPurchaseInvoice = async (
             metodo_pago_real = $4
         WHERE id = $5
       `,
-      ["pagado", total, paymentDate, payload.metodo_pago_real, id]
+      ["pagado", total, paymentDate, paymentMethod, id]
     );
 
-    await insertPurchaseFinancialMovementPg(client, {
+    const movementId = await insertPurchaseFinancialMovementPg(client, {
       purchaseInvoiceId: id,
       numeroFactura: invoice.numero_factura,
       proveedor: invoice.proveedor,
-      metodoPago: payload.metodo_pago_real,
+      metodoPago: paymentMethod,
       total: saldo,
       fecha: paymentDate,
       usuario: userName || "Sistema",
       allocationType: "supplier_payment",
+      chequeId,
+      reversionVersion: 1,
     });
+
+    if (chequePayment && chequeId) {
+      await client.query(
+        `UPDATE cheques
+         SET estado = 'entregado_proveedor',
+             proveedor_id = $1,
+             purchase_invoice_id = $2,
+             fecha_entrega = $3,
+             observaciones = $4
+         WHERE id = $5`,
+        [
+          invoice.proveedor_id,
+          id,
+          paymentDate,
+          appendAuditNote(
+            cheque?.observaciones,
+            `Entregado como pago de Factura Compra #${invoice.numero_factura}`
+          ),
+          chequeId,
+        ]
+      );
+    }
+
+    if (!movementId) {
+      throw new AppError("No se pudo registrar el movimiento del pago.", 500);
+    }
 
     await client.query("COMMIT");
 

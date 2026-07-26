@@ -115,7 +115,12 @@ for (const [label, source] of [
   ["Dashboard", dashboardApi],
   ["Reportes", reportRoutes],
 ] as const) {
-  const matches = source.match(/NOT IN \('anulacion_egreso_manual', 'anulacion_cobranza'(?:, 'anulacion_cheque_rechazado')?\)/g) || [];
+  const matches = Array.from(source.matchAll(/NOT IN \(([^)]*)\)/g))
+    .map((match) => match[1])
+    .filter((values) =>
+      values.includes("'anulacion_egreso_manual'") &&
+      values.includes("'anulacion_cobranza'")
+    );
   assert(matches.length >= 3, `${label} todavía duplica el efecto financiero de las cobranzas anuladas.`);
 }
 

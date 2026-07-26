@@ -394,6 +394,7 @@ export function initDb() {
       reversed_movement_id INTEGER,
       financial_movement_cancellation_id INTEGER,
       client_payment_cancellation_id INTEGER,
+      supplier_payment_cancellation_id INTEGER,
       route_item_id INTEGER,
       FOREIGN KEY (cliente_id) REFERENCES clientes(id),
       FOREIGN KEY (venta_id) REFERENCES sales(id),
@@ -566,10 +567,36 @@ export function initDb() {
       movimiento_financiero_id INTEGER NOT NULL,
       monto REAL NOT NULL,
       allocation_type TEXT NOT NULL,
+      estado TEXT NOT NULL DEFAULT 'Activo',
+      anulada_at TEXT,
+      anulada_por TEXT,
+      anulacion_motivo TEXT,
+      supplier_payment_cancellation_id INTEGER,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       UNIQUE (purchase_invoice_id, movimiento_financiero_id),
       FOREIGN KEY (purchase_invoice_id) REFERENCES purchase_invoices(id) ON DELETE CASCADE,
-      FOREIGN KEY (movimiento_financiero_id) REFERENCES movimientos_financieros(id)
+      FOREIGN KEY (movimiento_financiero_id) REFERENCES movimientos_financieros(id),
+      FOREIGN KEY (supplier_payment_cancellation_id) REFERENCES supplier_payment_cancellations(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS supplier_payment_cancellations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      movimiento_financiero_id INTEGER NOT NULL UNIQUE,
+      reversal_movement_id INTEGER,
+      purchase_invoice_id INTEGER NOT NULL,
+      motivo TEXT NOT NULL,
+      anulada_por TEXT NOT NULL,
+      anulada_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      monto_original REAL NOT NULL,
+      monto_pagado_original REAL NOT NULL,
+      estado_pago_original TEXT,
+      cheque_id INTEGER,
+      cheque_estado_original TEXT,
+      snapshot TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (movimiento_financiero_id) REFERENCES movimientos_financieros(id),
+      FOREIGN KEY (reversal_movement_id) REFERENCES movimientos_financieros(id),
+      FOREIGN KEY (purchase_invoice_id) REFERENCES purchase_invoices(id),
+      FOREIGN KEY (cheque_id) REFERENCES cheques(id)
     );
 
     CREATE TABLE IF NOT EXISTS purchase_invoice_cancellations (
@@ -673,12 +700,18 @@ export function initDb() {
   try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN reversed_movement_id INTEGER"); } catch (e) {}
   try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN financial_movement_cancellation_id INTEGER"); } catch (e) {}
   try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN client_payment_cancellation_id INTEGER"); } catch (e) {}
+  try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN supplier_payment_cancellation_id INTEGER"); } catch (e) {}
   try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN route_item_id INTEGER"); } catch (e) {}
   try { db.exec("ALTER TABLE sale_payment_allocations ADD COLUMN estado TEXT NOT NULL DEFAULT 'Activo'"); } catch (e) {}
   try { db.exec("ALTER TABLE sale_payment_allocations ADD COLUMN anulada_at TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE sale_payment_allocations ADD COLUMN anulada_por TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE sale_payment_allocations ADD COLUMN anulacion_motivo TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE sale_payment_allocations ADD COLUMN client_payment_cancellation_id INTEGER"); } catch (e) {}
+  try { db.exec("ALTER TABLE purchase_invoice_payment_allocations ADD COLUMN estado TEXT NOT NULL DEFAULT 'Activo'"); } catch (e) {}
+  try { db.exec("ALTER TABLE purchase_invoice_payment_allocations ADD COLUMN anulada_at TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE purchase_invoice_payment_allocations ADD COLUMN anulada_por TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE purchase_invoice_payment_allocations ADD COLUMN anulacion_motivo TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE purchase_invoice_payment_allocations ADD COLUMN supplier_payment_cancellation_id INTEGER"); } catch (e) {}
   try { db.exec("ALTER TABLE cheques ADD COLUMN purchase_invoice_id INTEGER"); } catch (e) {}
   try { db.exec("ALTER TABLE cheques ADD COLUMN estado_actualizado_at TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE cheques ADD COLUMN estado_actualizado_por TEXT"); } catch (e) {}
