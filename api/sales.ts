@@ -20,6 +20,7 @@ const saleSchema = z.object({
   monto_pagado: z.number().nonnegative().optional(),
   notes: z.string().optional(),
   cheque_data: z.any().optional(),
+  route_item_id: z.number().int().positive().optional(),
   items: z.array(z.object({
     product_id: z.number(),
     cantidad: z.number().positive(),

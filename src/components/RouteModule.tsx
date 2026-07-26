@@ -72,6 +72,13 @@ interface Route {
   date: string;
   status: 'planificada' | 'en curso' | 'finalizada' | 'cancelada';
   created_at: string;
+  cancelled_at?: string | null;
+  cancelled_by?: string | null;
+  cancel_reason?: string | null;
+  cancelled_from_status?: string | null;
+  reopened_at?: string | null;
+  reopened_by?: string | null;
+  reopen_reason?: string | null;
   total_customers?: number;
   visited_customers?: number;
   sales_count?: number;
@@ -109,6 +116,9 @@ export default function RouteModule() {
   const [actionNotes, setActionNotes] = useState<string>('');
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
   const [paymentMethod, setPaymentMethod] = useState<string>('efectivo');
+  const [quickChequeNumber, setQuickChequeNumber] = useState('');
+  const [quickChequeBank, setQuickChequeBank] = useState('');
+  const [quickChequeDueDate, setQuickChequeDueDate] = useState('');
   const [showMap, setShowMap] = useState(false);
   const [userLocation, setUserLocation] = useState<[number, number] | null>([-32.8596, -61.1447]); // Default to Carcaraña, Santa Fe (Edu's house area)
   const [nearbyClient, setNearbyClient] = useState<any | null>(null);
@@ -124,7 +134,8 @@ export default function RouteModule() {
   const [quickActionSaving, setQuickActionSaving] = useState(false);
   const [updatingItemId, setUpdatingItemId] = useState<number | null>(null);
   const [routeActionId, setRouteActionId] = useState<number | null>(null);
-  const [confirmAction, setConfirmAction] = useState<{ type: 'complete' | 'delete'; routeId: number; routeName: string } | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ type: 'complete' | 'cancel' | 'reopen'; routeId: number; routeName: string } | null>(null);
+  const [routeLifecycleReason, setRouteLifecycleReason] = useState('');
 
   // Planning state
   const [planDate, setPlanDate] = useState(() => addBusinessDays(getBusinessDateInputValue(), 1));
@@ -347,7 +358,11 @@ export default function RouteModule() {
     try {
       if (quickActionType === 'venta') {
         if (actionCart.length === 0) return;
-        // Register sale
+        const quickSaleTotal = actionCart.reduce((sum, item) => {
+          const product = products.find(p => p.id === item.productId);
+          return sum + Number(product?.sale_price || 0) * item.quantity;
+        }, 0);
+        // La venta rápida de ruta es en efectivo y queda pagada por el total.
         const res = await apiFetch('/api/sales', {
           method: 'POST',
           body: JSON.stringify({
@@ -358,25 +373,23 @@ export default function RouteModule() {
               cantidad: item.quantity,
               precio_venta: products.find(p => p.id === item.productId)?.sale_price || 0
             })),
-            metodo_pago: 'efectivo', // Default for quick sale
+            metodo_pago: 'efectivo',
+            monto_pagado: quickSaleTotal,
             notes: actionNotes,
-            total: actionCart.reduce((sum, item) => {
-              const product = products.find(p => p.id === item.productId);
-              return sum + (product?.sale_price || 0) * item.quantity;
-            }, 0)
+            route_item_id: selectedItemForAction.id,
+            total: quickSaleTotal
           })
         });
 
         if (res.ok) {
           const body = await res.json();
           const data = unwrapResponse(body);
-          if (data.type === 'supplier_order') {
-            showNotification('success', data.message);
-            await handleUpdateItemStatus(selectedItemForAction.id, 'pedido tomado');
-          } else {
-            await handleUpdateItemStatus(selectedItemForAction.id, 'venta realizada');
-            showNotification('success', 'Venta registrada correctamente.');
-          }
+          showNotification(
+            'success',
+            data.supplierOrderGenerated
+              ? 'Venta registrada y pedido a proveedor generado por faltante.'
+              : 'Venta registrada correctamente.'
+          );
         } else {
           const body = await res.json();
           const errorData = unwrapResponse(body);
@@ -388,6 +401,7 @@ export default function RouteModule() {
         const res = await apiFetch('/api/clientes?endpoint=route-supplier-order', {
           method: 'POST',
           body: JSON.stringify({
+            route_item_id: selectedItemForAction.id,
             cliente: selectedItemForAction.nombre_apellido,
             cliente_id: selectedItemForAction.cliente_id,
             notes: actionNotes,
@@ -400,7 +414,6 @@ export default function RouteModule() {
         const body = await res.json();
         if (res.ok) {
           unwrapResponse(body);
-          await handleUpdateItemStatus(selectedItemForAction.id, 'pedido tomado');
           showNotification('success', 'Pedido registrado correctamente.');
         } else {
           const errorData = unwrapResponse(body);
@@ -416,7 +429,13 @@ export default function RouteModule() {
             metodo_pago: paymentMethod,
             fecha: new Date().toISOString(),
             observaciones: actionNotes || undefined,
-            route_item_id: selectedItemForAction.id
+            route_item_id: selectedItemForAction.id,
+            cheque_data: paymentMethod === 'cheque' ? {
+              numero_cheque: quickChequeNumber.trim(),
+              banco: quickChequeBank.trim(),
+              fecha_vencimiento: quickChequeDueDate,
+              importe: paymentAmount,
+            } : undefined,
           })
         });
         const body = await res.json();
@@ -429,6 +448,11 @@ export default function RouteModule() {
         }
       }
       setActionNotes('');
+      setPaymentAmount(0);
+      setPaymentMethod('efectivo');
+      setQuickChequeNumber('');
+      setQuickChequeBank('');
+      setQuickChequeDueDate('');
       setShowQuickActionModal(false);
       fetchTodayRoute();
     } catch (error) {
@@ -442,16 +466,6 @@ export default function RouteModule() {
   const handleUpdateItemStatus = async (itemId: number, status: 'visitado' | 'omitido' | 'pendiente' | 'pedido tomado' | 'venta realizada', notes: string = '', extraFields: any = {}) => {
     setUpdatingItemId(itemId);
     try {
-      // If the route is still 'planificada', update it to 'en curso'
-      if (todayRoute && todayRoute.status === 'planificada') {
-        const routeRes = await apiFetch(`/api/clientes?endpoint=routes&id=${todayRoute.id}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ status: 'en curso' })
-        });
-        const routeBody = await routeRes.json();
-        unwrapResponse(routeBody);
-      }
-
       const body: any = { status, notes, ...extraFields };
       if (status === 'visitado' || status === 'pedido tomado' || status === 'venta realizada') {
         body.visitado = 1;
@@ -616,28 +630,46 @@ export default function RouteModule() {
     }
   };
 
-  const handleDeleteRoute = async (routeId: number) => {
-    setRouteActionId(routeId);
+  const handleRouteLifecycle = async () => {
+    if (!confirmAction || confirmAction.type === 'complete') return;
+
+    const reason = routeLifecycleReason.trim();
+    if (reason.length < 3) {
+      showNotification('error', 'Ingresá un motivo de al menos 3 caracteres.');
+      return;
+    }
+
+    setRouteActionId(confirmAction.routeId);
     try {
-      const res = await apiFetch(`/api/clientes?endpoint=routes&id=${routeId}`, {
-        method: 'DELETE'
+      const res = await apiFetch(`/api/clientes?endpoint=route-lifecycle&id=${confirmAction.routeId}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          action: confirmAction.type,
+          motivo: reason,
+        })
       });
 
       const body = await res.json();
       if (res.ok) {
         unwrapResponse(body);
-        await fetchRoutes();
-        showNotification('success', 'Ruta eliminada correctamente.');
+        await fetchInitialData(false);
+        showNotification(
+          'success',
+          confirmAction.type === 'cancel'
+            ? 'Ruta cancelada correctamente.'
+            : 'Ruta reabierta correctamente.'
+        );
       } else {
         const errorData = unwrapResponse(body);
-        showNotification('error', errorData.message || 'No se pudo eliminar la ruta.');
+        showNotification('error', errorData.message || 'No se pudo actualizar la ruta.');
       }
     } catch (error) {
-      console.error("Error deleting route:", error);
-      showNotification('error', 'No se pudo eliminar la ruta.');
+      console.error('Error updating route lifecycle:', error);
+      showNotification('error', 'No se pudo actualizar la ruta.');
     } finally {
       setRouteActionId(null);
       setConfirmAction(null);
+      setRouteLifecycleReason('');
     }
   };
 
@@ -1015,8 +1047,8 @@ export default function RouteModule() {
                         {todayRoute.status === 'planificada' && hasPermission('routes', 'edit') && (
                           <button type="button" onClick={async () => { try { const response = await apiFetch(`/api/clientes?endpoint=routes&id=${todayRoute.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'en curso' }) }); if (!response.ok) throw new Error(await readApiError(response, 'No se pudo iniciar la ruta.')); await response.json(); await fetchTodayRoute(); showNotification('success', 'Ruta iniciada.'); } catch (error: any) { showNotification('error', error?.message || 'No se pudo iniciar la ruta.'); } }} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-black text-white hover:bg-emerald-600"><ArrowRight size={17} />Iniciar</button>
                         )}
-                        {hasPermission('routes', 'edit') && (
-                          <button type="button" onClick={() => setConfirmAction({ type: 'complete', routeId: todayRoute.id, routeName: todayRoute.name })} className="col-span-2 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-black text-indigo-900 sm:col-auto"><CheckCircle2 size={17} />Finalizar ruta</button>
+                        {todayRoute.status !== 'finalizada' && hasPermission('routes', 'edit') && (
+                          <button type="button" onClick={() => { setRouteLifecycleReason(''); setConfirmAction({ type: 'complete', routeId: todayRoute.id, routeName: todayRoute.name }); }} className="col-span-2 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-black text-indigo-900 sm:col-auto"><CheckCircle2 size={17} />Finalizar ruta</button>
                         )}
                       </div>
                     </div>
@@ -1058,7 +1090,7 @@ export default function RouteModule() {
                           </div>
 
                           <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-                            {item.status === 'pendiente' ? (
+                            {todayRoute.status !== 'finalizada' && item.status === 'pendiente' ? (
                               <>
                                 {hasPermission('routes', 'edit') && <button type="button" onClick={() => handleVisitNext(todayRoute.id, item.id)} disabled={processing} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-indigo-200 bg-indigo-50 px-3 text-xs font-black text-indigo-700 disabled:opacity-50"><ArrowRight size={15} />Siguiente</button>}
                                 {hasPermission('routes', 'edit') && <button type="button" onClick={() => handleUpdateItemStatus(item.id, 'visitado')} disabled={processing} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 disabled:opacity-50">{processing ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}Visitar</button>}
@@ -1070,7 +1102,7 @@ export default function RouteModule() {
                             ) : (
                               <>
                                 <button type="button" onClick={() => setShowCustomerDetailId(item.cliente_id)} className="col-span-1 inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700"><Eye size={15} />Ver ficha</button>
-                                {hasPermission('routes', 'edit') && <button type="button" onClick={() => handleUpdateItemStatus(item.id, 'pendiente')} disabled={processing} className="col-span-1 inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 disabled:opacity-50"><RotateCcw size={15} />Deshacer</button>}
+                                {todayRoute.status !== 'finalizada' && hasPermission('routes', 'edit') && <button type="button" onClick={() => handleUpdateItemStatus(item.id, 'pendiente')} disabled={processing} className="col-span-1 inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 disabled:opacity-50"><RotateCcw size={15} />Deshacer</button>}
                               </>
                             )}
                           </div>
@@ -1098,9 +1130,8 @@ export default function RouteModule() {
                   const total = Number(route.total_customers || 0);
                   const visited = Number(route.visited_customers || 0);
                   const percentage = total > 0 ? Math.round((visited / total) * 100) : 0;
-                  const deleteProtectionReason = route.has_activity
-                    ? 'No se puede eliminar: la ruta ya fue iniciada o tiene actividad registrada.'
-                    : null;
+                  const canCancelRoute = !['finalizada', 'cancelada'].includes(route.status);
+                  const canReopenRoute = route.status === 'cancelada';
                   return (
                     <article key={route.id} className="min-w-0 rounded-[26px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
                       <div className="flex min-w-0 items-start justify-between gap-3">
@@ -1117,10 +1148,26 @@ export default function RouteModule() {
                         <div className="rounded-xl bg-indigo-50 p-3 text-center"><p className="text-[9px] font-bold uppercase text-indigo-400">Ventas</p><p className="mt-1 font-black text-indigo-700">{route.sales_count || 0}</p></div>
                         <div className="rounded-xl bg-amber-50 p-3 text-center"><p className="text-[9px] font-bold uppercase text-amber-500">Pedidos</p><p className="mt-1 font-black text-amber-700">{route.orders_count || 0}</p></div>
                       </div>
+                      {(route.cancel_reason || route.reopen_reason) && (
+                        <div className={`mt-4 rounded-xl px-3 py-3 text-xs leading-5 ${route.status === 'cancelada' ? 'bg-rose-50 text-rose-800' : 'bg-sky-50 text-sky-800'}`}>
+                          <p className="font-black">{route.status === 'cancelada' ? 'Ruta cancelada' : 'Ruta reabierta'}</p>
+                          <p className="mt-1 break-words">{route.status === 'cancelada' ? route.cancel_reason : route.reopen_reason}</p>
+                          <p className="mt-1 text-[10px] font-semibold opacity-75">
+                            {route.status === 'cancelada'
+                              ? `${route.cancelled_by || 'Sistema'} · ${route.cancelled_at ? formatBusinessDate(route.cancelled_at) : 'Sin fecha'}`
+                              : `${route.reopened_by || 'Sistema'} · ${route.reopened_at ? formatBusinessDate(route.reopened_at) : 'Sin fecha'}`}
+                          </p>
+                        </div>
+                      )}
                       <div className="mt-4 grid grid-cols-2 gap-2">
                         <button type="button" onClick={() => { setSelectedRouteForDetail(route); setDetailError(null); }} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 hover:border-indigo-300"><Eye size={16} />Ver detalle</button>
-                        {hasPermission('routes', 'delete') && <button type="button" onClick={() => !deleteProtectionReason && setConfirmAction({ type: 'delete', routeId: route.id, routeName: route.name })} disabled={routeActionId === route.id || Boolean(deleteProtectionReason)} title={deleteProtectionReason || 'Eliminar ruta sin actividad'} aria-label={deleteProtectionReason || `Eliminar ruta ${route.name}`} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 text-sm font-black text-rose-700 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:opacity-100">{routeActionId === route.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}{deleteProtectionReason ? 'Protegida' : 'Eliminar'}</button>}
-                        {deleteProtectionReason && <p className="col-span-2 rounded-xl bg-slate-50 px-3 py-2 text-center text-[11px] font-semibold leading-5 text-slate-500">La ruta tiene actividad y debe conservarse como historial.</p>}
+                        {canCancelRoute && hasPermission('routes', 'delete') && (
+                          <button type="button" onClick={() => { setRouteLifecycleReason(''); setConfirmAction({ type: 'cancel', routeId: route.id, routeName: route.name }); }} disabled={routeActionId === route.id} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 text-sm font-black text-rose-700 disabled:opacity-50"><XCircle size={16} />Cancelar ruta</button>
+                        )}
+                        {canReopenRoute && hasPermission('routes', 'edit') && (
+                          <button type="button" onClick={() => { setRouteLifecycleReason(''); setConfirmAction({ type: 'reopen', routeId: route.id, routeName: route.name }); }} disabled={routeActionId === route.id} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-4 text-sm font-black text-sky-700 disabled:opacity-50"><RotateCcw size={16} />Reabrir ruta</button>
+                        )}
+                        {route.status === 'finalizada' && <p className="col-span-2 rounded-xl bg-emerald-50 px-3 py-2 text-center text-[11px] font-semibold leading-5 text-emerald-700">La ruta finalizada se conserva como historial y no admite cancelación.</p>}
                       </div>
                     </article>
                   );
@@ -1178,7 +1225,7 @@ export default function RouteModule() {
               <button type="button" onClick={() => { setShowProximityAlert(false); handleUpdateItemStatus(nearbyClient.id, 'visitado'); }} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl bg-white/10 text-xs font-black"><Check size={15} />Visita</button>
               <button type="button" onClick={() => { setShowProximityAlert(false); setSelectedItemForAction(nearbyClient); setQuickActionType('venta'); setActionCart([]); setProductSearch(''); setShowQuickActionModal(true); }} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl bg-indigo-600 text-xs font-black"><ShoppingCart size={15} />Venta</button>
               <button type="button" onClick={() => { setShowProximityAlert(false); setSelectedItemForAction(nearbyClient); setQuickActionType('pedido'); setActionCart([]); setProductSearch(''); setShowQuickActionModal(true); }} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl bg-amber-500 text-xs font-black"><ClipboardList size={15} />Pedido</button>
-              <button type="button" onClick={() => { setShowProximityAlert(false); setSelectedItemForAction(nearbyClient); setQuickActionType('pago'); setPaymentAmount(0); setShowQuickActionModal(true); }} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl bg-emerald-500 text-xs font-black"><DollarSign size={15} />Cobro</button>
+              {hasPermission('current_accounts', 'create') && <button type="button" onClick={() => { setShowProximityAlert(false); setSelectedItemForAction(nearbyClient); setQuickActionType('pago'); setPaymentAmount(0); setPaymentMethod('efectivo'); setQuickChequeNumber(''); setQuickChequeBank(''); setQuickChequeDueDate(''); setShowQuickActionModal(true); }} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl bg-emerald-500 text-xs font-black"><DollarSign size={15} />Cobro</button>}
             </div>
           </motion.div>
         )}
@@ -1197,8 +1244,10 @@ export default function RouteModule() {
                 <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
                   <div className="mx-auto max-w-md space-y-5">
                     <label className="block"><span className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Monto del cobro</span><div className="relative"><span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-black text-slate-300">$</span><input type="number" min="0" value={paymentAmount || ''} onChange={event => setPaymentAmount(Number(event.target.value))} placeholder="0" className="min-h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-3xl font-black text-slate-900 outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100" /></div></label>
-                    <div><p className="mb-2 text-[10px] font-black uppercase tracking-wider text-slate-500">Medio de pago</p><div className="grid grid-cols-2 gap-2">{['efectivo', 'transferencia', 'cheque', 'otro'].map(method => <button key={method} type="button" onClick={() => setPaymentMethod(method)} className={`min-h-11 rounded-xl border px-3 text-xs font-black capitalize ${paymentMethod === method ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-200 bg-white text-slate-600'}`}>{method}</button>)}</div></div>
-                    <button type="button" onClick={handleConfirmQuickAction} disabled={paymentAmount <= 0 || quickActionSaving} className="inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 text-sm font-black text-white disabled:opacity-50">{quickActionSaving ? <Loader2 size={19} className="animate-spin" /> : <DollarSign size={19} />}{quickActionSaving ? 'Registrando...' : 'Confirmar cobro'}</button>
+                    <div><p className="mb-2 text-[10px] font-black uppercase tracking-wider text-slate-500">Medio de pago</p><div className="grid grid-cols-2 gap-2">{['efectivo', 'transferencia', 'cheque', 'otro'].map(method => <button key={method} type="button" onClick={() => { setPaymentMethod(method); if (method !== 'cheque') { setQuickChequeNumber(''); setQuickChequeBank(''); setQuickChequeDueDate(''); } }} className={`min-h-11 rounded-xl border px-3 text-xs font-black capitalize ${paymentMethod === method ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-200 bg-white text-slate-600'}`}>{method}</button>)}</div></div>
+                    {paymentMethod === 'cheque' && <div className="grid gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 sm:grid-cols-2"><label className="block"><span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-emerald-800">Número de cheque</span><input value={quickChequeNumber} onChange={event => setQuickChequeNumber(event.target.value)} className="min-h-11 w-full rounded-xl border border-emerald-200 bg-white px-3 text-sm outline-none focus:ring-4 focus:ring-emerald-100" /></label><label className="block"><span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-emerald-800">Banco</span><input value={quickChequeBank} onChange={event => setQuickChequeBank(event.target.value)} className="min-h-11 w-full rounded-xl border border-emerald-200 bg-white px-3 text-sm outline-none focus:ring-4 focus:ring-emerald-100" /></label><label className="block sm:col-span-2"><span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-emerald-800">Vencimiento</span><input type="date" value={quickChequeDueDate} onChange={event => setQuickChequeDueDate(event.target.value)} className="min-h-11 w-full rounded-xl border border-emerald-200 bg-white px-3 text-sm outline-none focus:ring-4 focus:ring-emerald-100" /></label></div>}
+                    <label className="block"><span className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Observaciones</span><textarea value={actionNotes} onChange={event => setActionNotes(event.target.value)} placeholder="Notas del cobro" className="min-h-20 w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-sm outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100" /></label>
+                    <button type="button" onClick={handleConfirmQuickAction} disabled={paymentAmount <= 0 || quickActionSaving || (paymentMethod === 'cheque' && (!quickChequeNumber.trim() || !quickChequeBank.trim() || !quickChequeDueDate))} className="inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 text-sm font-black text-white disabled:opacity-50">{quickActionSaving ? <Loader2 size={19} className="animate-spin" /> : <DollarSign size={19} />}{quickActionSaving ? 'Registrando...' : 'Confirmar cobro'}</button>
                   </div>
                 </div>
               ) : (
@@ -1232,12 +1281,32 @@ export default function RouteModule() {
         {confirmAction && (
           <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
             <motion.section initial={{ opacity: 0, y: 30, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 30, scale: 0.98 }} className="w-full max-w-md rounded-t-[28px] bg-white p-5 shadow-2xl sm:rounded-[28px] sm:p-6">
-              <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${confirmAction.type === 'delete' ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>{confirmAction.type === 'delete' ? <Trash2 size={22} /> : <CheckCircle2 size={22} />}</div>
-              <h2 className="mt-4 text-xl font-black text-slate-900">{confirmAction.type === 'delete' ? 'Eliminar ruta' : 'Finalizar ruta'}</h2>
-              <p className="mt-2 break-words text-sm leading-6 text-slate-500">{confirmAction.type === 'delete' ? `Se eliminará “${confirmAction.routeName}”. Esta acción no se puede deshacer.` : `La ruta “${confirmAction.routeName}” quedará marcada como finalizada.`}</p>
+              <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${confirmAction.type === 'cancel' ? 'bg-rose-100 text-rose-700' : confirmAction.type === 'reopen' ? 'bg-sky-100 text-sky-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                {confirmAction.type === 'cancel' ? <XCircle size={22} /> : confirmAction.type === 'reopen' ? <RotateCcw size={22} /> : <CheckCircle2 size={22} />}
+              </div>
+              <h2 className="mt-4 text-xl font-black text-slate-900">
+                {confirmAction.type === 'cancel' ? 'Cancelar ruta' : confirmAction.type === 'reopen' ? 'Reabrir ruta' : 'Finalizar ruta'}
+              </h2>
+              <p className="mt-2 break-words text-sm leading-6 text-slate-500">
+                {confirmAction.type === 'cancel'
+                  ? `La ruta “${confirmAction.routeName}” quedará cancelada, pero conservará todas sus visitas, ventas, pedidos, cobranzas y notas.`
+                  : confirmAction.type === 'reopen'
+                    ? `La ruta “${confirmAction.routeName}” volverá al estado operativo que tenía antes de cancelarse.`
+                    : `La ruta “${confirmAction.routeName}” quedará marcada como finalizada.`}
+              </p>
+              {confirmAction.type !== 'complete' && (
+                <label className="mt-4 block">
+                  <span className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Motivo obligatorio</span>
+                  <textarea value={routeLifecycleReason} onChange={event => setRouteLifecycleReason(event.target.value)} maxLength={500} placeholder={confirmAction.type === 'cancel' ? 'Ej.: Se suspendieron las visitas por mal clima' : 'Ej.: Se retomará la ruta pendiente'} className="min-h-24 w-full resize-none rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100" />
+                  <span className="mt-1 block text-right text-[10px] font-semibold text-slate-400">{routeLifecycleReason.trim().length}/500</span>
+                </label>
+              )}
               <div className="mt-5 grid grid-cols-2 gap-2">
-                <button type="button" onClick={() => setConfirmAction(null)} disabled={routeActionId !== null} className="min-h-12 rounded-xl border border-slate-200 bg-white text-sm font-black text-slate-700">Cancelar</button>
-                <button type="button" onClick={() => confirmAction.type === 'delete' ? handleDeleteRoute(confirmAction.routeId) : handleCompleteRoute(confirmAction.routeId)} disabled={routeActionId !== null} className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-xl text-sm font-black text-white disabled:opacity-60 ${confirmAction.type === 'delete' ? 'bg-rose-600' : 'bg-emerald-600'}`}>{routeActionId !== null && <Loader2 size={17} className="animate-spin" />}{confirmAction.type === 'delete' ? 'Eliminar' : 'Finalizar'}</button>
+                <button type="button" onClick={() => { setConfirmAction(null); setRouteLifecycleReason(''); }} disabled={routeActionId !== null} className="min-h-12 rounded-xl border border-slate-200 bg-white text-sm font-black text-slate-700">Volver</button>
+                <button type="button" onClick={() => confirmAction.type === 'complete' ? handleCompleteRoute(confirmAction.routeId) : handleRouteLifecycle()} disabled={routeActionId !== null || (confirmAction.type !== 'complete' && routeLifecycleReason.trim().length < 3)} className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-xl text-sm font-black text-white disabled:opacity-50 ${confirmAction.type === 'cancel' ? 'bg-rose-600' : confirmAction.type === 'reopen' ? 'bg-sky-600' : 'bg-emerald-600'}`}>
+                  {routeActionId !== null && <Loader2 size={17} className="animate-spin" />}
+                  {confirmAction.type === 'cancel' ? 'Confirmar cancelación' : confirmAction.type === 'reopen' ? 'Confirmar reapertura' : 'Finalizar'}
+                </button>
               </div>
             </motion.section>
           </div>

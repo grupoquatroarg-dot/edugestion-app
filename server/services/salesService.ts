@@ -71,7 +71,8 @@ const getAndIncrementSetting = async (client: TransactionClient, key: string, de
 
 export const salesService = {
   async createSale(saleData: any) {
-    const { items, cliente_id, nombre_cliente, metodo_pago, monto_pagado, notes, cheque_data, usuario } = saleData;
+    const { items, cliente_id, nombre_cliente, metodo_pago, monto_pagado, notes, cheque_data, usuario, route_item_id } = saleData;
+    const routeItemId = Number(route_item_id || 0);
 
     const normalizeSaleItem = (item: any) => {
       const cantidad = toNumber(item.cantidad);
@@ -109,6 +110,25 @@ export const salesService = {
       await assertPaymentMethodActive(metodo_pago);
       // Flujo local de respaldo: conserva el comportamiento anterior para desarrollo local.
       return db.transaction(() => {
+        let routeItem: any = null;
+        if (routeItemId > 0) {
+          routeItem = db.prepare(`
+            SELECT ri.id, ri.route_id, ri.client_id, r.status AS route_status
+            FROM route_items ri
+            JOIN routes r ON r.id = ri.route_id
+            WHERE ri.id = ?
+            LIMIT 1
+          `).get(routeItemId) as any;
+          if (!routeItem) throw new AppError('El ítem de ruta no existe', 409);
+          const routeStatus = String(routeItem.route_status || 'planificada').toLowerCase();
+          if (['cancelada', 'finalizada'].includes(routeStatus)) {
+            throw new AppError(`La ruta está ${routeStatus} y no admite nuevas ventas`, 409);
+          }
+          if (cliente_id && Number(routeItem.client_id) !== Number(cliente_id)) {
+            throw new AppError('El ítem de ruta no pertenece al cliente de la venta', 409);
+          }
+        }
+
         if (cliente_id && Number(cliente_id) !== 1) {
           const customer = db.prepare('SELECT id, activo FROM clientes WHERE id = ? LIMIT 1').get(Number(cliente_id)) as any;
           if (!customer) throw new AppError('Cliente no encontrado', 404);
@@ -151,7 +171,28 @@ export const salesService = {
         }));
 
         const saleId = salesRepository.create(saleDataToInsert, processedItems) as unknown as number;
-        return { success: true, saleId, saleNumber: nextSaleNum };
+
+        if (routeItemId > 0 && routeItem) {
+          const auditNote = `Venta N° ${nextSaleNum} registrada desde la ruta`;
+          db.prepare(`
+            UPDATE route_items
+            SET status = 'venta realizada',
+                visitado = 1,
+                venta_registrada = 1,
+                visited_at = COALESCE(visited_at, CURRENT_TIMESTAMP),
+                notes = CASE
+                  WHEN TRIM(COALESCE(notes, '')) = '' THEN ?
+                  ELSE notes || CHAR(10) || ?
+                END
+            WHERE id = ?
+          `).run(auditNote, auditNote, routeItemId);
+          db.prepare(`
+            UPDATE routes SET status = 'en curso'
+            WHERE id = ? AND status IN ('planificada', 'pendiente')
+          `).run(Number(routeItem.route_id));
+        }
+
+        return { success: true, saleId, saleNumber: nextSaleNum, route_item_id: routeItemId || null };
       })();
     }
 
@@ -161,6 +202,28 @@ export const salesService = {
     try {
       await client.query('BEGIN');
       await assertPaymentMethodActive(metodo_pago, client);
+
+      let routeItem: any = null;
+      if (routeItemId > 0) {
+        const routeItemResult = await client.query(
+          `SELECT ri.id, ri.route_id, ri.client_id, r.status AS route_status
+           FROM route_items ri
+           JOIN routes r ON r.id = ri.route_id
+           WHERE ri.id = $1
+           LIMIT 1
+           FOR UPDATE OF r, ri`,
+          [routeItemId]
+        );
+        if (!routeItemResult.rowCount) throw new AppError('El ítem de ruta no existe', 409);
+        routeItem = routeItemResult.rows[0];
+        const routeStatus = String(routeItem.route_status || 'planificada').toLowerCase();
+        if (['cancelada', 'finalizada'].includes(routeStatus)) {
+          throw new AppError(`La ruta está ${routeStatus} y no admite nuevas ventas`, 409);
+        }
+        if (cliente_id && toNumber(routeItem.client_id) !== toNumber(cliente_id)) {
+          throw new AppError('El ítem de ruta no pertenece al cliente de la venta', 409);
+        }
+      }
 
       if (cliente_id && Number(cliente_id) !== 1) {
         const customerResult = await client.query(
@@ -471,6 +534,29 @@ export const salesService = {
         );
       }
 
+      if (routeItemId > 0 && routeItem) {
+        const auditNote = `Venta N° ${nextSaleNum} registrada desde la ruta`;
+        await client.query(
+          `UPDATE route_items
+           SET status = 'venta realizada',
+               visitado = 1,
+               venta_registrada = 1,
+               visited_at = COALESCE(visited_at, now()),
+               notes = CASE
+                 WHEN BTRIM(COALESCE(notes, '')) = '' THEN $1
+                 ELSE notes || E'\n' || $1
+               END
+           WHERE id = $2`,
+          [auditNote, routeItemId]
+        );
+        await client.query(
+          `UPDATE routes
+           SET status = 'en curso'
+           WHERE id = $1 AND status IN ('planificada', 'pendiente')`,
+          [toNumber(routeItem.route_id)]
+        );
+      }
+
       await client.query('COMMIT');
       return {
         success: true,
@@ -480,6 +566,7 @@ export const salesService = {
         orderId: supplierOrderId,
         orderNumber: supplierOrderNumber,
         shortageItems,
+        route_item_id: routeItemId || null,
       };
     } catch (error) {
       await client.query('ROLLBACK');
@@ -516,10 +603,18 @@ export const salesService = {
 
         let routeItem: any = null;
         if (routeItemId > 0) {
-          routeItem = db.prepare(
-            'SELECT id, route_id, client_id, cobranza_realizada FROM route_items WHERE id = ?'
-          ).get(routeItemId) as any;
+          routeItem = db.prepare(`
+            SELECT ri.id, ri.route_id, ri.client_id, ri.cobranza_realizada, r.status AS route_status
+            FROM route_items ri
+            JOIN routes r ON r.id = ri.route_id
+            WHERE ri.id = ?
+            LIMIT 1
+          `).get(routeItemId) as any;
           if (!routeItem) throw new AppError('El ítem de ruta no existe', 409);
+          const routeStatus = String(routeItem.route_status || 'planificada').toLowerCase();
+          if (['cancelada', 'finalizada'].includes(routeStatus)) {
+            throw new AppError(`La ruta está ${routeStatus} y no admite nuevas cobranzas`, 409);
+          }
           if (Number(routeItem.client_id) !== clientId) {
             throw new AppError('El ítem de ruta no pertenece al cliente de la cobranza', 409);
           }
@@ -663,11 +758,13 @@ export const salesService = {
       let routeItem: any = null;
       if (routeItemId > 0) {
         const routeItemResult = await client.query(
-          `SELECT ri.id, ri.client_id, ri.cobranza_realizada, ri.status, ri.route_id
+          `SELECT ri.id, ri.client_id, ri.cobranza_realizada, ri.status, ri.route_id,
+                  r.status AS route_status
            FROM route_items ri
+           JOIN routes r ON r.id = ri.route_id
            WHERE ri.id = $1
            LIMIT 1
-           FOR UPDATE OF ri`,
+           FOR UPDATE OF r, ri`,
           [routeItemId]
         );
 
@@ -676,6 +773,10 @@ export const salesService = {
         }
 
         routeItem = routeItemResult.rows[0];
+        const routeStatus = String(routeItem.route_status || 'planificada').toLowerCase();
+        if (['cancelada', 'finalizada'].includes(routeStatus)) {
+          throw new AppError(`La ruta está ${routeStatus} y no admite nuevas cobranzas`, 409);
+        }
         if (toNumber(routeItem.client_id) !== clientId) {
           throw new AppError('El ítem de ruta no pertenece al cliente de la cobranza', 409);
         }

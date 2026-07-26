@@ -11,7 +11,7 @@
     "lint": "tsc --noEmit",
     "check:encoding": "node scripts/check-encoding.mjs",
     "check:audit": "tsx scripts/check-functional-audit.ts",
-    "validate:audit": "npm run check:encoding && npm run check:routes && npm run check:sql-parameters && npm run check:inventory-endpoints && npm run check:purchase-invoice-traceability && npm run check:purchase-invoice-cancellation && npm run check:supplier-payment-cancellation && npm run check:supplier-order-cancellation && npm run check:customer-order-cancellation && npm run check:manual-expense-cancellation && npm run check:client-payment-cancellation && npm run check:cheque-status-lifecycle && npm run check:checklist-template-lifecycle && npm run check:product-lifecycle && npm run check:customer-lifecycle && npm run check:provider-lifecycle && npm run check:configuration-lifecycle && npm run check:user-lifecycle && npm run check:serverless-auth && npm run check:sale-cancellation && npm run check:audit && npm run lint && npm run build",
+    "validate:audit": "npm run check:encoding && npm run check:routes && npm run check:sql-parameters && npm run check:inventory-endpoints && npm run check:purchase-invoice-traceability && npm run check:purchase-invoice-cancellation && npm run check:supplier-payment-cancellation && npm run check:supplier-order-cancellation && npm run check:customer-order-cancellation && npm run check:manual-expense-cancellation && npm run check:client-payment-cancellation && npm run check:cheque-status-lifecycle && npm run check:checklist-template-lifecycle && npm run check:route-lifecycle && npm run check:product-lifecycle && npm run check:customer-lifecycle && npm run check:provider-lifecycle && npm run check:configuration-lifecycle && npm run check:user-lifecycle && npm run check:serverless-auth && npm run check:sale-cancellation && npm run check:audit && npm run lint && npm run build",
     "start": "tsx server.ts",
     "check:routes": "node scripts/check-vercel-routes.mjs",
     "check:inventory-endpoints": "tsx scripts/check-product-inventory-endpoints.ts",
@@ -31,7 +31,8 @@
     "check:cheque-status-lifecycle": "tsx scripts/check-cheque-status-lifecycle.ts",
     "check:serverless-auth": "tsx scripts/check-serverless-auth-isolation.ts",
     "check:supplier-payment-cancellation": "tsx scripts/check-supplier-payment-cancellation.ts",
-    "check:checklist-template-lifecycle": "tsx scripts/check-checklist-template-lifecycle.ts"
+    "check:checklist-template-lifecycle": "tsx scripts/check-checklist-template-lifecycle.ts",
+    "check:route-lifecycle": "tsx scripts/check-route-lifecycle.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

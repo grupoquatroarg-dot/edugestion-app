@@ -373,7 +373,27 @@ export function initDb() {
       name TEXT NOT NULL,
       date TEXT NOT NULL,
       status TEXT DEFAULT 'pendiente',
+      cancelled_at DATETIME,
+      cancelled_by TEXT,
+      cancel_reason TEXT,
+      cancelled_from_status TEXT,
+      reopened_at DATETIME,
+      reopened_by TEXT,
+      reopen_reason TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS route_status_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      route_id INTEGER NOT NULL,
+      action TEXT NOT NULL CHECK(action IN ('cancel', 'reopen')),
+      reason TEXT NOT NULL,
+      performed_by TEXT NOT NULL,
+      performed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      previous_status TEXT NOT NULL,
+      new_status TEXT NOT NULL,
+      snapshot TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (route_id) REFERENCES routes(id)
     );
 
     CREATE TABLE IF NOT EXISTS route_items (
@@ -385,6 +405,9 @@ export function initDb() {
       venta_registrada INTEGER DEFAULT 0,
       pedido_generado INTEGER DEFAULT 0,
       cobranza_realizada INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'pendiente',
+      notes TEXT,
+      visited_at DATETIME,
       FOREIGN KEY (route_id) REFERENCES routes(id) ON DELETE CASCADE,
       FOREIGN KEY (client_id) REFERENCES clientes(id)
     );
@@ -754,6 +777,17 @@ export function initDb() {
   try { db.exec("ALTER TABLE checklist_templates ADD COLUMN reactivated_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE checklist_templates ADD COLUMN reactivated_by TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE checklist_templates ADD COLUMN reactivation_reason TEXT"); } catch (e) {}
+
+  try { db.exec("ALTER TABLE routes ADD COLUMN cancelled_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE routes ADD COLUMN cancelled_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE routes ADD COLUMN cancel_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE routes ADD COLUMN cancelled_from_status TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE routes ADD COLUMN reopened_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE routes ADD COLUMN reopened_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE routes ADD COLUMN reopen_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE route_items ADD COLUMN status TEXT DEFAULT 'pendiente'"); } catch (e) {}
+  try { db.exec("ALTER TABLE route_items ADD COLUMN notes TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE route_items ADD COLUMN visited_at DATETIME"); } catch (e) {}
 
   try { db.exec("ALTER TABLE clientes ADD COLUMN razon_social TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN cuit TEXT"); } catch (e) {}

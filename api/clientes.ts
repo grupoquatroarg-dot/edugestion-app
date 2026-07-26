@@ -11,6 +11,7 @@ import { customerLifecycleService, type CustomerLifecycleAction } from "../serve
 import { userLifecycleService, type UserLifecycleAction } from "../server/services/userLifecycleService.js";
 import { requireBearerUser } from "../server/services/currentUserAuthService.js";
 import { checklistTemplateLifecycleService, type ChecklistTemplateLifecycleAction } from "../server/services/checklistTemplateLifecycleService.js";
+import { routeLifecycleService, type RouteLifecycleAction } from "../server/services/routeLifecycleService.js";
 
 const clientSchema = z.object({
   nombre_apellido: z.string().min(2, "El nombre es requerido"),
@@ -377,7 +378,12 @@ const routeSchema = z.object({
 });
 
 const routeStatusSchema = z.object({
-  status: z.enum(["planificada", "en curso", "finalizada", "cancelada", "pendiente"]).optional(),
+  status: z.enum(["planificada", "en curso", "finalizada", "pendiente"]),
+});
+
+const routeLifecycleSchema = z.object({
+  action: z.enum(["cancel", "reopen"]),
+  motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
 });
 
 const routeItemSchema = z.object({
@@ -397,6 +403,7 @@ const routeReorderSchema = z.object({
 });
 
 const routeSupplierOrderSchema = z.object({
+  route_item_id: z.number().int().positive(),
   cliente: z.string().optional(),
   cliente_id: z.number().optional(),
   notes: z.string().optional(),
@@ -478,6 +485,13 @@ const mapRoute = (row: any) => ({
   date: typeof row.date === "string" ? row.date.slice(0, 10) : row.date,
   status: row.status || "planificada",
   created_at: row.created_at || null,
+  cancelled_at: row.cancelled_at || null,
+  cancelled_by: row.cancelled_by || null,
+  cancel_reason: row.cancel_reason || null,
+  cancelled_from_status: row.cancelled_from_status || null,
+  reopened_at: row.reopened_at || null,
+  reopened_by: row.reopened_by || null,
+  reopen_reason: row.reopen_reason || null,
   total_customers: toNumber(row.total_customers),
   visited_customers: toNumber(row.visited_customers),
   sales_count: toNumber(row.sales_count),
@@ -530,6 +544,13 @@ const handleRoutes = async (req: any, res: any) => {
     const user = await requireRoutePermission(req, res, "edit");
     if (!user) return;
 
+    if (user.role !== "administrador") {
+      const permissions = await UserRepository.getPermissions(Number(user.userId));
+      if (!permissions?.suppliers?.can_create) {
+        return sendError(res, "Forbidden: No permission to create supplier orders", 403);
+      }
+    }
+
     if (req.method !== "POST") return sendError(res, "Method not allowed", 405);
 
     const parsed = routeSupplierOrderSchema.safeParse(getBody(req));
@@ -543,6 +564,30 @@ const handleRoutes = async (req: any, res: any) => {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+
+      const routeItemResult = await client.query(
+        `SELECT ri.id, ri.client_id, ri.route_id, r.status AS route_status
+         FROM route_items ri
+         JOIN routes r ON r.id = ri.route_id
+         WHERE ri.id = $1
+         LIMIT 1
+         FOR UPDATE OF r, ri`,
+        [parsed.data.route_item_id]
+      );
+
+      if (!routeItemResult.rowCount) {
+        throw new Error("El ítem de ruta no existe");
+      }
+
+      const routeItem = routeItemResult.rows[0];
+      const routeStatus = String(routeItem.route_status || "planificada").toLowerCase();
+      if (["cancelada", "finalizada"].includes(routeStatus)) {
+        throw new Error(`La ruta está ${routeStatus} y no admite nuevos pedidos`);
+      }
+      if (parsed.data.cliente_id && toNumber(routeItem.client_id) !== toNumber(parsed.data.cliente_id)) {
+        throw new Error("El ítem de ruta no pertenece al cliente seleccionado");
+      }
+
       const nextNumberResult = await client.query("SELECT COALESCE(MAX(numero_pedido), 0) + 1 AS next_number FROM supplier_orders");
       const nextNumber = toNumber(nextNumberResult.rows[0]?.next_number, 1);
       const orderResult = await client.query(
@@ -560,6 +605,28 @@ const handleRoutes = async (req: any, res: any) => {
           [orderId, item.product_id, item.cantidad]
         );
       }
+
+      const auditNote = `Pedido a proveedor #${nextNumber} registrado desde la ruta`;
+      await client.query(
+        `UPDATE route_items
+         SET status = 'pedido tomado',
+             visitado = 1,
+             pedido_generado = 1,
+             visited_at = COALESCE(visited_at, now()),
+             notes = CASE
+               WHEN BTRIM(COALESCE(notes, '')) = '' THEN $1
+               ELSE notes || E'\n' || $1
+             END
+         WHERE id = $2`,
+        [auditNote, parsed.data.route_item_id]
+      );
+      await client.query(
+        `UPDATE routes
+         SET status = 'en curso'
+         WHERE id = $1 AND status IN ('planificada', 'pendiente')`,
+        [toNumber(routeItem.route_id)]
+      );
+
       await client.query("COMMIT");
       return sendSuccess(res, { orderId, numero_pedido: nextNumber }, "Pedido creado exitosamente", 201);
     } catch (error: any) {
@@ -584,28 +651,68 @@ const handleRoutes = async (req: any, res: any) => {
       })));
     }
 
-    const fields: string[] = [];
-    const values: any[] = [];
-    const addField = (sqlField: string, value: any) => {
-      values.push(value);
-      fields.push(`${sqlField} = $${values.length}`);
-    };
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
 
-    if (parsed.data.status !== undefined) addField("status", parsed.data.status);
-    if (parsed.data.notes !== undefined) addField("notes", parsed.data.notes);
-    if (parsed.data.visitado !== undefined) addField("visitado", toIntFlag(parsed.data.visitado));
-    if (parsed.data.venta_registrada !== undefined) addField("venta_registrada", toIntFlag(parsed.data.venta_registrada));
-    if (parsed.data.pedido_generado !== undefined) addField("pedido_generado", toIntFlag(parsed.data.pedido_generado));
-    if (parsed.data.cobranza_realizada !== undefined) addField("cobranza_realizada", toIntFlag(parsed.data.cobranza_realizada));
+      const routeItemResult = await client.query(
+        `SELECT ri.id, ri.route_id, r.status AS route_status
+         FROM route_items ri
+         JOIN routes r ON r.id = ri.route_id
+         WHERE ri.id = $1
+         LIMIT 1
+         FOR UPDATE OF r, ri`,
+        [id]
+      );
 
-    const shouldSetVisitedAt = parsed.data.visitado !== undefined || ["visitado", "pedido tomado", "venta realizada"].includes(parsed.data.status || "");
-    if (shouldSetVisitedAt) addField("visited_at", new Date().toISOString());
+      if (!routeItemResult.rowCount) {
+        throw new Error("El ítem de ruta no existe");
+      }
 
-    if (fields.length === 0) return sendSuccess(res, null, "Sin cambios");
+      const routeStatus = String(routeItemResult.rows[0]?.route_status || "planificada").toLowerCase();
+      if (["cancelada", "finalizada"].includes(routeStatus)) {
+        throw new Error(`La ruta está ${routeStatus} y no admite cambios`);
+      }
 
-    values.push(id);
-    await pool.query(`UPDATE route_items SET ${fields.join(", ")} WHERE id = $${values.length}`, values);
-    return sendSuccess(res, null, "Item de ruta actualizado");
+      const fields: string[] = [];
+      const values: any[] = [];
+      const addField = (sqlField: string, value: any) => {
+        values.push(value);
+        fields.push(`${sqlField} = $${values.length}`);
+      };
+
+      if (parsed.data.status !== undefined) addField("status", parsed.data.status);
+      if (parsed.data.notes !== undefined) addField("notes", parsed.data.notes);
+      if (parsed.data.visitado !== undefined) addField("visitado", toIntFlag(parsed.data.visitado));
+      if (parsed.data.venta_registrada !== undefined) addField("venta_registrada", toIntFlag(parsed.data.venta_registrada));
+      if (parsed.data.pedido_generado !== undefined) addField("pedido_generado", toIntFlag(parsed.data.pedido_generado));
+      if (parsed.data.cobranza_realizada !== undefined) addField("cobranza_realizada", toIntFlag(parsed.data.cobranza_realizada));
+
+      const shouldSetVisitedAt = parsed.data.visitado !== undefined || ["visitado", "pedido tomado", "venta realizada"].includes(parsed.data.status || "");
+      if (shouldSetVisitedAt) addField("visited_at", new Date().toISOString());
+
+      if (fields.length === 0) {
+        await client.query("ROLLBACK");
+        return sendSuccess(res, null, "Sin cambios");
+      }
+
+      values.push(id);
+      await client.query(`UPDATE route_items SET ${fields.join(", ")} WHERE id = $${values.length}`, values);
+      await client.query(
+        `UPDATE routes
+         SET status = 'en curso'
+         WHERE id = $1 AND status IN ('planificada', 'pendiente')`,
+        [toNumber(routeItemResult.rows[0]?.route_id)]
+      );
+
+      await client.query("COMMIT");
+      return sendSuccess(res, null, "Item de ruta actualizado");
+    } catch (error: any) {
+      await client.query("ROLLBACK");
+      return sendError(res, error?.message || "No se pudo actualizar el ítem de ruta", 409);
+    } finally {
+      client.release();
+    }
   }
 
   if (endpoint === "routes-reorder") {
@@ -625,17 +732,34 @@ const handleRoutes = async (req: any, res: any) => {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+
+      const routeResult = await client.query(
+        `SELECT id, status
+         FROM routes
+         WHERE id = $1
+         LIMIT 1
+         FOR UPDATE`,
+        [id]
+      );
+      if (!routeResult.rowCount) throw new Error("Ruta no encontrada");
+
+      const routeStatus = String(routeResult.rows[0]?.status || "planificada").toLowerCase();
+      if (["cancelada", "finalizada"].includes(routeStatus)) {
+        throw new Error(`La ruta está ${routeStatus} y no puede reordenarse`);
+      }
+
       for (const item of parsed.data.items) {
-        await client.query(
+        const updateResult = await client.query(
           `UPDATE route_items SET order_index = $1 WHERE id = $2 AND route_id = $3`,
           [item.order_index, item.id, id]
         );
+        if (!updateResult.rowCount) throw new Error(`El ítem ${item.id} no pertenece a la ruta`);
       }
       await client.query("COMMIT");
       return sendSuccess(res, null, "Ruta reordenada");
     } catch (error: any) {
       await client.query("ROLLBACK");
-      return sendError(res, error?.message || "Error al reordenar ruta", 400);
+      return sendError(res, error?.message || "Error al reordenar ruta", 409);
     } finally {
       client.release();
     }
@@ -670,6 +794,7 @@ const handleRoutes = async (req: any, res: any) => {
         FROM routes r
         LEFT JOIN route_items ri ON ri.route_id = r.id
         WHERE r.date::date = (now() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+          AND COALESCE(r.status, 'planificada') <> 'cancelada'
         GROUP BY r.id
         ORDER BY r.id DESC
         LIMIT 1
@@ -680,6 +805,47 @@ const handleRoutes = async (req: any, res: any) => {
     if (!route) return sendSuccess(res, null, "No hay ruta para hoy");
     const items = await getRouteItems(toNumber(route.id));
     return sendSuccess(res, { ...mapRoute(route), items });
+  }
+
+  if (endpoint === "route-lifecycle") {
+    if (req.method !== "POST") return sendError(res, "Method not allowed", 405);
+    if (!id) return sendError(res, "ID de ruta inválido", 400);
+
+    const parsed = routeLifecycleSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+      })));
+    }
+
+    const permissionAction = parsed.data.action === "cancel" ? "delete" : "edit";
+    const user = await requireRoutePermission(req, res, permissionAction);
+    if (!user) return;
+
+    try {
+      const result = await routeLifecycleService.changeStatus({
+        routeId: id,
+        action: parsed.data.action as RouteLifecycleAction,
+        motivo: parsed.data.motivo,
+        usuario: user.userName || "Sistema",
+      });
+
+      return sendSuccess(
+        res,
+        result,
+        parsed.data.action === "cancel"
+          ? "Ruta cancelada correctamente"
+          : "Ruta reabierta correctamente"
+      );
+    } catch (error: any) {
+      return sendError(
+        res,
+        error?.message || "No se pudo actualizar el estado de la ruta",
+        error?.statusCode || 400,
+        error?.errors || []
+      );
+    }
   }
 
   if (endpoint === "routes") {
@@ -816,78 +982,49 @@ const handleRoutes = async (req: any, res: any) => {
         })));
       }
 
-      if (parsed.data.status) {
-        await pool.query(`UPDATE routes SET status = $1 WHERE id = $2`, [parsed.data.status, id]);
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const routeResult = await client.query(
+          `SELECT id, status
+           FROM routes
+           WHERE id = $1
+           LIMIT 1
+           FOR UPDATE`,
+          [id]
+        );
+        if (!routeResult.rowCount) throw new Error("Ruta no encontrada");
+
+        const currentStatus = String(routeResult.rows[0]?.status || "planificada").toLowerCase();
+        if (currentStatus === "cancelada") {
+          throw new Error("La ruta está cancelada. Debe reabrirse antes de modificarla");
+        }
+        if (currentStatus === "finalizada") {
+          throw new Error("La ruta ya está finalizada y debe conservarse como historial");
+        }
+
+        await client.query(`UPDATE routes SET status = $1 WHERE id = $2`, [parsed.data.status, id]);
+        await client.query("COMMIT");
+        return sendSuccess(res, null, "Ruta actualizada");
+      } catch (error: any) {
+        await client.query("ROLLBACK");
+        return sendError(res, error?.message || "No se pudo actualizar la ruta", 409);
+      } finally {
+        client.release();
       }
-      return sendSuccess(res, null, "Ruta actualizada");
     }
 
     if (req.method === "DELETE") {
       const user = await requireRoutePermission(req, res, "delete");
       if (!user) return;
-      if (!id) return sendError(res, "ID de ruta inválido", 400);
 
-      const client = await pool.connect();
-      try {
-        await client.query("BEGIN");
-
-        const routeResult = await client.query(
-          `SELECT id, status FROM routes WHERE id = $1 FOR UPDATE`,
-          [id]
-        );
-        const route = routeResult.rows[0];
-        if (!route) {
-          await client.query("ROLLBACK");
-          return sendError(res, "Ruta no encontrada", 404);
-        }
-
-        const itemsResult = await client.query(
-          `
-            SELECT
-              status,
-              visitado,
-              venta_registrada,
-              pedido_generado,
-              cobranza_realizada,
-              notes,
-              visited_at
-            FROM route_items
-            WHERE route_id = $1
-            FOR UPDATE
-          `,
-          [id]
-        );
-
-        const routeStarted = !["planificada", "pendiente"].includes(String(route.status || "planificada"));
-        const itemHasActivity = itemsResult.rows.some((item: any) => (
-          toNumber(item.visitado) !== 0
-          || toNumber(item.venta_registrada) !== 0
-          || toNumber(item.pedido_generado) !== 0
-          || toNumber(item.cobranza_realizada) !== 0
-          || String(item.status || "pendiente") !== "pendiente"
-          || Boolean(item.visited_at)
-          || String(item.notes || "").trim().length > 0
-        ));
-
-        if (routeStarted || itemHasActivity) {
-          await client.query("ROLLBACK");
-          return sendError(
-            res,
-            "No se puede eliminar una ruta que ya fue iniciada o tiene visitas, ventas, pedidos, cobranzas o notas registradas. Debe conservarse para mantener el historial.",
-            409
-          );
-        }
-
-        await client.query(`DELETE FROM routes WHERE id = $1`, [id]);
-        await client.query("COMMIT");
-        return sendSuccess(res, null, "Ruta eliminada");
-      } catch (error: any) {
-        await client.query("ROLLBACK");
-        return sendError(res, error?.message || "Error al eliminar la ruta", 400);
-      } finally {
-        client.release();
-      }
+      return sendError(
+        res,
+        "La eliminación física de rutas está deshabilitada. Usá Cancelar para conservar visitas, ventas, pedidos, cobranzas y notas.",
+        409
+      );
     }
+
   }
 
   return sendError(res, "Endpoint de rutas no encontrado", 404);
@@ -2516,7 +2653,7 @@ export default async function handler(req: any, res: any) {
     return handleUserLifecycle(req, res);
   }
 
-  if (["routes", "routes-today", "route-item", "routes-reorder", "route-supplier-order"].includes(endpoint)) {
+  if (["routes", "routes-today", "route-item", "routes-reorder", "route-supplier-order", "route-lifecycle"].includes(endpoint)) {
     return handleRoutes(req, res);
   }
 
