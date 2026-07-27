@@ -561,12 +561,39 @@ export function initDb() {
       tipo_movimiento TEXT NOT NULL,
       motivo TEXT,
       usuario TEXT,
+      sale_id INTEGER,
       purchase_invoice_id INTEGER,
       purchase_invoice_item_id INTEGER,
+      reversed_movement_id INTEGER,
+      reversion_version INTEGER NOT NULL DEFAULT 0,
+      anulada_at TEXT,
+      anulada_por TEXT,
+      anulacion_motivo TEXT,
       fecha_ingreso DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (product_id) REFERENCES products(id),
+      FOREIGN KEY (sale_id) REFERENCES sales(id),
       FOREIGN KEY (purchase_invoice_id) REFERENCES purchase_invoices(id),
-      FOREIGN KEY (purchase_invoice_item_id) REFERENCES purchase_invoice_items(id)
+      FOREIGN KEY (purchase_invoice_item_id) REFERENCES purchase_invoice_items(id),
+      FOREIGN KEY (reversed_movement_id) REFERENCES stock_movimientos(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS stock_movement_cancellations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      stock_movement_id INTEGER NOT NULL UNIQUE,
+      reversal_movement_id INTEGER NOT NULL UNIQUE,
+      product_id INTEGER NOT NULL,
+      motivo TEXT NOT NULL,
+      anulada_por TEXT NOT NULL,
+      anulada_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      stock_before REAL NOT NULL,
+      stock_after REAL NOT NULL,
+      original_type TEXT NOT NULL,
+      original_reason TEXT,
+      quantity REAL NOT NULL,
+      snapshot TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (stock_movement_id) REFERENCES stock_movimientos(id),
+      FOREIGN KEY (reversal_movement_id) REFERENCES stock_movimientos(id),
+      FOREIGN KEY (product_id) REFERENCES products(id)
     );
 
     CREATE TABLE IF NOT EXISTS purchase_invoices (
@@ -758,8 +785,14 @@ export function initDb() {
   try { db.exec("ALTER TABLE purchase_invoice_items ADD COLUMN previous_product_cost REAL"); } catch (e) {}
   try { db.exec("ALTER TABLE purchase_invoice_items ADD COLUMN product_was_created INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { db.exec("ALTER TABLE purchase_invoice_items ADD COLUMN stock_movement_id INTEGER"); } catch (e) {}
+  try { db.exec("ALTER TABLE stock_movimientos ADD COLUMN sale_id INTEGER"); } catch (e) {}
   try { db.exec("ALTER TABLE stock_movimientos ADD COLUMN purchase_invoice_id INTEGER"); } catch (e) {}
   try { db.exec("ALTER TABLE stock_movimientos ADD COLUMN purchase_invoice_item_id INTEGER"); } catch (e) {}
+  try { db.exec("ALTER TABLE stock_movimientos ADD COLUMN reversed_movement_id INTEGER"); } catch (e) {}
+  try { db.exec("ALTER TABLE stock_movimientos ADD COLUMN reversion_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE stock_movimientos ADD COLUMN anulada_at TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE stock_movimientos ADD COLUMN anulada_por TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE stock_movimientos ADD COLUMN anulacion_motivo TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN purchase_invoice_id INTEGER"); } catch (e) {}
   try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN purchase_invoice_cancellation_id INTEGER"); } catch (e) {}
   try { db.exec("ALTER TABLE movimientos_financieros ADD COLUMN estado TEXT NOT NULL DEFAULT 'Activo'"); } catch (e) {}

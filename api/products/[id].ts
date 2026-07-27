@@ -11,6 +11,7 @@ import { ProductRepository } from "../../server/repositories/productRepository.j
 import { UserRepository } from "../../server/repositories/userRepository.js";
 import { sendError, sendSuccess } from "../../server/utils/response.js";
 import { requireBearerUser, type CurrentUserAuth } from "../../server/services/currentUserAuthService.js";
+import { inventoryMovementCancellationService } from "../../server/services/inventoryMovementCancellationService.js";
 
 const productSchema = z.object({
   code: z.string().min(1, "El codigo es requerido"),
@@ -30,6 +31,11 @@ const lifecycleSchema = z.object({
   motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
 });
 
+const inventoryCancellationSchema = z.object({
+  movement_id: z.number().int().positive("Movimiento inválido"),
+  motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
+});
+
 const getBody = (req: any) => {
   if (req.body && typeof req.body === "object") return req.body;
   if (typeof req.body === "string") {
@@ -39,6 +45,7 @@ const getBody = (req: any) => {
 };
 
 const permissionKeyByAction = {
+  view: "can_view",
   edit: "can_edit",
   delete: "can_delete",
 } as const;
@@ -81,12 +88,59 @@ export default async function handler(req: any, res: any) {
   const id = getId(req);
   if (!id) return sendError(res, "ID de producto inválido", 400);
 
+
+  if (req.method === "GET") {
+    const rawAction = Array.isArray(req.query?.action) ? req.query.action[0] : req.query?.action;
+    const action = typeof rawAction === "string" ? rawAction : "";
+
+    if (action === "inventory-history") {
+      const user = await requireProductPermission(req, res, "view");
+      if (!user) return;
+
+      try {
+        const result = await inventoryMovementCancellationService.list(id);
+        return sendSuccess(res, result);
+      } catch (error: any) {
+        return sendError(res, error?.message || "No se pudo obtener el historial de inventario", error?.statusCode || 400, error?.errors || []);
+      }
+    }
+
+    return sendError(res, "Acción de producto inválida", 400);
+  }
+
   if (req.method === "POST") {
     const rawAction = Array.isArray(req.query?.action) ? req.query.action[0] : req.query?.action;
     const action = typeof rawAction === "string" ? rawAction : "";
 
     if (isInventoryAction(action)) {
       return handleProductInventoryAction(req, res, action);
+    }
+
+    if (action === "inventory-revert") {
+      const user = await requireProductPermission(req, res, "edit");
+      if (!user) return;
+
+      const parsed = inventoryCancellationSchema.safeParse(getBody(req));
+      if (!parsed.success) {
+        return sendError(
+          res,
+          "Validation failed",
+          400,
+          parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }))
+        );
+      }
+
+      try {
+        const result = await inventoryMovementCancellationService.cancel({
+          productId: id,
+          movementId: parsed.data.movement_id,
+          motivo: parsed.data.motivo,
+          usuario: user.userName || "Sistema",
+        });
+        return sendSuccess(res, result, "Movimiento de inventario anulado correctamente");
+      } catch (error: any) {
+        return sendError(res, error?.message || "No se pudo anular el movimiento", error?.statusCode || 400, error?.errors || []);
+      }
     }
 
     if (isLifecycleAction(action)) {

@@ -7,6 +7,7 @@ import { z } from "zod";
 import { sendSuccess, sendError, AppError } from "../utils/response.js";
 import { getPostgresPool, isPostgresConfigured } from "../utils/postgres.js";
 import { productLifecycleService } from "../services/productLifecycleService.js";
+import { inventoryMovementCancellationService } from "../services/inventoryMovementCancellationService.js";
 
 const router = express.Router();
 
@@ -48,6 +49,12 @@ const expireSchema = z.object({
 });
 
 const lifecycleSchema = z.object({
+  body: z.object({
+    motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
+  }),
+});
+
+const inventoryCancellationSchema = z.object({
   body: z.object({
     motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
   }),
@@ -108,6 +115,35 @@ router.post("/", requireAuth, requirePermission('products', 'create'), validate(
   }
 });
 
+router.get("/:id/inventory-history", requireAuth, requirePermission('products', 'view'), async (req, res) => {
+  try {
+    const result = await inventoryMovementCancellationService.list(Number(req.params.id));
+    return sendSuccess(res, result);
+  } catch (error: any) {
+    return sendError(res, error?.message || "No se pudo obtener el historial de inventario", error?.statusCode || 400, error?.errors || []);
+  }
+});
+
+router.post(
+  "/:id/inventory-movements/:movementId/revert",
+  requireAuth,
+  requirePermission('products', 'edit'),
+  validate(inventoryCancellationSchema),
+  async (req, res) => {
+    try {
+      const result = await inventoryMovementCancellationService.cancel({
+        productId: Number(req.params.id),
+        movementId: Number(req.params.movementId),
+        motivo: req.body.motivo,
+        usuario: (req as any).user?.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Movimiento de inventario anulado correctamente");
+    } catch (error: any) {
+      return sendError(res, error?.message || "No se pudo anular el movimiento", error?.statusCode || 400, error?.errors || []);
+    }
+  }
+);
+
 router.put("/:id", requireAuth, requirePermission('products', 'edit'), validate(productSchema), async (req, res) => {
   try {
     const productId = Number(req.params.id);
@@ -148,9 +184,11 @@ router.post("/:id/stock", requireAuth, requirePermission('products', 'edit'), va
 
         db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?").run(cantidad, productId);
         db.prepare(`
-          INSERT INTO stock_movimientos (product_id, cantidad, costo_unitario, cantidad_restante, tipo_movimiento, usuario, motivo)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(productId, cantidad, costo_unitario, cantidad, 'ingreso', usuario, notes || 'Carga de stock');
+          INSERT INTO stock_movimientos (
+            product_id, cantidad, costo_unitario, cantidad_restante, descripcion,
+            tipo_movimiento, usuario, motivo, reversion_version
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+        `).run(productId, cantidad, costo_unitario, cantidad, notes || 'Carga de stock', 'ingreso', usuario, 'carga_stock');
       })();
 
       return sendSuccess(res, null, "Stock actualizado exitosamente");
@@ -176,9 +214,11 @@ router.post("/:id/stock", requireAuth, requirePermission('products', 'edit'), va
 
       await client.query("UPDATE products SET stock = stock + $1 WHERE id = $2", [cantidad, productId]);
       await client.query(
-        `INSERT INTO stock_movimientos (product_id, cantidad, costo_unitario, cantidad_restante, tipo_movimiento, usuario, motivo)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [productId, cantidad, costo_unitario, cantidad, 'ingreso', usuario, notes || 'Carga de stock']
+        `INSERT INTO stock_movimientos (
+           product_id, cantidad, costo_unitario, cantidad_restante, descripcion,
+           tipo_movimiento, usuario, motivo, reversion_version
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1)`,
+        [productId, cantidad, costo_unitario, cantidad, notes || 'Carga de stock', 'ingreso', usuario, 'carga_stock']
       );
 
       await client.query('COMMIT');
@@ -285,7 +325,7 @@ router.post("/:id/expire", requireAuth, requirePermission('products', 'edit'), v
   try {
     if (!isPostgresConfigured()) {
       db.transaction(() => {
-        const product = db.prepare("SELECT stock, estado FROM products WHERE id = ? AND eliminado = 0").get(productId) as any;
+        const product = db.prepare("SELECT stock, cost, estado FROM products WHERE id = ? AND eliminado = 0").get(productId) as any;
         if (!product) {
           throw new AppError("Producto no encontrado", 404);
         }
@@ -299,9 +339,11 @@ router.post("/:id/expire", requireAuth, requirePermission('products', 'edit'), v
 
         db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?").run(cantidad, productId);
         db.prepare(`
-          INSERT INTO stock_movimientos (product_id, tipo_movimiento, cantidad, motivo, usuario, fecha_ingreso)
-          VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        `).run(productId, 'egreso', cantidad, notes || 'Merma/Vencimiento', usuario);
+          INSERT INTO stock_movimientos (
+            product_id, tipo_movimiento, cantidad, costo_unitario, cantidad_restante,
+            descripcion, motivo, usuario, fecha_ingreso, reversion_version
+          ) VALUES (?, ?, ?, ?, 0, ?, 'merma', ?, CURRENT_TIMESTAMP, 1)
+        `).run(productId, 'egreso', cantidad, Number(product.cost || 0), notes || 'Merma/Vencimiento', usuario);
       })();
 
       return sendSuccess(res, null, "Merma registrada exitosamente");
@@ -314,7 +356,7 @@ router.post("/:id/expire", requireAuth, requirePermission('products', 'edit'), v
       await client.query('BEGIN');
 
       const productResult = await client.query(
-        "SELECT stock, estado FROM products WHERE id = $1 AND eliminado = 0 LIMIT 1 FOR UPDATE",
+        "SELECT stock, cost, estado FROM products WHERE id = $1 AND eliminado = 0 LIMIT 1 FOR UPDATE",
         [productId]
       );
 
@@ -333,9 +375,11 @@ router.post("/:id/expire", requireAuth, requirePermission('products', 'edit'), v
 
       await client.query("UPDATE products SET stock = stock - $1 WHERE id = $2", [cantidad, productId]);
       await client.query(
-        `INSERT INTO stock_movimientos (product_id, tipo_movimiento, cantidad, motivo, usuario)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [productId, 'egreso', cantidad, notes || 'Merma/Vencimiento', usuario]
+        `INSERT INTO stock_movimientos (
+           product_id, tipo_movimiento, cantidad, costo_unitario, cantidad_restante,
+           descripcion, motivo, usuario, reversion_version
+         ) VALUES ($1, $2, $3, $4, 0, $5, 'merma', $6, 1)`,
+        [productId, 'egreso', cantidad, Number(productResult.rows[0]?.cost || 0), notes || 'Merma/Vencimiento', usuario]
       );
 
       await client.query('COMMIT');

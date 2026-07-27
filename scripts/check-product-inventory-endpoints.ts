@@ -65,7 +65,7 @@ const client = {
   async query(text: string, params: any[] = []) {
     const sql = text.replace(/\s+/g, ' ').trim();
     if (sql.startsWith('SELECT id, stock')) {
-      return { rows: [{ id: params[0], stock: state.stock, estado: 'activo' }], rowCount: 1 };
+      return { rows: [{ id: params[0], stock: state.stock, cost: 12, estado: 'activo' }], rowCount: 1 };
     }
     if (sql.startsWith('UPDATE products SET stock = COALESCE')) {
       state.stock += Number(params[0]);
@@ -96,7 +96,7 @@ assert(state.stockMinimo === 3, 'No se actualizó el stock mínimo.');
 
 await applyProductInventoryPostgres(client, 'expire', 100, { cantidad: 2, notes: 'Merma' }, 'Tester');
 assert(state.stock === 7, 'La merma no descontó el stock.');
-assert(state.movements.length === 2 && state.movements[1].params[5] === 'merma', 'La merma no registró el movimiento correcto.');
+assert(state.movements.length === 2 && state.movements[1].params[6] === 'merma', 'La merma no registró el movimiento correcto.');
 
 let insufficientStockBlocked = false;
 try {
@@ -110,7 +110,7 @@ const inactiveClient = {
   async query(text: string, params: any[] = []) {
     const sql = text.replace(/\s+/g, ' ').trim();
     if (sql.startsWith('SELECT id, stock')) {
-      return { rows: [{ id: params[0], stock: 7, estado: 'inactivo' }], rowCount: 1 };
+      return { rows: [{ id: params[0], stock: 7, cost: 5, estado: 'inactivo' }], rowCount: 1 };
     }
     throw new Error(`No debía ejecutarse otra consulta para un producto inactivo: ${sql}`);
   },

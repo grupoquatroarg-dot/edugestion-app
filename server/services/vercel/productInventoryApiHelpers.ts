@@ -64,7 +64,7 @@ const handleSqlite = async (action: InventoryAction, productId: number, data: an
   const { default: db } = await import("../../db.js");
   return db.transaction(() => {
     const product = db
-      .prepare("SELECT id, stock, estado FROM products WHERE id = ? AND eliminado = 0")
+      .prepare("SELECT id, stock, cost, estado FROM products WHERE id = ? AND eliminado = 0")
       .get(productId) as any;
 
     if (!product) throw new AppError("Producto no encontrado", 404);
@@ -77,8 +77,8 @@ const handleSqlite = async (action: InventoryAction, productId: number, data: an
       db.prepare(`
         INSERT INTO stock_movimientos (
           product_id, cantidad, costo_unitario, cantidad_restante,
-          descripcion, tipo_movimiento, motivo, usuario
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          descripcion, tipo_movimiento, motivo, usuario, reversion_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
       `).run(
         productId,
         data.cantidad,
@@ -104,12 +104,13 @@ const handleSqlite = async (action: InventoryAction, productId: number, data: an
     db.prepare("UPDATE products SET stock = stock - ? WHERE id = ?").run(data.cantidad, productId);
     db.prepare(`
       INSERT INTO stock_movimientos (
-        product_id, cantidad, cantidad_restante, descripcion,
-        tipo_movimiento, motivo, usuario
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        product_id, cantidad, costo_unitario, cantidad_restante, descripcion,
+        tipo_movimiento, motivo, usuario, reversion_version
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
     `).run(
       productId,
       data.cantidad,
+      Number(product.cost || 0),
       0,
       data.notes || "Merma/Vencimiento",
       "egreso",
@@ -129,7 +130,7 @@ export const applyProductInventoryPostgres = async (
   usuario: string
 ) => {
   const productResult = await client.query(
-    `SELECT id, stock, estado
+    `SELECT id, stock, cost, estado
      FROM products
      WHERE id = $1 AND eliminado = 0
      LIMIT 1
@@ -151,8 +152,8 @@ export const applyProductInventoryPostgres = async (
     await client.query(
       `INSERT INTO stock_movimientos (
          product_id, cantidad, costo_unitario, cantidad_restante,
-         descripcion, tipo_movimiento, motivo, usuario
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+         descripcion, tipo_movimiento, motivo, usuario, reversion_version
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1)`,
       [
         productId,
         data.cantidad,
@@ -186,12 +187,13 @@ export const applyProductInventoryPostgres = async (
   ]);
   await client.query(
     `INSERT INTO stock_movimientos (
-       product_id, cantidad, cantidad_restante, descripcion,
-       tipo_movimiento, motivo, usuario
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+       product_id, cantidad, costo_unitario, cantidad_restante, descripcion,
+       tipo_movimiento, motivo, usuario, reversion_version
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1)`,
     [
       productId,
       data.cantidad,
+      Number(productResult.rows[0]?.cost || 0),
       0,
       data.notes || "Merma/Vencimiento",
       "egreso",

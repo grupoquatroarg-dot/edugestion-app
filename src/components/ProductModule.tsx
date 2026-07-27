@@ -1,11 +1,31 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, Edit2, Power, RotateCcw, Package, Search, X, AlertTriangle, Boxes, RefreshCw, Loader2, CircleDollarSign, SlidersHorizontal } from 'lucide-react';
+import { Plus, Edit2, Power, RotateCcw, Package, Search, X, AlertTriangle, Boxes, RefreshCw, Loader2, CircleDollarSign, SlidersHorizontal, History, Undo2 } from 'lucide-react';
 import { Product, ProductFormData, ProductFamily, ProductCategory } from '../types';
 import { getSocket } from '../utils/socket';
 import { useAuth } from '../contexts/AuthContext';
 import { unwrapResponse, apiFetch } from '../utils/api';
 
 const socket = getSocket();
+
+type InventoryMovement = {
+  id: number;
+  cantidad: number;
+  costo_unitario?: number;
+  cantidad_restante?: number;
+  descripcion?: string;
+  tipo_movimiento: string;
+  motivo?: string;
+  usuario?: string;
+  fecha_ingreso?: string;
+  reversion_version?: number;
+  anulada_at?: string | null;
+  anulada_por?: string | null;
+  anulacion_motivo?: string | null;
+  reversed_movement_id?: number | null;
+  can_revert?: boolean;
+  protection_reason?: string;
+};
+
 
 export default function ProductModule() {
   const { hasPermission } = useAuth();
@@ -50,6 +70,13 @@ export default function ProductModule() {
   } | null>(null);
   const [lifecycleReason, setLifecycleReason] = useState('');
   const [lifecycleLoading, setLifecycleLoading] = useState(false);
+  const [inventoryProduct, setInventoryProduct] = useState<Product | null>(null);
+  const [inventoryMovements, setInventoryMovements] = useState<InventoryMovement[]>([]);
+  const [inventoryLoading, setInventoryLoading] = useState(false);
+  const [inventoryError, setInventoryError] = useState('');
+  const [inventoryReversalTarget, setInventoryReversalTarget] = useState<InventoryMovement | null>(null);
+  const [inventoryReversalReason, setInventoryReversalReason] = useState('');
+  const [inventoryReversing, setInventoryReversing] = useState(false);
 
   useEffect(() => {
     fetchProducts(true);
@@ -248,6 +275,74 @@ export default function ProductModule() {
     setIsModalOpen(true);
   };
 
+  const loadInventoryHistory = async (product: Product) => {
+    setInventoryLoading(true);
+    setInventoryError('');
+    try {
+      const response = await apiFetch(`/api/products/${product.id}?action=inventory-history`);
+      const body = await response.json();
+      const data = unwrapResponse<any>(body);
+      if (data?.product) setInventoryProduct((current) => current ? { ...current, ...data.product } : current);
+      setInventoryMovements(Array.isArray(data?.movements) ? data.movements : []);
+    } catch (error: any) {
+      setInventoryError(error?.message || 'No se pudo cargar el historial de inventario.');
+    } finally {
+      setInventoryLoading(false);
+    }
+  };
+
+  const openInventoryHistory = (product: Product) => {
+    setInventoryProduct(product);
+    setInventoryMovements([]);
+    setInventoryReversalTarget(null);
+    setInventoryReversalReason('');
+    loadInventoryHistory(product);
+  };
+
+  const closeInventoryHistory = () => {
+    if (inventoryReversing) return;
+    setInventoryProduct(null);
+    setInventoryMovements([]);
+    setInventoryError('');
+    setInventoryReversalTarget(null);
+    setInventoryReversalReason('');
+  };
+
+  const submitInventoryReversal = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!inventoryProduct || !inventoryReversalTarget) return;
+
+    const reason = inventoryReversalReason.trim();
+    if (reason.length < 3) {
+      setInventoryError('El motivo debe tener al menos 3 caracteres.');
+      return;
+    }
+
+    setInventoryReversing(true);
+    setInventoryError('');
+    try {
+      const response = await apiFetch(`/api/products/${inventoryProduct.id}?action=inventory-revert`, {
+        method: 'POST',
+        body: JSON.stringify({ movement_id: inventoryReversalTarget.id, motivo: reason }),
+      });
+      const body = await response.json();
+      unwrapResponse(body);
+      setInventoryReversalTarget(null);
+      setInventoryReversalReason('');
+      await Promise.all([loadInventoryHistory(inventoryProduct), fetchProducts(false)]);
+    } catch (error: any) {
+      setInventoryError(error?.message || 'No se pudo anular el movimiento.');
+    } finally {
+      setInventoryReversing(false);
+    }
+  };
+
+  const formatMovementDate = (value?: string) => {
+    if (!value) return 'Sin fecha';
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString('es-AR');
+  };
+
   const openLifecycleModal = (product: Product) => {
     setLifecycleTarget({
       product,
@@ -413,6 +508,18 @@ export default function ProductModule() {
               <span>Editar</span>
             </button>
           </>
+        )}
+        {hasPermission('products', 'view') && (
+          <button
+            type="button"
+            onClick={() => openInventoryHistory(product)}
+            className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-cyan-200 bg-cyan-50 px-2 py-2.5 text-xs font-black text-cyan-800 transition hover:bg-cyan-100 focus:outline-none focus:ring-4 focus:ring-cyan-100"
+            title={`Ver historial de inventario de ${product.name}`}
+            aria-label={`Ver historial de inventario de ${product.name}`}
+          >
+            <History size={16} aria-hidden="true" />
+            <span>Historial</span>
+          </button>
         )}
         {hasPermission('products', 'delete') && (
           <button
@@ -1067,6 +1174,84 @@ export default function ProductModule() {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {inventoryProduct && (
+        <div className="fixed inset-0 z-[75] flex items-end justify-center bg-slate-950/65 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+          <div className="max-h-[100dvh] w-full overflow-y-auto rounded-t-3xl border border-slate-200 bg-white shadow-2xl sm:max-h-[92dvh] sm:max-w-3xl sm:rounded-3xl">
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-slate-200 bg-white/95 p-4 backdrop-blur sm:p-6">
+              <div className="min-w-0">
+                <h2 className="truncate text-xl font-black text-slate-950">Historial de inventario</h2>
+                <p className="truncate text-sm text-slate-500">{inventoryProduct.name} · Stock actual: <strong>{inventoryProduct.stock}</strong></p>
+              </div>
+              <button type="button" onClick={closeInventoryHistory} disabled={inventoryReversing} className="rounded-xl p-2 text-slate-500 hover:bg-slate-100 disabled:opacity-50" aria-label="Cerrar historial de inventario" title="Cerrar">
+                <X size={22} />
+              </button>
+            </div>
+
+            <div className="space-y-4 p-4 sm:p-6">
+              {inventoryError && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700">{inventoryError}</div>
+              )}
+
+              {inventoryLoading ? (
+                <div className="flex min-h-40 items-center justify-center gap-3 text-slate-500"><Loader2 className="animate-spin" size={22} /> Cargando movimientos…</div>
+              ) : inventoryMovements.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">No hay movimientos registrados para este producto.</div>
+              ) : (
+                <div className="space-y-3">
+                  {inventoryMovements.map((movement) => {
+                    const isIngress = movement.tipo_movimiento === 'ingreso';
+                    const isCancelled = Boolean(movement.anulada_at);
+                    const quantity = Math.abs(Number(movement.cantidad || 0));
+                    return (
+                      <article key={movement.id} className={`rounded-2xl border p-4 ${isCancelled ? 'border-slate-200 bg-slate-50 opacity-80' : 'border-slate-200 bg-white'}`}>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={`rounded-full px-2.5 py-1 text-[11px] font-black uppercase tracking-wide ${isIngress ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                                {isIngress ? 'Ingreso' : 'Egreso'} {isIngress ? '+' : '-'}{quantity}
+                              </span>
+                              {isCancelled && <span className="rounded-full bg-slate-200 px-2.5 py-1 text-[11px] font-black uppercase text-slate-700">Anulado</span>}
+                              {movement.reversed_movement_id && <span className="rounded-full bg-indigo-100 px-2.5 py-1 text-[11px] font-black uppercase text-indigo-700">Contramovimiento</span>}
+                            </div>
+                            <p className="mt-2 break-words text-sm font-black text-slate-900">{movement.descripcion || movement.motivo || 'Movimiento de inventario'}</p>
+                            <p className="mt-1 text-xs text-slate-500">{formatMovementDate(movement.fecha_ingreso)} · {movement.usuario || 'Sistema'}</p>
+                            {Number(movement.costo_unitario || 0) > 0 && <p className="mt-1 text-xs text-slate-500">Costo unitario: {formatCurrency(Number(movement.costo_unitario || 0))}</p>}
+                            {movement.anulacion_motivo && <p className="mt-2 rounded-xl bg-white p-2 text-xs text-slate-700"><strong>Motivo de anulación:</strong> {movement.anulacion_motivo}</p>}
+                            {!movement.can_revert && movement.protection_reason && !isCancelled && <p className="mt-2 text-xs font-bold text-slate-500">{movement.protection_reason}</p>}
+                          </div>
+                          {hasPermission('products', 'edit') && movement.can_revert && (
+                            <button type="button" onClick={() => { setInventoryReversalTarget(movement); setInventoryReversalReason(''); setInventoryError(''); }} className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 text-sm font-black text-red-700 hover:bg-red-100">
+                              <Undo2 size={16} /> Anular
+                            </button>
+                          )}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {inventoryProduct && inventoryReversalTarget && (
+        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/70 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+          <form onSubmit={submitInventoryReversal} className="w-full rounded-t-3xl bg-white p-5 shadow-2xl sm:max-w-lg sm:rounded-3xl sm:p-6">
+            <h3 className="text-xl font-black text-slate-950">Anular movimiento de inventario</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-600">Se conservará el movimiento original y se creará un contramovimiento auditado. La operación será bloqueada si el stock actual no permite una reversión segura.</p>
+            <label className="mt-5 block text-sm font-black text-slate-800" htmlFor="inventory-reversal-reason">Motivo</label>
+            <textarea id="inventory-reversal-reason" autoFocus required minLength={3} maxLength={500} value={inventoryReversalReason} onChange={(event) => setInventoryReversalReason(event.target.value)} className="mt-2 min-h-28 w-full rounded-2xl border border-slate-300 p-3 text-sm outline-none focus:border-red-400 focus:ring-4 focus:ring-red-100" placeholder="Ej.: cantidad cargada por error" />
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <button type="button" onClick={() => { if (!inventoryReversing) { setInventoryReversalTarget(null); setInventoryReversalReason(''); } }} disabled={inventoryReversing} className="min-h-12 rounded-xl border border-slate-300 bg-white px-4 font-black text-slate-700 disabled:opacity-50">Cancelar</button>
+              <button type="submit" disabled={inventoryReversing || inventoryReversalReason.trim().length < 3} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-red-600 px-4 font-black text-white hover:bg-red-700 disabled:opacity-50">
+                {inventoryReversing ? <Loader2 className="animate-spin" size={18} /> : <Undo2 size={18} />} {inventoryReversing ? 'Anulando…' : 'Confirmar anulación'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 
