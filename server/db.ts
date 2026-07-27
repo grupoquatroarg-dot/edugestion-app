@@ -662,8 +662,30 @@ export function initDb() {
       tipo_cambio TEXT,
       valor REAL,
       productos_afectados INTEGER,
-      fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+      fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+      reversion_version INTEGER NOT NULL DEFAULT 0,
+      reverted_at TEXT,
+      reverted_by TEXT,
+      revert_reason TEXT,
+      reverted_count INTEGER NOT NULL DEFAULT 0
     );
+
+    CREATE TABLE IF NOT EXISTS price_update_history_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      price_update_history_id INTEGER NOT NULL,
+      product_id INTEGER NOT NULL,
+      previous_cost REAL NOT NULL,
+      previous_sale_price REAL NOT NULL,
+      new_cost REAL NOT NULL,
+      new_sale_price REAL NOT NULL,
+      reverted_at TEXT,
+      UNIQUE (price_update_history_id, product_id),
+      FOREIGN KEY (price_update_history_id) REFERENCES price_update_history(id),
+      FOREIGN KEY (product_id) REFERENCES products(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_price_update_items_history
+      ON price_update_history_items (price_update_history_id, product_id);
   `);
 
   const adminExists = db.prepare("SELECT * FROM users WHERE email = 'admin@edugestion.com'").get();
@@ -693,6 +715,12 @@ export function initDb() {
       VALUES (1, 'Proveedor General')
     `).run();
   }
+
+  try { db.exec("ALTER TABLE price_update_history ADD COLUMN reversion_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE price_update_history ADD COLUMN reverted_at TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE price_update_history ADD COLUMN reverted_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE price_update_history ADD COLUMN revert_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE price_update_history ADD COLUMN reverted_count INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
 
   try { db.exec("ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 1"); } catch (e) {}
   try { db.exec("ALTER TABLE users ADD COLUMN deactivated_at DATETIME"); } catch (e) {}

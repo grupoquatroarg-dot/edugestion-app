@@ -18,6 +18,7 @@ import {
   X,
   Boxes,
   ArrowRight,
+  RotateCcw,
 } from 'lucide-react';
 import { Product, ProductFamily } from '../types';
 import { unwrapResponse, apiFetch } from '../utils/api';
@@ -31,6 +32,13 @@ interface PriceUpdateHistory {
   tipo_cambio: string;
   valor: number;
   productos_afectados: number;
+  reversion_version: number;
+  reverted_at: string | null;
+  reverted_by: string | null;
+  revert_reason: string | null;
+  reverted_count: number;
+  traced_products: number;
+  can_revert: boolean;
 }
 
 type PriceScope = 'all' | 'family' | 'company' | 'manual';
@@ -125,6 +133,9 @@ export default function BulkPriceUpdate() {
   const [dataError, setDataError] = useState<string | null>(null);
   const [productSearch, setProductSearch] = useState('');
   const [productPickerOpen, setProductPickerOpen] = useState(false);
+  const [revertTarget, setRevertTarget] = useState<PriceUpdateHistory | null>(null);
+  const [revertReason, setRevertReason] = useState('');
+  const [revertingId, setRevertingId] = useState<number | null>(null);
 
   // Filters
   const [scope, setScope] = useState<PriceScope>('manual');
@@ -595,6 +606,50 @@ export default function BulkPriceUpdate() {
     }
   };
 
+  const closeRevertModal = () => {
+    if (revertingId !== null) return;
+    setRevertTarget(null);
+    setRevertReason('');
+  };
+
+  const handleRevert = async () => {
+    if (!revertTarget || revertingId !== null) return;
+    const reason = revertReason.trim();
+    if (reason.length < 3) {
+      setNotification({ type: 'error', message: 'Ingresá un motivo de al menos 3 caracteres.' });
+      setTimeout(() => setNotification(null), 5000);
+      return;
+    }
+
+    setRevertingId(revertTarget.id);
+    try {
+      const res = await apiFetch('/api/products?endpoint=bulk-price-revert', {
+        method: 'POST',
+        body: JSON.stringify({ history_id: revertTarget.id, motivo: reason }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        const errorData = unwrapResponse(body);
+        throw new Error((errorData as any)?.message || 'No se pudo revertir el cambio.');
+      }
+
+      const result = unwrapResponse<{ revertedCount: number }>(body);
+      setRevertTarget(null);
+      setRevertReason('');
+      setNotification({
+        type: 'success',
+        message: `Cambio revertido correctamente en ${Number(result?.revertedCount || revertTarget.productos_afectados)} producto(s).`,
+      });
+      await Promise.allSettled([fetchHistory(), fetchProducts()]);
+      setTimeout(() => setNotification(null), 5000);
+    } catch (error: any) {
+      setNotification({ type: 'error', message: error.message || 'No se pudo revertir el cambio de precios.' });
+      setTimeout(() => setNotification(null), 6000);
+    } finally {
+      setRevertingId(null);
+    }
+  };
+
   if (initialLoading) {
     return (
       <div className="mx-auto w-full max-w-[1600px] space-y-5 p-3 sm:p-5 lg:p-6" aria-busy="true">
@@ -636,15 +691,40 @@ export default function BulkPriceUpdate() {
         </div>
       )}
 
+      {revertTarget && (
+        <div className="fixed inset-0 z-[85] flex items-end justify-center bg-slate-950/70 p-0 backdrop-blur-sm sm:items-center sm:p-5">
+          <div className="w-full rounded-t-[28px] bg-white shadow-2xl sm:max-w-xl sm:rounded-[28px]" role="dialog" aria-modal="true" aria-labelledby="bulk-price-revert-title">
+            <div className="flex items-start gap-4 border-b border-amber-100 bg-amber-50 p-5 sm:p-6">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-100 text-amber-800"><RotateCcw size={24} /></div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-amber-800">Reversión auditada</p>
+                <h3 id="bulk-price-revert-title" className="mt-1 text-xl font-black text-slate-950">Revertir cambio de precios</h3>
+                <p className="mt-2 text-sm leading-5 text-slate-700">Se restaurarán los valores anteriores de {revertTarget.productos_afectados} producto(s). Si alguno fue modificado después, la operación completa se bloqueará.</p>
+              </div>
+              <button type="button" onClick={closeRevertModal} disabled={revertingId !== null} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-black/5 disabled:opacity-50" aria-label="Cerrar reversión"><X size={19} /></button>
+            </div>
+            <div className="p-5 sm:p-6">
+              <label htmlFor="bulk-price-revert-reason" className="block text-sm font-black text-slate-900">Motivo de la reversión</label>
+              <textarea id="bulk-price-revert-reason" value={revertReason} onChange={(event) => setRevertReason(event.target.value)} disabled={revertingId !== null} maxLength={500} rows={4} className="mt-2 w-full rounded-2xl border border-slate-300 p-4 outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-100 disabled:opacity-60" placeholder="Ejemplo: porcentaje cargado incorrectamente" />
+              <div className="mt-2 flex items-center justify-between text-xs text-slate-500"><span>Mínimo 3 caracteres</span><span>{revertReason.length}/500</span></div>
+            </div>
+            <div className="grid gap-3 border-t border-slate-200 p-5 sm:grid-cols-2">
+              <button type="button" onClick={closeRevertModal} disabled={revertingId !== null} className="min-h-12 rounded-2xl bg-slate-100 px-5 font-black text-slate-800 disabled:opacity-50">Cancelar</button>
+              <button type="button" onClick={() => void handleRevert()} disabled={revertingId !== null || revertReason.trim().length < 3} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-amber-700 px-5 font-black text-white hover:bg-amber-800 disabled:opacity-40">{revertingId !== null ? <><RefreshCw className="animate-spin" size={18} />Revirtiendo…</> : <><RotateCcw size={18} />Confirmar reversión</>}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showConfirm && previewConfig && previewSummary && (
         <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/70 p-0 backdrop-blur-sm sm:items-center sm:p-5">
           <div className="flex max-h-[100dvh] w-full flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:max-h-[92dvh] sm:max-w-3xl sm:rounded-[28px]" role="dialog" aria-modal="true" aria-labelledby="bulk-price-confirm-title">
             <div className="flex items-start gap-4 border-b border-rose-100 bg-rose-50 p-5 sm:p-6">
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-rose-100 text-rose-700"><AlertCircle size={25} /></div>
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-bold uppercase tracking-[0.2em] text-rose-700">Acción irreversible</p>
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-rose-700">Acción protegida</p>
                 <h3 id="bulk-price-confirm-title" className="mt-1 text-xl font-black text-slate-950 sm:text-2xl">Revisá antes de actualizar</h3>
-                <p className="mt-1 text-sm leading-5 text-rose-800">Se modificarán precios reales y no existe una reversión automática.</p>
+                <p className="mt-1 text-sm leading-5 text-rose-800">Se modificarán precios reales. El sistema guardará el valor anterior de cada producto para permitir una reversión auditada.</p>
               </div>
               <button
                 type="button"
@@ -932,9 +1012,26 @@ export default function BulkPriceUpdate() {
             <div className="flex items-center gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-700"><History size={21} /></div><div><h2 className="font-black text-slate-950">Historial reciente</h2><p className="text-xs text-slate-500">Últimas actualizaciones registradas.</p></div></div>
             <div className="mt-4 space-y-3">
               {history.slice(0, 5).map((entry) => (
-                <article key={entry.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-black text-slate-900">{changeTypeLabels[entry.tipo_cambio as PriceChangeType] || entry.tipo_cambio}</p><p className="mt-1 text-xs text-slate-500">{formatBusinessDateTime(entry.fecha)}</p></div><span className={`rounded-xl px-3 py-1.5 text-sm font-black ${entry.tipo_cambio.includes('increase') ? 'bg-emerald-100 text-emerald-800' : entry.tipo_cambio.includes('decrease') ? 'bg-rose-100 text-rose-800' : 'bg-indigo-100 text-indigo-800'}`}>{entry.tipo_cambio.includes('fixed') ? formatCurrency(entry.valor) : `${entry.valor}%`}</span></div>
+                <article key={entry.id} className={`rounded-2xl border p-4 ${entry.reverted_at ? 'border-slate-200 bg-slate-100' : 'border-slate-200 bg-slate-50'}`}>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-black text-slate-900">{changeTypeLabels[entry.tipo_cambio as PriceChangeType] || entry.tipo_cambio}</p>
+                        {entry.reverted_at && <span className="rounded-lg bg-slate-700 px-2 py-1 text-[10px] font-black uppercase text-white">Revertido</span>}
+                        {!entry.reverted_at && entry.reversion_version !== 1 && <span className="rounded-lg bg-amber-100 px-2 py-1 text-[10px] font-black uppercase text-amber-800">Sin trazabilidad</span>}
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">{formatBusinessDateTime(entry.fecha)}</p>
+                    </div>
+                    <span className={`rounded-xl px-3 py-1.5 text-sm font-black ${entry.tipo_cambio.includes('increase') ? 'bg-emerald-100 text-emerald-800' : entry.tipo_cambio.includes('decrease') ? 'bg-rose-100 text-rose-800' : 'bg-indigo-100 text-indigo-800'}`}>{entry.tipo_cambio.includes('fixed') ? formatCurrency(entry.valor) : `${entry.valor}%`}</span>
+                  </div>
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs"><div className="rounded-xl bg-white p-3"><p className="text-slate-500">Productos</p><p className="mt-1 font-black text-slate-900">{entry.productos_afectados}</p></div><div className="rounded-xl bg-white p-3"><p className="text-slate-500">Alcance</p><p className="mt-1 break-words font-black text-slate-900">{entry.alcance}</p></div></div>
+                  {entry.reverted_at ? (
+                    <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600"><p><span className="font-black">Revertido por:</span> {entry.reverted_by || 'Sistema'}</p><p className="mt-1"><span className="font-black">Motivo:</span> {entry.revert_reason || 'Sin detalle'}</p><p className="mt-1">{formatBusinessDateTime(entry.reverted_at)}</p></div>
+                  ) : entry.can_revert ? (
+                    <button type="button" onClick={() => { setRevertTarget(entry); setRevertReason(''); }} disabled={revertingId !== null} className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 font-black text-amber-900 hover:bg-amber-100 disabled:opacity-50"><RotateCcw size={16} />Revertir cambio</button>
+                  ) : (
+                    <p className="mt-3 rounded-xl bg-white p-3 text-xs font-semibold text-slate-500">Este registro es histórico y no posee valores por producto para una reversión automática.</p>
+                  )}
                 </article>
               ))}
               {history.length === 0 && <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">Todavía no hay cambios registrados.</div>}

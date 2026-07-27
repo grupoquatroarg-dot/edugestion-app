@@ -5,6 +5,7 @@ import { UserRepository } from "../server/repositories/userRepository.js";
 import { getPostgresPool, isPostgresConfigured } from "../server/utils/postgres.js";
 import { AppError, sendError, sendSuccess } from "../server/utils/response.js";
 import { requireBearerUser, type CurrentUserAuth } from "../server/services/currentUserAuthService.js";
+import { bulkPriceReversalService } from "../server/services/bulkPriceReversalService.js";
 
 const productSchema = z.object({
   code: z.string().min(1, "El codigo es requerido"),
@@ -33,6 +34,11 @@ const bulkApplySchema = z.object({
   new_margin: z.number().optional(),
   expected_product_ids: z.array(z.number().int().positive()).min(1).optional(),
   user_email: z.string().optional(),
+});
+
+const bulkRevertSchema = z.object({
+  history_id: z.number().int().positive(),
+  motivo: z.string().trim().min(3).max(500),
 });
 
 type Queryable = {
@@ -156,7 +162,7 @@ const calculateNewPrices = (params: {
 };
 
 const ensurePriceHistoryTableSqlite = () => {
-  db.prepare(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS price_update_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -164,9 +170,41 @@ const ensurePriceHistoryTableSqlite = () => {
       alcance TEXT,
       tipo_cambio TEXT,
       valor REAL,
-      productos_afectados INTEGER
-    )
-  `).run();
+      productos_afectados INTEGER,
+      reversion_version INTEGER NOT NULL DEFAULT 0,
+      reverted_at TEXT,
+      reverted_by TEXT,
+      revert_reason TEXT,
+      reverted_count INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS price_update_history_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      price_update_history_id INTEGER NOT NULL,
+      product_id INTEGER NOT NULL,
+      previous_cost REAL NOT NULL,
+      previous_sale_price REAL NOT NULL,
+      new_cost REAL NOT NULL,
+      new_sale_price REAL NOT NULL,
+      reverted_at TEXT,
+      UNIQUE (price_update_history_id, product_id),
+      FOREIGN KEY (price_update_history_id) REFERENCES price_update_history(id),
+      FOREIGN KEY (product_id) REFERENCES products(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_price_update_items_history
+      ON price_update_history_items (price_update_history_id, product_id);
+  `);
+
+  for (const statement of [
+    "ALTER TABLE price_update_history ADD COLUMN reversion_version INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE price_update_history ADD COLUMN reverted_at TEXT",
+    "ALTER TABLE price_update_history ADD COLUMN reverted_by TEXT",
+    "ALTER TABLE price_update_history ADD COLUMN revert_reason TEXT",
+    "ALTER TABLE price_update_history ADD COLUMN reverted_count INTEGER NOT NULL DEFAULT 0",
+  ]) {
+    try { db.exec(statement); } catch {}
+  }
 };
 
 const ensurePriceHistoryTablePg = async (queryable: Queryable) => {
@@ -178,8 +216,38 @@ const ensurePriceHistoryTablePg = async (queryable: Queryable) => {
       alcance TEXT,
       tipo_cambio TEXT,
       valor NUMERIC DEFAULT 0,
-      productos_afectados INTEGER DEFAULT 0
+      productos_afectados INTEGER DEFAULT 0,
+      reversion_version INTEGER NOT NULL DEFAULT 0,
+      reverted_at TIMESTAMP WITH TIME ZONE,
+      reverted_by TEXT,
+      revert_reason TEXT,
+      reverted_count INTEGER NOT NULL DEFAULT 0
     )
+  `);
+  await queryable.query(`
+    ALTER TABLE price_update_history
+      ADD COLUMN IF NOT EXISTS reversion_version INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS reverted_at TIMESTAMP WITH TIME ZONE,
+      ADD COLUMN IF NOT EXISTS reverted_by TEXT,
+      ADD COLUMN IF NOT EXISTS revert_reason TEXT,
+      ADD COLUMN IF NOT EXISTS reverted_count INTEGER NOT NULL DEFAULT 0
+  `);
+  await queryable.query(`
+    CREATE TABLE IF NOT EXISTS price_update_history_items (
+      id BIGSERIAL PRIMARY KEY,
+      price_update_history_id INTEGER NOT NULL REFERENCES price_update_history(id) ON DELETE RESTRICT,
+      product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+      previous_cost NUMERIC NOT NULL,
+      previous_sale_price NUMERIC NOT NULL,
+      new_cost NUMERIC NOT NULL,
+      new_sale_price NUMERIC NOT NULL,
+      reverted_at TIMESTAMP WITH TIME ZONE,
+      UNIQUE (price_update_history_id, product_id)
+    )
+  `);
+  await queryable.query(`
+    CREATE INDEX IF NOT EXISTS idx_price_update_items_history
+      ON price_update_history_items (price_update_history_id, product_id)
   `);
 };
 
@@ -287,7 +355,7 @@ const applyBulkPriceUpdate = async (payload: z.infer<typeof bulkApplySchema>, us
     ensurePriceHistoryTableSqlite();
     const updatedProducts: any[] = [];
 
-    const count = db.transaction(() => {
+    const transactionResult = db.transaction(() => {
       const params: any[] = [];
       const where = buildBulkFiltersSqlite(payload, params);
       const productsToUpdate = db.prepare(`SELECT p.id, p.cost, p.sale_price FROM products p ${where}`).all(...params) as any[];
@@ -296,6 +364,20 @@ const applyBulkPriceUpdate = async (payload: z.infer<typeof bulkApplySchema>, us
       if (productsToUpdate.length === 0) {
         throw new AppError("No hay productos para actualizar con el alcance seleccionado.", 400);
       }
+
+      const historyInsert = db.prepare(`
+        INSERT INTO price_update_history (
+          usuario, alcance, tipo_cambio, valor, productos_afectados, reversion_version
+        )
+        VALUES (?, ?, ?, ?, ?, 1)
+      `).run(
+        payload.user_email || userName || "Sistema",
+        `${payload.scope} (${payload.target_field})`,
+        payload.change_type,
+        payload.value,
+        productsToUpdate.length
+      );
+      const historyId = Number(historyInsert.lastInsertRowid);
 
       for (const product of productsToUpdate) {
         const { newCost, newSalePrice } = calculateNewPrices({
@@ -306,6 +388,21 @@ const applyBulkPriceUpdate = async (payload: z.infer<typeof bulkApplySchema>, us
           updateSalePrice: payload.update_sale_price,
           newMargin: payload.new_margin,
         });
+
+        db.prepare(`
+          INSERT INTO price_update_history_items (
+            price_update_history_id, product_id,
+            previous_cost, previous_sale_price,
+            new_cost, new_sale_price
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `).run(
+          historyId,
+          product.id,
+          product.cost,
+          product.sale_price,
+          newCost,
+          newSalePrice
+        );
 
         db.prepare("UPDATE products SET cost = ?, sale_price = ? WHERE id = ?").run(newCost, newSalePrice, product.id);
         const updated = db.prepare(`
@@ -318,21 +415,10 @@ const applyBulkPriceUpdate = async (payload: z.infer<typeof bulkApplySchema>, us
         updatedProducts.push(mapProduct(updated));
       }
 
-      db.prepare(`
-        INSERT INTO price_update_history (usuario, alcance, tipo_cambio, valor, productos_afectados)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(
-        payload.user_email || userName || "Sistema",
-        `${payload.scope} (${payload.target_field})`,
-        payload.change_type,
-        payload.value,
-        productsToUpdate.length
-      );
-
-      return productsToUpdate.length;
+      return { count: productsToUpdate.length, historyId };
     })();
 
-    return { count, updatedProducts };
+    return { ...transactionResult, updatedProducts };
   }
 
   const pool = getPostgresPool();
@@ -355,6 +441,21 @@ const applyBulkPriceUpdate = async (payload: z.infer<typeof bulkApplySchema>, us
       throw new AppError("No hay productos para actualizar con el alcance seleccionado.", 400);
     }
 
+    const historyResult = await client.query(
+      `INSERT INTO price_update_history (
+         usuario, alcance, tipo_cambio, valor, productos_afectados, reversion_version
+       )
+       VALUES ($1, $2, $3, $4, $5, 1)
+       RETURNING id`,
+      [
+        payload.user_email || userName || "Sistema",
+        `${payload.scope} (${payload.target_field})`,
+        payload.change_type,
+        payload.value,
+        productsResult.rows.length,
+      ]
+    );
+    const historyId = Number(historyResult.rows[0].id);
     const updatedProducts: any[] = [];
 
     for (const product of productsResult.rows) {
@@ -366,6 +467,16 @@ const applyBulkPriceUpdate = async (payload: z.infer<typeof bulkApplySchema>, us
         updateSalePrice: payload.update_sale_price,
         newMargin: payload.new_margin,
       });
+
+      await client.query(
+        `INSERT INTO price_update_history_items (
+           price_update_history_id, product_id,
+           previous_cost, previous_sale_price,
+           new_cost, new_sale_price
+         )
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [historyId, product.id, product.cost, product.sale_price, newCost, newSalePrice]
+      );
 
       const updatedResult = await client.query(
         `UPDATE products
@@ -388,21 +499,9 @@ const applyBulkPriceUpdate = async (payload: z.infer<typeof bulkApplySchema>, us
       updatedProducts.push(mapProduct(enrichedResult.rows[0]));
     }
 
-    await client.query(
-      `INSERT INTO price_update_history (usuario, alcance, tipo_cambio, valor, productos_afectados)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        payload.user_email || userName || "Sistema",
-        `${payload.scope} (${payload.target_field})`,
-        payload.change_type,
-        payload.value,
-        productsResult.rows.length,
-      ]
-    );
-
     await client.query("COMMIT");
 
-    return { count: productsResult.rows.length, updatedProducts };
+    return { count: productsResult.rows.length, historyId, updatedProducts };
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -411,24 +510,50 @@ const applyBulkPriceUpdate = async (payload: z.infer<typeof bulkApplySchema>, us
   }
 };
 
+const mapBulkHistory = (row: any) => ({
+  id: toNumber(row.id),
+  fecha: row.fecha,
+  usuario: row.usuario,
+  alcance: row.alcance,
+  tipo_cambio: row.tipo_cambio,
+  valor: toNumber(row.valor),
+  productos_afectados: toNumber(row.productos_afectados),
+  reversion_version: toNumber(row.reversion_version),
+  reverted_at: row.reverted_at ?? null,
+  reverted_by: row.reverted_by ?? null,
+  revert_reason: row.revert_reason ?? null,
+  reverted_count: toNumber(row.reverted_count),
+  traced_products: toNumber(row.traced_products),
+  can_revert:
+    toNumber(row.reversion_version) === 1 &&
+    !row.reverted_at &&
+    toNumber(row.traced_products) === toNumber(row.productos_afectados),
+});
+
 const getBulkHistory = async () => {
   if (!isPostgresConfigured()) {
     ensurePriceHistoryTableSqlite();
-    return db.prepare("SELECT * FROM price_update_history ORDER BY fecha DESC LIMIT 50").all();
+    return db.prepare(`
+      SELECT h.*, COUNT(i.id) AS traced_products
+      FROM price_update_history h
+      LEFT JOIN price_update_history_items i ON i.price_update_history_id = h.id
+      GROUP BY h.id
+      ORDER BY h.fecha DESC, h.id DESC
+      LIMIT 50
+    `).all().map(mapBulkHistory);
   }
 
   const pool = getPostgresPool();
   await ensurePriceHistoryTablePg(pool as any);
-  const result = await pool.query("SELECT * FROM price_update_history ORDER BY fecha DESC LIMIT 50");
-  return result.rows.map((row: any) => ({
-    id: toNumber(row.id),
-    fecha: row.fecha,
-    usuario: row.usuario,
-    alcance: row.alcance,
-    tipo_cambio: row.tipo_cambio,
-    valor: toNumber(row.valor),
-    productos_afectados: toNumber(row.productos_afectados),
-  }));
+  const result = await pool.query(`
+    SELECT h.*, COUNT(i.id)::int AS traced_products
+    FROM price_update_history h
+    LEFT JOIN price_update_history_items i ON i.price_update_history_id = h.id
+    GROUP BY h.id
+    ORDER BY h.fecha DESC, h.id DESC
+    LIMIT 50
+  `);
+  return result.rows.map(mapBulkHistory);
 };
 
 export default async function handler(req: any, res: any) {
@@ -481,6 +606,35 @@ export default async function handler(req: any, res: any) {
       return sendSuccess(res, result, "Actualizacion masiva aplicada exitosamente");
     } catch (error: any) {
       return sendError(res, error?.message || "Error al aplicar cambio de precios", error?.statusCode || 400, error?.errors || []);
+    }
+  }
+
+  if (req.method === "POST" && endpoint === "bulk-price-revert") {
+    const user = await requireProductPermission(req, res, "edit");
+    if (!user) return;
+
+    const parsed = bulkRevertSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(
+        res,
+        "Validation failed",
+        400,
+        parsed.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        }))
+      );
+    }
+
+    try {
+      const result = await bulkPriceReversalService.revert({
+        historyId: parsed.data.history_id,
+        motivo: parsed.data.motivo,
+        usuario: user.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Cambio de precios revertido correctamente");
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al revertir cambio de precios", error?.statusCode || 400, error?.errors || []);
     }
   }
 
