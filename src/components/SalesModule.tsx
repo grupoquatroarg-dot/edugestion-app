@@ -410,7 +410,7 @@ export default function SalesModule() {
         body: JSON.stringify({ motivo }),
       });
       const body = await response.json();
-      unwrapResponse(body);
+      const cancellationResult = unwrapResponse(body);
 
       await Promise.all([fetchSalesHistory(), fetchActiveProducts(), fetchClientes()]);
       if (selectedSale?.id === saleToCancel.id) {
@@ -419,7 +419,12 @@ export default function SalesModule() {
 
       setSaleToCancel(null);
       setCancellationReason('');
-      alert(`La venta N° ${saleToCancel.numero_venta || saleToCancel.id} fue anulada correctamente.`);
+      const pendingDeliveries = Number(cancellationResult?.pendingCustomerOrderDeliveryReversalIds?.length || 0);
+      alert(
+        pendingDeliveries > 0
+          ? `La venta N° ${saleToCancel.numero_venta || saleToCancel.id} fue anulada correctamente. Ahora revertí la entrega desde Pedidos de Clientes.`
+          : `La venta N° ${saleToCancel.numero_venta || saleToCancel.id} fue anulada correctamente.`
+      );
     } catch (error: any) {
       console.error('Error cancelling sale:', error);
       setCancellationError(error?.message || 'No se pudo anular la venta.');

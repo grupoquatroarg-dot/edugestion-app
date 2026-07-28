@@ -12,6 +12,8 @@ import { saleCancellationService } from "../server/services/saleCancellationServ
 import { supplierOrderCancellationService } from "../server/services/supplierOrderCancellationService.js";
 import { supplierOrderDeliveryReversalService } from "../server/services/supplierOrderDeliveryReversalService.js";
 import { customerOrderCancellationService } from "../server/services/customerOrderCancellationService.js";
+import { customerOrderDeliveryService } from "../server/services/customerOrderDeliveryService.js";
+import { customerOrderDeliveryReversalService } from "../server/services/customerOrderDeliveryReversalService.js";
 import { assertPaymentMethodActive } from "../server/services/paymentMethodAvailabilityService.js";
 
 const saleSchema = z.object({
@@ -100,6 +102,10 @@ const customerOrderRejectSchema = z.object({
 
 const customerOrderCancellationSchema = z.object({
   motivo: z.string().trim().min(3, "El motivo de anulación es obligatorio").max(500, "El motivo es demasiado extenso"),
+});
+
+const customerOrderDeliveryReversalSchema = z.object({
+  motivo: z.string().trim().min(3, "El motivo de reversión es obligatorio").max(500, "El motivo es demasiado extenso"),
 });
 
 const customerOrderUpdateSchema = z.object({
@@ -1127,6 +1133,12 @@ const mapCustomerOrderAdmin = (row: any, items: any[] = []) => {
     cancelled_by: row.cancelled_by || "",
     cancellation_source: row.cancellation_source || "",
     cancelled_from_status: row.cancelled_from_status || "",
+    delivery_version: toNumber(row.delivery_version),
+    delivered_by: row.delivered_by || "",
+    delivered_from_status: row.delivered_from_status || "",
+    delivery_reverted_at: row.delivery_reverted_at || null,
+    delivery_reverted_by: row.delivery_reverted_by || "",
+    delivery_revert_reason: row.delivery_revert_reason || "",
     items,
   };
 };
@@ -1547,80 +1559,51 @@ const handleCustomerOrders = async (req: any, res: any) => {
   if (endpoint === "customer-order-deliver" && req.method === "POST") {
     if (!id) return sendError(res, "ID de pedido inválido", 400);
 
-    const orderResult = await pool.query(
-      `SELECT co.*, c.nombre_apellido AS cliente, c.telefono AS cliente_telefono
-       FROM customer_orders co
-       JOIN clientes c ON c.id = co.cliente_id
-       WHERE co.id = $1
-       LIMIT 1`,
-      [id]
-    );
-
-    if (!orderResult.rowCount) return sendError(res, "Pedido no encontrado", 404);
-    const order = orderResult.rows[0];
-
-    if (order.estado !== "aprobado_pendiente_entrega") {
-      return sendError(res, "Solo se pueden entregar pedidos aprobados", 400);
+    try {
+      const result = await customerOrderDeliveryService.deliver({
+        customerOrderId: id,
+        usuario: user.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Pedido entregado y agregado a cuenta corriente");
+    } catch (error: any) {
+      return sendError(
+        res,
+        error?.message || "No se pudo entregar el pedido",
+        error?.statusCode || 400,
+        error?.errors || []
+      );
     }
-
-    const itemsByOrder = await fetchCustomerOrderItems(pool, [id]);
-    const items = itemsByOrder.get(id) || [];
-    if (!items.length) return sendError(res, "El pedido no tiene productos", 400);
-
-    const shortageItems = await getCustomerOrderShortages(pool, id);
-    if (shortageItems.length > 0) {
-      const client = await pool.connect();
-      try {
-        await client.query("BEGIN");
-        const supplierOrder = await ensureSupplierOrderForCustomerOrder(client, order, shortageItems, user.userName || "Sistema");
-        await client.query("COMMIT");
-        return sendError(
-          res,
-          `No se puede entregar el pedido porque hay productos sin stock. Se generó/actualizó el pedido a proveedor #${supplierOrder?.supplierOrderNumber || ''}.`,
-          400,
-          shortageItems
-        );
-      } catch (error: any) {
-        await client.query("ROLLBACK");
-        return sendError(res, error?.message || "Error al verificar stock del pedido", error?.statusCode || 400, error?.errors || []);
-      } finally {
-        client.release();
-      }
-    }
-
-    const subtotal = toNumber(order.subtotal);
-    const discountAmount = toNumber(order.descuento_monto);
-    const equivalentDiscountPct = subtotal > 0 ? Math.min(100, (discountAmount / subtotal) * 100) : 0;
-
-    const saleResult = await salesService.createSale({
-      cliente_id: toNumber(order.cliente_id),
-      nombre_cliente: order.cliente,
-      metodo_pago: "Cta Cte",
-      monto_pagado: 0,
-      notes: `Pedido cliente #${order.numero_pedido}`,
-      usuario: user.userName || "Sistema",
-      items: items.map((item: any) => ({
-        product_id: toNumber(item.product_id),
-        cantidad: toNumber(item.cantidad),
-        precio_venta: toNumber(item.precio_unitario),
-        precio_unitario_original: toNumber(item.precio_unitario),
-        bonificacion_tipo: equivalentDiscountPct > 0 ? "percentage" : "none",
-        bonificacion_valor: equivalentDiscountPct,
-      })),
-    });
-
-    await pool.query(
-      `UPDATE customer_orders
-       SET estado = 'entregado',
-           sale_id = $1,
-           entregado_at = now()
-       WHERE id = $2`,
-      [saleResult.saleId, id]
-    );
-
-    return sendSuccess(res, { ...saleResult, orderId: id }, "Pedido entregado y agregado a cuenta corriente");
   }
 
+  if (endpoint === "customer-order-delivery-revert" && req.method === "POST") {
+    if (!id) return sendError(res, "ID de pedido inválido", 400);
+
+    const parsed = customerOrderDeliveryReversalSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(
+        res,
+        "Validation failed",
+        400,
+        parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }))
+      );
+    }
+
+    try {
+      const result = await customerOrderDeliveryReversalService.revert({
+        customerOrderId: id,
+        motivo: parsed.data.motivo,
+        usuario: user.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Entrega del pedido revertida correctamente");
+    } catch (error: any) {
+      return sendError(
+        res,
+        error?.message || "No se pudo revertir la entrega del pedido",
+        error?.statusCode || 400,
+        error?.errors || []
+      );
+    }
+  }
 
   if (endpoint === "customer-order-payment" && req.method === "POST") {
     if (!id) return sendError(res, "ID de pedido inválido", 400);
@@ -1811,7 +1794,7 @@ export default async function handler(req: any, res: any) {
   const id = getId(req);
   const endpoint = getEndpoint(req);
 
-  if (["customer-orders", "customer-order-approve", "customer-order-deliver", "customer-order-reject", "customer-order-update", "customer-order-payment", "customer-order-cancel"].includes(endpoint)) {
+  if (["customer-orders", "customer-order-approve", "customer-order-deliver", "customer-order-reject", "customer-order-update", "customer-order-payment", "customer-order-cancel", "customer-order-delivery-revert"].includes(endpoint)) {
     return handleCustomerOrders(req, res);
   }
 

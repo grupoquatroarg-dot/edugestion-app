@@ -47,6 +47,10 @@ const getStatusLabel = (order: any) => {
     return 'Listo para entregar';
   }
 
+  if (order.estado === 'entregado' && String(order.sale_estado || '').toLowerCase() === 'anulada') {
+    return 'Entrega pendiente de revertir';
+  }
+
   if (order.estado === 'entregado' && order.sale_estado === 'Pagada') {
     return 'Entregado y pagado';
   }
@@ -80,6 +84,10 @@ const getStatusClass = (order: any) => {
     order.stock_status === 'listo_entrega'
   ) {
     return 'bg-blue-50 text-blue-700 border-blue-100';
+  }
+
+  if (order.estado === 'entregado' && String(order.sale_estado || '').toLowerCase() === 'anulada') {
+    return 'bg-amber-50 text-amber-800 border-amber-200';
   }
 
   if (order.estado === 'entregado' && order.sale_estado === 'Pagada') {
@@ -189,6 +197,8 @@ export default function CustomerOrdersAdmin({
   const [paymentNotes, setPaymentNotes] = useState('');
   const [orderToCancel, setOrderToCancel] = useState<any | null>(null);
   const [cancellationReason, setCancellationReason] = useState('');
+  const [deliveryToRevert, setDeliveryToRevert] = useState<any | null>(null);
+  const [deliveryReversalReason, setDeliveryReversalReason] = useState('');
 
   const availablePaymentMethods = useMemo(() => {
     const activeMethods = paymentMethods.filter(
@@ -533,6 +543,49 @@ export default function CustomerOrdersAdmin({
       );
     } catch (error: any) {
       alert(error?.message || 'No se pudo anular el pedido');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const openDeliveryReversalModal = (order: any) => {
+    setDeliveryToRevert(order);
+    setDeliveryReversalReason('');
+  };
+
+  const closeDeliveryReversalModal = () => {
+    if (actionLoading !== null) return;
+    setDeliveryToRevert(null);
+    setDeliveryReversalReason('');
+  };
+
+  const revertDelivery = async () => {
+    if (!deliveryToRevert) return;
+
+    const reason = deliveryReversalReason.trim();
+    if (reason.length < 3) {
+      alert('Ingresá un motivo de reversión de al menos 3 caracteres');
+      return;
+    }
+
+    setActionLoading(deliveryToRevert.id);
+    try {
+      const response = await apiFetch(
+        `/api/sales?endpoint=customer-order-delivery-revert&id=${deliveryToRevert.id}`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ motivo: reason }),
+        }
+      );
+      const body = await response.json();
+      unwrapResponse(body);
+      setDeliveryToRevert(null);
+      setDeliveryReversalReason('');
+      await fetchOrders();
+      onChanged?.();
+      alert('Entrega revertida correctamente. El pedido volvió a estar listo para entregar.');
+    } catch (error: any) {
+      alert(error?.message || 'No se pudo revertir la entrega');
     } finally {
       setActionLoading(null);
     }
@@ -1273,7 +1326,32 @@ export default function CustomerOrdersAdmin({
                         </button>
                       )}
 
-                    {order.estado === 'entregado' && orderPending > 0 && (
+                    {order.estado === 'entregado' && (
+                      Number(order.delivery_version || 0) === 1 ? (
+                        String(order.sale_estado || '').toLowerCase() === 'anulada' ? (
+                          <button
+                            type="button"
+                            disabled={actionLoading === order.id}
+                            onClick={() => openDeliveryReversalModal(order)}
+                            className="w-full py-3 border border-amber-200 bg-amber-50 text-amber-800 rounded-xl font-black uppercase text-xs flex items-center justify-center gap-2 disabled:opacity-50 hover:bg-amber-100"
+                          >
+                            <RefreshCcw size={16} /> Revertir entrega
+                          </button>
+                        ) : (
+                          <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 text-sm font-bold text-zinc-600">
+                            Para revertir esta entrega, primero anulá la Venta N° {order.numero_venta || order.sale_id} desde Ventas.
+                          </div>
+                        )
+                      ) : (
+                        <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 text-sm font-bold text-zinc-500">
+                          Entrega histórica sin trazabilidad reversible.
+                        </div>
+                      )
+                    )}
+
+                    {order.estado === 'entregado' &&
+                      String(order.sale_estado || '').toLowerCase() !== 'anulada' &&
+                      orderPending > 0 && (
                       <>
                         <button
                           onClick={() =>
@@ -1415,7 +1493,9 @@ export default function CustomerOrdersAdmin({
                       </>
                     )}
 
-                    {order.estado === 'entregado' && orderPending <= 0 && (
+                    {order.estado === 'entregado' &&
+                      String(order.sale_estado || '').toLowerCase() !== 'anulada' &&
+                      orderPending <= 0 && (
                       <div className="bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-2xl p-4 flex items-center gap-2 text-sm font-bold">
                         <CheckCircle2 size={18} /> Pedido entregado y pagado
                       </div>
@@ -1436,6 +1516,64 @@ export default function CustomerOrdersAdmin({
           )}
         </div>
       </div>
+
+      {deliveryToRevert && (
+        <div className="fixed inset-0 z-[72] flex items-end justify-center bg-zinc-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-5">
+          <button
+            type="button"
+            className="absolute inset-0"
+            onClick={closeDeliveryReversalModal}
+            aria-label="Cerrar reversión de entrega"
+          />
+          <section className="relative w-full rounded-t-[30px] bg-white p-5 shadow-2xl sm:max-w-lg sm:rounded-3xl sm:p-6">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-100 text-amber-800">
+              <RefreshCcw size={24} />
+            </div>
+            <h2 className="mt-5 text-xl font-black text-zinc-950">
+              Revertir entrega #{deliveryToRevert.numero_pedido || deliveryToRevert.id}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-zinc-500">
+              La venta vinculada ya debe estar anulada. El pedido volverá a quedar listo para entregar, sin borrar la venta ni sus movimientos históricos.
+            </p>
+
+            <label className="mt-5 block text-xs font-black uppercase tracking-widest text-zinc-500" htmlFor="customer-order-delivery-reversal-reason">
+              Motivo obligatorio
+            </label>
+            <textarea
+              id="customer-order-delivery-reversal-reason"
+              value={deliveryReversalReason}
+              onChange={(event) => setDeliveryReversalReason(event.target.value)}
+              maxLength={500}
+              className="mt-2 min-h-28 w-full rounded-2xl border border-zinc-200 bg-zinc-50 p-3 text-sm font-bold text-zinc-900 outline-none focus:border-amber-300 focus:ring-2 focus:ring-amber-100"
+              placeholder="Ej.: La entrega se confirmó por error"
+              autoFocus
+            />
+            <div className="mt-1 text-right text-[11px] font-bold text-zinc-400">
+              {deliveryReversalReason.trim().length}/500
+            </div>
+
+            <div className="mt-5 grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                disabled={actionLoading !== null}
+                onClick={closeDeliveryReversalModal}
+                className="min-h-12 rounded-2xl bg-zinc-100 px-4 text-sm font-black text-zinc-700 disabled:opacity-50"
+              >
+                Volver
+              </button>
+              <button
+                type="button"
+                disabled={actionLoading !== null || deliveryReversalReason.trim().length < 3}
+                onClick={revertDelivery}
+                className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-amber-600 px-4 text-sm font-black text-white disabled:opacity-50"
+              >
+                {actionLoading !== null ? <Loader2 size={17} className="animate-spin" /> : <RefreshCcw size={17} />}
+                Confirmar reversión
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {orderToCancel && (
         <div className="fixed inset-0 z-[70] flex items-end justify-center bg-zinc-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-5">

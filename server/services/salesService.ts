@@ -70,8 +70,8 @@ const getAndIncrementSetting = async (client: TransactionClient, key: string, de
 };
 
 export const salesService = {
-  async createSale(saleData: any) {
-    const { items, cliente_id, nombre_cliente, metodo_pago, monto_pagado, notes, cheque_data, usuario, route_item_id } = saleData;
+  async createSale(saleData: any, executor?: TransactionClient) {
+    const { items, cliente_id, nombre_cliente, metodo_pago, monto_pagado, notes, cheque_data, usuario, route_item_id, allow_shortage = true } = saleData;
     const routeItemId = Number(route_item_id || 0);
 
     const normalizeSaleItem = (item: any) => {
@@ -196,11 +196,12 @@ export const salesService = {
       })();
     }
 
-    const pool = getPostgresPool();
-    const client = await pool.connect();
+    const ownsTransaction = !executor;
+    const pool = executor ? null : getPostgresPool();
+    const client = executor || (await pool!.connect());
 
     try {
-      await client.query('BEGIN');
+      if (ownsTransaction) await client.query('BEGIN');
       await assertPaymentMethodActive(metodo_pago, client);
 
       let routeItem: any = null;
@@ -448,6 +449,20 @@ export const salesService = {
       let supplierOrderNumber: number | null = null;
       const shortageItems = Array.from(supplierShortageMap.values()).filter((item) => item.cantidad > 0);
 
+      if (!allow_shortage && shortageItems.length > 0) {
+        throw new AppError(
+          'No se puede completar la venta porque hay productos sin stock',
+          409,
+          shortageItems.map((item) => ({
+            product_id: item.product_id,
+            product_name: item.name,
+            cantidad: item.cantidad,
+            solicitado: item.requested,
+            stock_actual: item.available,
+          }))
+        );
+      }
+
       if (shortageItems.length > 0) {
         supplierOrderNumber = await getAndIncrementSetting(client, 'next_order_number');
         const orderResult = await client.query(
@@ -557,7 +572,7 @@ export const salesService = {
         );
       }
 
-      await client.query('COMMIT');
+      if (ownsTransaction) await client.query('COMMIT');
       return {
         success: true,
         saleId,
@@ -569,10 +584,12 @@ export const salesService = {
         route_item_id: routeItemId || null,
       };
     } catch (error) {
-      await client.query('ROLLBACK');
+      if (ownsTransaction) await client.query('ROLLBACK');
       throw error;
     } finally {
-      client.release();
+      if (ownsTransaction && 'release' in client && typeof (client as any).release === 'function') {
+        (client as any).release();
+      }
     }
   },
 

@@ -422,12 +422,20 @@ export const saleCancellationService = {
       );
 
       const customerOrdersResult = await client.query(
-        `SELECT id, numero_pedido, estado, cancel_reason, admin_notes,
-                cancelled_at, cancelled_by, cancellation_source, cancelled_from_status
-         FROM customer_orders
-         WHERE sale_id = $1
-         ORDER BY id ASC
-         FOR UPDATE`,
+        `SELECT co.id, co.numero_pedido, co.estado, co.cancel_reason, co.admin_notes,
+                co.cancelled_at, co.cancelled_by, co.cancellation_source, co.cancelled_from_status,
+                co.delivery_version, co.delivery_reverted_at,
+                EXISTS (
+                  SELECT 1
+                  FROM customer_order_deliveries cod
+                  WHERE cod.customer_order_id = co.id
+                    AND cod.sale_id = $1
+                    AND cod.reverted_at IS NULL
+                ) AS active_traced_delivery
+         FROM customer_orders co
+         WHERE co.sale_id = $1
+         ORDER BY co.id ASC
+         FOR UPDATE OF co`,
         [saleId]
       );
 
@@ -651,8 +659,28 @@ export const saleCancellationService = {
       }
 
       const cancelledCustomerOrderIds: number[] = [];
+      const pendingCustomerOrderDeliveryReversalIds: number[] = [];
       for (const order of customerOrdersResult.rows) {
-        if (String(order.estado || '').toLowerCase() !== 'cancelado') {
+        const orderState = String(order.estado || '').toLowerCase();
+        const tracedDelivery =
+          orderState === 'entregado' &&
+          toNumber(order.delivery_version) === 1 &&
+          Boolean(order.active_traced_delivery) &&
+          !order.delivery_reverted_at;
+
+        if (tracedDelivery) {
+          const deliveryNote = `Venta N° ${saleNumber} anulada. La entrega del pedido debe revertirse desde Pedidos de Clientes. Motivo: ${normalizedReason}`;
+          await client.query(
+            `UPDATE customer_orders
+             SET admin_notes = $1
+             WHERE id = $2`,
+            [appendAuditNote(order.admin_notes, deliveryNote), order.id]
+          );
+          pendingCustomerOrderDeliveryReversalIds.push(toNumber(order.id));
+          continue;
+        }
+
+        if (orderState !== 'cancelado') {
           await client.query(
             `INSERT INTO customer_order_cancellations (
                customer_order_id,
@@ -726,6 +754,7 @@ export const saleCancellationService = {
         financialReversalMovementIds,
         cancelledSupplierOrderIds,
         cancelledCustomerOrderIds,
+        pendingCustomerOrderDeliveryReversalIds,
         retainedDeliveredSupplierOrders: supplierOrdersResult.rows
           .filter((order: any) => String(order.estado) === 'entregado')
           .map((order: any) => toNumber(order.id)),
