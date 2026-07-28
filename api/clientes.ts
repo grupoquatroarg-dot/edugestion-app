@@ -379,11 +379,11 @@ const routeSchema = z.object({
 });
 
 const routeStatusSchema = z.object({
-  status: z.enum(["planificada", "en curso", "finalizada", "pendiente"]),
-});
+  status: z.enum(["planificada", "en curso", "pendiente"]),
+}).strict();
 
 const routeLifecycleSchema = z.object({
-  action: z.enum(["cancel", "reopen"]),
+  action: z.enum(["finalize", "cancel", "reopen"]),
   motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
 });
 
@@ -493,6 +493,11 @@ const mapRoute = (row: any) => ({
   reopened_at: row.reopened_at || null,
   reopened_by: row.reopened_by || null,
   reopen_reason: row.reopen_reason || null,
+  finalization_version: toNumber(row.finalization_version),
+  finalized_at: row.finalized_at || null,
+  finalized_by: row.finalized_by || null,
+  finalization_reason: row.finalization_reason || null,
+  finalized_from_status: row.finalized_from_status || null,
   total_customers: toNumber(row.total_customers),
   visited_customers: toNumber(row.visited_customers),
   sales_count: toNumber(row.sales_count),
@@ -832,13 +837,12 @@ const handleRoutes = async (req: any, res: any) => {
         usuario: user.userName || "Sistema",
       });
 
-      return sendSuccess(
-        res,
-        result,
-        parsed.data.action === "cancel"
+      const message = parsed.data.action === "finalize"
+        ? "Ruta finalizada correctamente"
+        : parsed.data.action === "cancel"
           ? "Ruta cancelada correctamente"
-          : "Ruta reabierta correctamente"
-      );
+          : "Ruta reabierta correctamente";
+      return sendSuccess(res, result, message);
     } catch (error: any) {
       return sendError(
         res,
@@ -1001,7 +1005,7 @@ const handleRoutes = async (req: any, res: any) => {
           throw new Error("La ruta está cancelada. Debe reabrirse antes de modificarla");
         }
         if (currentStatus === "finalizada") {
-          throw new Error("La ruta ya está finalizada y debe conservarse como historial");
+          throw new Error("La ruta ya está finalizada. Debe reabrirse antes de modificarla");
         }
 
         await client.query(`UPDATE routes SET status = $1 WHERE id = $2`, [parsed.data.status, id]);
@@ -1127,6 +1131,11 @@ const mapChecklist = (row: any, items?: any[]) => ({
   reopened_at: row.reopened_at || null,
   reopened_by: row.reopened_by || null,
   reopen_reason: row.reopen_reason || null,
+  finalization_version: toNumber(row.finalization_version),
+  finalized_at: row.finalized_at || null,
+  finalized_by: row.finalized_by || null,
+  finalization_reason: row.finalization_reason || null,
+  finalized_from_status: row.finalized_from_status || null,
   total_tasks: toNumber(row.total_tasks),
   completed_tasks: toNumber(row.completed_tasks),
   ...(items ? { items: items.map(mapChecklistItem) } : {}),

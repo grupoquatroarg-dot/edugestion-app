@@ -79,6 +79,11 @@ interface Route {
   reopened_at?: string | null;
   reopened_by?: string | null;
   reopen_reason?: string | null;
+  finalization_version?: number;
+  finalized_at?: string | null;
+  finalized_by?: string | null;
+  finalization_reason?: string | null;
+  finalized_from_status?: string | null;
   total_customers?: number;
   visited_customers?: number;
   sales_count?: number;
@@ -134,7 +139,7 @@ export default function RouteModule() {
   const [quickActionSaving, setQuickActionSaving] = useState(false);
   const [updatingItemId, setUpdatingItemId] = useState<number | null>(null);
   const [routeActionId, setRouteActionId] = useState<number | null>(null);
-  const [confirmAction, setConfirmAction] = useState<{ type: 'complete' | 'cancel' | 'reopen'; routeId: number; routeName: string } | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ type: 'finalize' | 'cancel' | 'reopen'; routeId: number; routeName: string } | null>(null);
   const [routeLifecycleReason, setRouteLifecycleReason] = useState('');
 
   // Planning state
@@ -494,31 +499,6 @@ export default function RouteModule() {
     }
   };
 
-  const handleCompleteRoute = async (routeId: number) => {
-    setRouteActionId(routeId);
-    try {
-      const res = await apiFetch(`/api/clientes?endpoint=routes&id=${routeId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: 'finalizada' })
-      });
-
-      const body = await res.json();
-      if (res.ok) {
-        unwrapResponse(body);
-        await fetchInitialData(false);
-        setActiveTab('historial');
-      } else {
-        const errorData = unwrapResponse(body);
-        showNotification('error', errorData.message || 'No se pudo finalizar la ruta.');
-      }
-    } catch (error) {
-      console.error("Error completing route:", error);
-      showNotification('error', 'No se pudo finalizar la ruta.');
-    } finally {
-      setRouteActionId(null);
-      setConfirmAction(null);
-    }
-  };
 
   const handleReorderItem = async (routeId: number, itemId: number, direction: 'up' | 'down') => {
     if (!todayRoute || !todayRoute.items) return;
@@ -631,7 +611,7 @@ export default function RouteModule() {
   };
 
   const handleRouteLifecycle = async () => {
-    if (!confirmAction || confirmAction.type === 'complete') return;
+    if (!confirmAction) return;
 
     const reason = routeLifecycleReason.trim();
     if (reason.length < 3) {
@@ -655,9 +635,11 @@ export default function RouteModule() {
         await fetchInitialData(false);
         showNotification(
           'success',
-          confirmAction.type === 'cancel'
-            ? 'Ruta cancelada correctamente.'
-            : 'Ruta reabierta correctamente.'
+          confirmAction.type === 'finalize'
+            ? 'Ruta finalizada correctamente.'
+            : confirmAction.type === 'cancel'
+              ? 'Ruta cancelada correctamente.'
+              : 'Ruta reabierta correctamente.'
         );
       } else {
         const errorData = unwrapResponse(body);
@@ -1048,7 +1030,7 @@ export default function RouteModule() {
                           <button type="button" onClick={async () => { try { const response = await apiFetch(`/api/clientes?endpoint=routes&id=${todayRoute.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'en curso' }) }); if (!response.ok) throw new Error(await readApiError(response, 'No se pudo iniciar la ruta.')); await response.json(); await fetchTodayRoute(); showNotification('success', 'Ruta iniciada.'); } catch (error: any) { showNotification('error', error?.message || 'No se pudo iniciar la ruta.'); } }} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-black text-white hover:bg-emerald-600"><ArrowRight size={17} />Iniciar</button>
                         )}
                         {todayRoute.status !== 'finalizada' && hasPermission('routes', 'edit') && (
-                          <button type="button" onClick={() => { setRouteLifecycleReason(''); setConfirmAction({ type: 'complete', routeId: todayRoute.id, routeName: todayRoute.name }); }} className="col-span-2 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-black text-indigo-900 sm:col-auto"><CheckCircle2 size={17} />Finalizar ruta</button>
+                          <button type="button" onClick={() => { setRouteLifecycleReason(''); setConfirmAction({ type: 'finalize', routeId: todayRoute.id, routeName: todayRoute.name }); }} className="col-span-2 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-black text-indigo-900 sm:col-auto"><CheckCircle2 size={17} />Finalizar ruta</button>
                         )}
                       </div>
                     </div>
@@ -1131,7 +1113,7 @@ export default function RouteModule() {
                   const visited = Number(route.visited_customers || 0);
                   const percentage = total > 0 ? Math.round((visited / total) * 100) : 0;
                   const canCancelRoute = !['finalizada', 'cancelada'].includes(route.status);
-                  const canReopenRoute = route.status === 'cancelada';
+                  const canReopenRoute = route.status === 'cancelada' || (route.status === 'finalizada' && Number(route.finalization_version || 0) === 1);
                   return (
                     <article key={route.id} className="min-w-0 rounded-[26px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
                       <div className="flex min-w-0 items-start justify-between gap-3">
@@ -1148,14 +1130,16 @@ export default function RouteModule() {
                         <div className="rounded-xl bg-indigo-50 p-3 text-center"><p className="text-[9px] font-bold uppercase text-indigo-400">Ventas</p><p className="mt-1 font-black text-indigo-700">{route.sales_count || 0}</p></div>
                         <div className="rounded-xl bg-amber-50 p-3 text-center"><p className="text-[9px] font-bold uppercase text-amber-500">Pedidos</p><p className="mt-1 font-black text-amber-700">{route.orders_count || 0}</p></div>
                       </div>
-                      {(route.cancel_reason || route.reopen_reason) && (
-                        <div className={`mt-4 rounded-xl px-3 py-3 text-xs leading-5 ${route.status === 'cancelada' ? 'bg-rose-50 text-rose-800' : 'bg-sky-50 text-sky-800'}`}>
-                          <p className="font-black">{route.status === 'cancelada' ? 'Ruta cancelada' : 'Ruta reabierta'}</p>
-                          <p className="mt-1 break-words">{route.status === 'cancelada' ? route.cancel_reason : route.reopen_reason}</p>
+                      {(route.cancel_reason || route.reopen_reason || route.finalization_reason) && (
+                        <div className={`mt-4 rounded-xl px-3 py-3 text-xs leading-5 ${route.status === 'cancelada' ? 'bg-rose-50 text-rose-800' : route.status === 'finalizada' ? 'bg-emerald-50 text-emerald-800' : 'bg-sky-50 text-sky-800'}`}>
+                          <p className="font-black">{route.status === 'cancelada' ? 'Ruta cancelada' : route.status === 'finalizada' ? 'Ruta finalizada' : 'Ruta reabierta'}</p>
+                          <p className="mt-1 break-words">{route.status === 'cancelada' ? route.cancel_reason : route.status === 'finalizada' ? route.finalization_reason : route.reopen_reason}</p>
                           <p className="mt-1 text-[10px] font-semibold opacity-75">
                             {route.status === 'cancelada'
                               ? `${route.cancelled_by || 'Sistema'} · ${route.cancelled_at ? formatBusinessDate(route.cancelled_at) : 'Sin fecha'}`
-                              : `${route.reopened_by || 'Sistema'} · ${route.reopened_at ? formatBusinessDate(route.reopened_at) : 'Sin fecha'}`}
+                              : route.status === 'finalizada'
+                                ? `${route.finalized_by || 'Sistema'} · ${route.finalized_at ? formatBusinessDate(route.finalized_at) : 'Sin fecha'}`
+                                : `${route.reopened_by || 'Sistema'} · ${route.reopened_at ? formatBusinessDate(route.reopened_at) : 'Sin fecha'}`}
                           </p>
                         </div>
                       )}
@@ -1167,7 +1151,7 @@ export default function RouteModule() {
                         {canReopenRoute && hasPermission('routes', 'edit') && (
                           <button type="button" onClick={() => { setRouteLifecycleReason(''); setConfirmAction({ type: 'reopen', routeId: route.id, routeName: route.name }); }} disabled={routeActionId === route.id} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-4 text-sm font-black text-sky-700 disabled:opacity-50"><RotateCcw size={16} />Reabrir ruta</button>
                         )}
-                        {route.status === 'finalizada' && <p className="col-span-2 rounded-xl bg-emerald-50 px-3 py-2 text-center text-[11px] font-semibold leading-5 text-emerald-700">La ruta finalizada se conserva como historial y no admite cancelación.</p>}
+                        {route.status === 'finalizada' && Number(route.finalization_version || 0) !== 1 && <p className="col-span-2 rounded-xl bg-emerald-50 px-3 py-2 text-center text-[11px] font-semibold leading-5 text-emerald-700">Ruta histórica sin trazabilidad suficiente para reabrir.</p>}
                       </div>
                     </article>
                   );
@@ -1291,19 +1275,17 @@ export default function RouteModule() {
                 {confirmAction.type === 'cancel'
                   ? `La ruta “${confirmAction.routeName}” quedará cancelada, pero conservará todas sus visitas, ventas, pedidos, cobranzas y notas.`
                   : confirmAction.type === 'reopen'
-                    ? `La ruta “${confirmAction.routeName}” volverá al estado operativo que tenía antes de cancelarse.`
-                    : `La ruta “${confirmAction.routeName}” quedará marcada como finalizada.`}
+                    ? `La ruta “${confirmAction.routeName}” volverá al estado operativo que tenía antes de cerrarse.`
+                    : `La ruta “${confirmAction.routeName}” quedará finalizada y bloqueará nuevas visitas y operaciones.`}
               </p>
-              {confirmAction.type !== 'complete' && (
-                <label className="mt-4 block">
-                  <span className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Motivo obligatorio</span>
-                  <textarea value={routeLifecycleReason} onChange={event => setRouteLifecycleReason(event.target.value)} maxLength={500} placeholder={confirmAction.type === 'cancel' ? 'Ej.: Se suspendieron las visitas por mal clima' : 'Ej.: Se retomará la ruta pendiente'} className="min-h-24 w-full resize-none rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100" />
-                  <span className="mt-1 block text-right text-[10px] font-semibold text-slate-400">{routeLifecycleReason.trim().length}/500</span>
-                </label>
-              )}
+              <label className="mt-4 block">
+                <span className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Motivo obligatorio</span>
+                <textarea value={routeLifecycleReason} onChange={event => setRouteLifecycleReason(event.target.value)} maxLength={500} placeholder={confirmAction.type === 'cancel' ? 'Ej.: Se suspendieron las visitas por mal clima' : confirmAction.type === 'reopen' ? 'Ej.: Se retomará la ruta pendiente' : 'Ej.: Se completó la jornada y se verificaron las visitas'} className="min-h-24 w-full resize-none rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100" />
+                <span className="mt-1 block text-right text-[10px] font-semibold text-slate-400">{routeLifecycleReason.trim().length}/500</span>
+              </label>
               <div className="mt-5 grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => { setConfirmAction(null); setRouteLifecycleReason(''); }} disabled={routeActionId !== null} className="min-h-12 rounded-xl border border-slate-200 bg-white text-sm font-black text-slate-700">Volver</button>
-                <button type="button" onClick={() => confirmAction.type === 'complete' ? handleCompleteRoute(confirmAction.routeId) : handleRouteLifecycle()} disabled={routeActionId !== null || (confirmAction.type !== 'complete' && routeLifecycleReason.trim().length < 3)} className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-xl text-sm font-black text-white disabled:opacity-50 ${confirmAction.type === 'cancel' ? 'bg-rose-600' : confirmAction.type === 'reopen' ? 'bg-sky-600' : 'bg-emerald-600'}`}>
+                <button type="button" onClick={handleRouteLifecycle} disabled={routeActionId !== null || routeLifecycleReason.trim().length < 3} className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-xl text-sm font-black text-white disabled:opacity-50 ${confirmAction.type === 'cancel' ? 'bg-rose-600' : confirmAction.type === 'reopen' ? 'bg-sky-600' : 'bg-emerald-600'}`}>
                   {routeActionId !== null && <Loader2 size={17} className="animate-spin" />}
                   {confirmAction.type === 'cancel' ? 'Confirmar cancelación' : confirmAction.type === 'reopen' ? 'Confirmar reapertura' : 'Finalizar'}
                 </button>

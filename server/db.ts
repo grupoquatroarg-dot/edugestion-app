@@ -455,6 +455,11 @@ export function initDb() {
       name TEXT NOT NULL,
       date TEXT NOT NULL,
       status TEXT DEFAULT 'pendiente',
+      finalization_version INTEGER NOT NULL DEFAULT 0,
+      finalized_at DATETIME,
+      finalized_by TEXT,
+      finalization_reason TEXT,
+      finalized_from_status TEXT,
       cancelled_at DATETIME,
       cancelled_by TEXT,
       cancel_reason TEXT,
@@ -468,7 +473,7 @@ export function initDb() {
     CREATE TABLE IF NOT EXISTS route_status_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       route_id INTEGER NOT NULL,
-      action TEXT NOT NULL CHECK(action IN ('cancel', 'reopen')),
+      action TEXT NOT NULL CHECK(action IN ('finalize', 'cancel', 'reopen')),
       reason TEXT NOT NULL,
       performed_by TEXT NOT NULL,
       performed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -941,6 +946,11 @@ export function initDb() {
   try { db.exec("ALTER TABLE checklist_templates ADD COLUMN reactivated_by TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE checklist_templates ADD COLUMN reactivation_reason TEXT"); } catch (e) {}
 
+  try { db.exec("ALTER TABLE routes ADD COLUMN finalization_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE routes ADD COLUMN finalized_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE routes ADD COLUMN finalized_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE routes ADD COLUMN finalization_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE routes ADD COLUMN finalized_from_status TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE routes ADD COLUMN cancelled_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE routes ADD COLUMN cancelled_by TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE routes ADD COLUMN cancel_reason TEXT"); } catch (e) {}
@@ -948,6 +958,42 @@ export function initDb() {
   try { db.exec("ALTER TABLE routes ADD COLUMN reopened_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE routes ADD COLUMN reopened_by TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE routes ADD COLUMN reopen_reason TEXT"); } catch (e) {}
+  try {
+    const routeHistoryDefinition = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'route_status_history'").get() as any;
+    const routeHistorySql = String(routeHistoryDefinition?.sql || "").toLowerCase();
+    if (routeHistorySql && !routeHistorySql.includes("'finalize'")) {
+      db.exec(`
+        BEGIN;
+        CREATE TABLE route_status_history_v2 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          route_id INTEGER NOT NULL,
+          action TEXT NOT NULL CHECK(action IN ('finalize', 'cancel', 'reopen')),
+          reason TEXT NOT NULL,
+          performed_by TEXT NOT NULL,
+          performed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          previous_status TEXT NOT NULL,
+          new_status TEXT NOT NULL,
+          snapshot TEXT NOT NULL DEFAULT '{}',
+          FOREIGN KEY (route_id) REFERENCES routes(id)
+        );
+        INSERT INTO route_status_history_v2 (
+          id, route_id, action, reason, performed_by, performed_at,
+          previous_status, new_status, snapshot
+        )
+        SELECT id, route_id, action, reason, performed_by, performed_at,
+               previous_status, new_status, snapshot
+        FROM route_status_history;
+        DROP TABLE route_status_history;
+        ALTER TABLE route_status_history_v2 RENAME TO route_status_history;
+        CREATE INDEX IF NOT EXISTS idx_route_status_history_route
+          ON route_status_history (route_id, performed_at DESC);
+        COMMIT;
+      `);
+    }
+  } catch (e) {
+    try { db.exec("ROLLBACK"); } catch (_) {}
+    throw e;
+  }
   try { db.exec("ALTER TABLE route_items ADD COLUMN status TEXT DEFAULT 'pendiente'"); } catch (e) {}
   try { db.exec("ALTER TABLE route_items ADD COLUMN notes TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE route_items ADD COLUMN visited_at DATETIME"); } catch (e) {}

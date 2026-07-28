@@ -96,7 +96,7 @@ router.patch("/:id", requireAuth, requirePermission('routes', 'edit'), (req, res
   const routeId = Number(req.params.id);
   const nextStatus = String(req.body?.status || "").trim().toLowerCase();
   if (!routeId) return sendError(res, "ID de ruta inválido", 400);
-  if (!["planificada", "pendiente", "en curso", "finalizada"].includes(nextStatus)) {
+  if (!["planificada", "pendiente", "en curso"].includes(nextStatus)) {
     return sendError(res, "Estado de ruta inválido", 400);
   }
 
@@ -112,6 +112,21 @@ router.patch("/:id", requireAuth, requirePermission('routes', 'edit'), (req, res
     return sendSuccess(res, null, "Ruta actualizada");
   } catch (error: any) {
     return sendError(res, error?.message || "No se pudo actualizar la ruta", 409);
+  }
+});
+
+
+router.post("/:id/finalize", requireAuth, requirePermission('routes', 'edit'), async (req: any, res) => {
+  try {
+    const result = await routeLifecycleService.changeStatus({
+      routeId: Number(req.params.id),
+      action: "finalize",
+      motivo: String(req.body?.motivo || ""),
+      usuario: req.user?.userName || req.user?.name || "Sistema",
+    });
+    return sendSuccess(res, result, "Ruta finalizada correctamente");
+  } catch (error: any) {
+    return sendError(res, error?.message || "No se pudo finalizar la ruta", error?.statusCode || 400);
   }
 });
 
