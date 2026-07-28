@@ -199,6 +199,8 @@ export default function CustomerOrdersAdmin({
   const [cancellationReason, setCancellationReason] = useState('');
   const [deliveryToRevert, setDeliveryToRevert] = useState<any | null>(null);
   const [deliveryReversalReason, setDeliveryReversalReason] = useState('');
+  const [rejectedOrderToReopen, setRejectedOrderToReopen] = useState<any | null>(null);
+  const [reopenReason, setReopenReason] = useState('');
 
   const availablePaymentMethods = useMemo(() => {
     const activeMethods = paymentMethods.filter(
@@ -496,6 +498,49 @@ export default function CustomerOrdersAdmin({
     }
   };
 
+
+  const openReopenModal = (order: any) => {
+    setRejectedOrderToReopen(order);
+    setReopenReason('');
+  };
+
+  const closeReopenModal = () => {
+    if (actionLoading !== null) return;
+    setRejectedOrderToReopen(null);
+    setReopenReason('');
+  };
+
+  const reopenRejectedOrder = async () => {
+    if (!rejectedOrderToReopen) return;
+
+    const reason = reopenReason.trim();
+    if (reason.length < 3) {
+      alert('Ingresá un motivo de reapertura de al menos 3 caracteres');
+      return;
+    }
+
+    setActionLoading(rejectedOrderToReopen.id);
+    try {
+      const response = await apiFetch(
+        `/api/sales?endpoint=customer-order-reopen&id=${rejectedOrderToReopen.id}`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ motivo: reason }),
+        }
+      );
+      const body = await response.json();
+      unwrapResponse(body);
+      setRejectedOrderToReopen(null);
+      setReopenReason('');
+      await fetchOrders();
+      onChanged?.();
+      alert('Pedido reabierto correctamente. Volvió a quedar pendiente de aprobación.');
+    } catch (error: any) {
+      alert(error?.message || 'No se pudo reabrir el pedido');
+    } finally {
+      setActionLoading(null);
+    }
+  };
 
   const openCancellationModal = (order: any) => {
     setOrderToCancel(order);
@@ -982,9 +1027,27 @@ export default function CustomerOrdersAdmin({
                     )}
 
                     {order.rejection_reason && (
-                      <p className="text-xs text-red-600 font-bold mt-2">
-                        Motivo rechazo: {order.rejection_reason}
-                      </p>
+                      <div className="mt-2 rounded-xl border border-red-100 bg-red-50 p-3 text-xs font-bold text-red-700">
+                        <p>Motivo rechazo: {order.rejection_reason}</p>
+                        {(order.rejected_by || order.rejected_at) && (
+                          <p className="mt-1 text-[11px] text-red-500">
+                            {order.rejected_by ? `Por ${order.rejected_by}` : ''}
+                            {order.rejected_by && order.rejected_at ? ' · ' : ''}
+                            {order.rejected_at ? formatBusinessDateTime(order.rejected_at) : ''}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {order.reopen_reason && order.reopened_at && (
+                      <div className="mt-2 rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs font-bold text-blue-700">
+                        <p>Reabierto: {order.reopen_reason}</p>
+                        <p className="mt-1 text-[11px] text-blue-500">
+                          {order.reopened_by ? `Por ${order.reopened_by}` : ''}
+                          {order.reopened_by && order.reopened_at ? ' · ' : ''}
+                          {formatBusinessDateTime(order.reopened_at)}
+                        </p>
+                      </div>
                     )}
 
                     {order.cancel_reason && (
@@ -1293,6 +1356,26 @@ export default function CustomerOrdersAdmin({
                       </div>
                     )}
 
+                    {order.estado === 'rechazado' && (
+                      Number(order.rejection_version || 0) > 0 ? (
+                        hasPermission('sales', 'edit') ? (
+                          <button
+                            type="button"
+                            disabled={actionLoading === order.id}
+                            onClick={() => openReopenModal(order)}
+                            className="w-full py-3 border border-blue-200 bg-blue-50 text-blue-700 rounded-xl font-black uppercase text-xs flex items-center justify-center gap-2 disabled:opacity-50 hover:bg-blue-100"
+                            aria-label={`Reabrir pedido ${order.numero_pedido || order.id}`}
+                          >
+                            <RefreshCcw size={16} /> Reabrir pedido
+                          </button>
+                        ) : null
+                      ) : (
+                        <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 text-sm font-bold text-zinc-500">
+                          Pedido rechazado histórico sin trazabilidad reversible.
+                        </div>
+                      )
+                    )}
+
                     {order.estado === 'aprobado_pendiente_entrega' &&
                       order.stock_status === 'esperando_stock' && (
                         <div className="bg-orange-50 border border-orange-100 text-orange-700 rounded-2xl p-4 text-sm font-bold">
@@ -1516,6 +1599,64 @@ export default function CustomerOrdersAdmin({
           )}
         </div>
       </div>
+
+      {rejectedOrderToReopen && (
+        <div className="fixed inset-0 z-[74] flex items-end justify-center bg-zinc-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-5">
+          <button
+            type="button"
+            className="absolute inset-0"
+            onClick={closeReopenModal}
+            aria-label="Cerrar reapertura de pedido"
+          />
+          <section className="relative w-full rounded-t-[30px] bg-white p-5 shadow-2xl sm:max-w-lg sm:rounded-3xl sm:p-6">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-100 text-blue-700">
+              <RefreshCcw size={24} />
+            </div>
+            <h2 className="mt-5 text-xl font-black text-zinc-950">
+              Reabrir pedido #{rejectedOrderToReopen.numero_pedido || rejectedOrderToReopen.id}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-zinc-500">
+              El pedido volverá a quedar pendiente de aprobación. El rechazo anterior permanecerá guardado con su motivo, usuario, fecha y snapshot.
+            </p>
+
+            <label className="mt-5 block text-xs font-black uppercase tracking-widest text-zinc-500" htmlFor="customer-order-reopen-reason">
+              Motivo obligatorio
+            </label>
+            <textarea
+              id="customer-order-reopen-reason"
+              value={reopenReason}
+              onChange={(event) => setReopenReason(event.target.value)}
+              maxLength={500}
+              className="mt-2 min-h-28 w-full rounded-2xl border border-zinc-200 bg-zinc-50 p-3 text-sm font-bold text-zinc-900 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+              placeholder="Ej.: El cliente confirmó que desea continuar con el pedido"
+              autoFocus
+            />
+            <div className="mt-1 text-right text-[11px] font-bold text-zinc-400">
+              {reopenReason.trim().length}/500
+            </div>
+
+            <div className="mt-5 grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                disabled={actionLoading !== null}
+                onClick={closeReopenModal}
+                className="min-h-12 rounded-2xl bg-zinc-100 px-4 text-sm font-black text-zinc-700 disabled:opacity-50"
+              >
+                Volver
+              </button>
+              <button
+                type="button"
+                disabled={actionLoading !== null || reopenReason.trim().length < 3}
+                onClick={reopenRejectedOrder}
+                className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 text-sm font-black text-white disabled:opacity-50"
+              >
+                {actionLoading !== null ? <Loader2 size={17} className="animate-spin" /> : <RefreshCcw size={17} />}
+                Confirmar reapertura
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {deliveryToRevert && (
         <div className="fixed inset-0 z-[72] flex items-end justify-center bg-zinc-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-5">

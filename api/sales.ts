@@ -14,6 +14,7 @@ import { supplierOrderDeliveryReversalService } from "../server/services/supplie
 import { customerOrderCancellationService } from "../server/services/customerOrderCancellationService.js";
 import { customerOrderDeliveryService } from "../server/services/customerOrderDeliveryService.js";
 import { customerOrderDeliveryReversalService } from "../server/services/customerOrderDeliveryReversalService.js";
+import { customerOrderRejectionLifecycleService } from "../server/services/customerOrderRejectionLifecycleService.js";
 import { assertPaymentMethodActive } from "../server/services/paymentMethodAvailabilityService.js";
 
 const saleSchema = z.object({
@@ -96,8 +97,12 @@ const customerOrderApproveSchema = z.object({
 });
 
 const customerOrderRejectSchema = z.object({
-  motivo: z.string().min(3, "El motivo es obligatorio"),
-  admin_notes: z.string().optional().nullable(),
+  motivo: z.string().trim().min(3, "El motivo es obligatorio").max(500, "El motivo es demasiado extenso"),
+  admin_notes: z.string().max(2000, "La observación es demasiado extensa").optional().nullable(),
+});
+
+const customerOrderReopenSchema = z.object({
+  motivo: z.string().trim().min(3, "El motivo de reapertura es obligatorio").max(500, "El motivo es demasiado extenso"),
 });
 
 const customerOrderCancellationSchema = z.object({
@@ -1129,6 +1134,12 @@ const mapCustomerOrderAdmin = (row: any, items: any[] = []) => {
     aprobado_at: row.aprobado_at || null,
     entregado_at: row.entregado_at || null,
     rejected_at: row.rejected_at || null,
+    rejected_by: row.rejected_by || "",
+    rejected_from_status: row.rejected_from_status || "",
+    rejection_version: toNumber(row.rejection_version),
+    reopened_at: row.reopened_at || null,
+    reopened_by: row.reopened_by || "",
+    reopen_reason: row.reopen_reason || "",
     cancelled_at: row.cancelled_at || null,
     cancelled_by: row.cancelled_by || "",
     cancellation_source: row.cancellation_source || "",
@@ -1377,23 +1388,44 @@ const handleCustomerOrders = async (req: any, res: any) => {
       return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })));
     }
 
-    const result = await pool.query(
-      `UPDATE customer_orders
-       SET estado = 'rechazado',
-           rejection_reason = $1,
-           admin_notes = $2,
-           rejected_at = now()
-       WHERE id = $3
-         AND estado = 'pendiente_aprobacion'
-       RETURNING *`,
-      [parsed.data.motivo, parsed.data.admin_notes || parsed.data.motivo, id]
-    );
+    try {
+      const result = await customerOrderRejectionLifecycleService.reject({
+        customerOrderId: id,
+        motivo: parsed.data.motivo,
+        adminNotes: parsed.data.admin_notes,
+        usuario: user.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Pedido rechazado con trazabilidad");
+    } catch (error: any) {
+      return sendError(
+        res,
+        error?.message || "No se pudo rechazar el pedido",
+        error?.statusCode || 400
+      );
+    }
+  }
 
-    if (!result.rowCount) {
-      return sendError(res, "Solo se pueden rechazar pedidos pendientes", 400);
+  if (endpoint === "customer-order-reopen" && req.method === "POST") {
+    if (!id) return sendError(res, "ID de pedido inválido", 400);
+    const parsed = customerOrderReopenSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })));
     }
 
-    return sendSuccess(res, result.rows[0], "Pedido rechazado");
+    try {
+      const result = await customerOrderRejectionLifecycleService.reopen({
+        customerOrderId: id,
+        motivo: parsed.data.motivo,
+        usuario: user.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Pedido reabierto correctamente");
+    } catch (error: any) {
+      return sendError(
+        res,
+        error?.message || "No se pudo reabrir el pedido",
+        error?.statusCode || 400
+      );
+    }
   }
 
   if (endpoint === "customer-order-update" && ["POST", "PUT"].includes(req.method)) {
@@ -1794,7 +1826,7 @@ export default async function handler(req: any, res: any) {
   const id = getId(req);
   const endpoint = getEndpoint(req);
 
-  if (["customer-orders", "customer-order-approve", "customer-order-deliver", "customer-order-reject", "customer-order-update", "customer-order-payment", "customer-order-cancel", "customer-order-delivery-revert"].includes(endpoint)) {
+  if (["customer-orders", "customer-order-approve", "customer-order-deliver", "customer-order-reject", "customer-order-reopen", "customer-order-update", "customer-order-payment", "customer-order-cancel", "customer-order-delivery-revert"].includes(endpoint)) {
     return handleCustomerOrders(req, res);
   }
 
