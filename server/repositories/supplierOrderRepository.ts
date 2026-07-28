@@ -32,19 +32,7 @@ export const supplierOrderRepository = {
     })();
   },
 
-  updateStatus: (id: number, estado: string) => {
-    return db.transaction(() => {
-      const order = db.prepare("SELECT * FROM supplier_orders WHERE id = ?").get(id) as any;
-      if (!order) throw new Error("Order not found");
-
-      const oldEstado = order.estado;
-      if (oldEstado === estado) return;
-
-      if (estado === 'entregado') {
-        throw new Error("No se puede cambiar el estado a 'entregado' manualmente. Use 'Completar Entrega'.");
-      }
-
-      db.prepare("UPDATE supplier_orders SET estado = ? WHERE id = ?").run(estado, id);
-    })();
+  updateStatus: () => {
+    throw new Error("El cambio directo de estado fue deshabilitado. Use el ciclo auditado del pedido.");
   }
 };

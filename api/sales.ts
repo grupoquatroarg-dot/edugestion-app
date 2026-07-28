@@ -11,6 +11,7 @@ import type { SaleStockAllocationInput } from "../server/services/saleTraceServi
 import { saleCancellationService } from "../server/services/saleCancellationService.js";
 import { supplierOrderCancellationService } from "../server/services/supplierOrderCancellationService.js";
 import { supplierOrderDeliveryReversalService } from "../server/services/supplierOrderDeliveryReversalService.js";
+import { supplierOrderStatusLifecycleService } from "../server/services/supplierOrderStatusLifecycleService.js";
 import { customerOrderCancellationService } from "../server/services/customerOrderCancellationService.js";
 import { customerOrderDeliveryService } from "../server/services/customerOrderDeliveryService.js";
 import { customerOrderDeliveryReversalService } from "../server/services/customerOrderDeliveryReversalService.js";
@@ -66,7 +67,8 @@ const supplierOrderSchema = z.object({
 });
 
 const supplierOrderStatusSchema = z.object({
-  estado: z.enum(["pendiente", "pedido_realizado", "auditar_pedido", "entregado"]),
+  action: z.enum(["advance", "reopen"]),
+  motivo: z.string().trim().max(500, "El motivo es demasiado extenso").optional(),
 });
 
 const supplierOrderItemsSchema = z.object({
@@ -284,6 +286,12 @@ const mapSupplierOrder = (row: any, items: any[] = []) => {
     delivery_reverted_at: row.delivery_reverted_at || null,
     delivery_reverted_by: row.delivery_reverted_by || null,
     delivery_revert_reason: row.delivery_revert_reason || null,
+    status_version: toNumber(row.status_version),
+    status_changed_at: row.status_changed_at || null,
+    status_changed_by: row.status_changed_by || null,
+    status_changed_from: row.status_changed_from || null,
+    status_last_action: row.status_last_action || null,
+    status_last_reason: row.status_last_reason || null,
     productos,
   };
 };
@@ -422,6 +430,8 @@ const handleSupplierOrders = async (req: any, res: any) => {
             so.cancelled_at, so.cancelled_by, so.cancel_reason, so.cancellation_source, so.cancelled_from_status,
             so.delivery_version, so.delivered_at, so.delivered_by, so.delivered_from_status,
             so.delivery_reverted_at, so.delivery_reverted_by, so.delivery_revert_reason,
+            so.status_version, so.status_changed_at, so.status_changed_by, so.status_changed_from,
+            so.status_last_action, so.status_last_reason,
             s.total AS sale_total,
             s.monto_pagado AS sale_monto_pagado,
             s.monto_pendiente AS sale_monto_pendiente,
@@ -460,6 +470,8 @@ const handleSupplierOrders = async (req: any, res: any) => {
             so.cancelled_at, so.cancelled_by, so.cancel_reason, so.cancellation_source, so.cancelled_from_status,
             so.delivery_version, so.delivered_at, so.delivered_by, so.delivered_from_status,
             so.delivery_reverted_at, so.delivery_reverted_by, so.delivery_revert_reason,
+            so.status_version, so.status_changed_at, so.status_changed_by, so.status_changed_from,
+            so.status_last_action, so.status_last_reason,
             s.total AS sale_total,
             s.monto_pagado AS sale_monto_pagado,
             s.monto_pendiente AS sale_monto_pendiente,
@@ -548,25 +560,28 @@ const handleSupplierOrders = async (req: any, res: any) => {
       })));
     }
 
-    if (parsed.data.estado === "entregado") {
-      return sendError(res, "No se puede marcar entregado manualmente. Use Completar Entrega.", 400);
-    }
-
     try {
-      const result = await pool.query(
-        `
-          UPDATE supplier_orders
-          SET estado = $1
-          WHERE id = $2 AND estado NOT IN ('entregado', 'cancelado')
-        `,
-        [parsed.data.estado, id]
+      const result = await supplierOrderStatusLifecycleService.changeStatus({
+        supplierOrderId: id,
+        action: parsed.data.action,
+        motivo: parsed.data.motivo,
+        usuario: user.userName || "Sistema",
+      });
+
+      return sendSuccess(
+        res,
+        result,
+        parsed.data.action === "advance"
+          ? "Pedido avanzado correctamente"
+          : "Pedido reabierto correctamente"
       );
-
-      if (!result.rowCount) return sendError(res, "Pedido no encontrado, entregado o cancelado", 404);
-
-      return sendSuccess(res, null, "Estado actualizado");
     } catch (error: any) {
-      return sendError(res, error?.message || "Error al actualizar estado", 400);
+      return sendError(
+        res,
+        error?.message || "Error al actualizar la etapa del pedido",
+        error?.statusCode || 400,
+        error?.errors || []
+      );
     }
   }
 

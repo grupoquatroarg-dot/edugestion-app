@@ -3,6 +3,7 @@ import { supplierOrderRepository } from '../repositories/supplierOrderRepository
 import { supplierOrderService } from '../services/supplierOrderService.js';
 import { supplierOrderCancellationService } from '../services/supplierOrderCancellationService.js';
 import { supplierOrderDeliveryReversalService } from '../services/supplierOrderDeliveryReversalService.js';
+import { supplierOrderStatusLifecycleService } from '../services/supplierOrderStatusLifecycleService.js';
 import { requirePermission } from '../middleware/authMiddleware.js';
 import { validate } from '../middleware/validate.js';
 import { z } from 'zod';
@@ -22,7 +23,8 @@ const supplierOrderSchema = z.object({
 
 const statusSchema = z.object({
   body: z.object({
-    estado: z.enum(['Pendiente', 'Recibido', 'Cancelado']),
+    action: z.enum(['advance', 'reopen']),
+    motivo: z.string().trim().max(500).optional(),
   }),
 });
 
@@ -36,11 +38,22 @@ router.post('/', requirePermission('suppliers', 'create'), validate(supplierOrde
   return sendSuccess(res, { orderId }, "Pedido creado exitosamente", 201);
 });
 
-router.post('/:id/status', requirePermission('suppliers', 'edit'), validate(statusSchema), (req, res) => {
-  const { id } = req.params;
-  const { estado } = req.body;
-  supplierOrderRepository.updateStatus(parseInt(id), estado);
-  return sendSuccess(res, null, "Estado actualizado");
+router.post('/:id/status', requirePermission('suppliers', 'edit'), validate(statusSchema), async (req, res) => {
+  try {
+    const result = await supplierOrderStatusLifecycleService.changeStatus({
+      supplierOrderId: Number(req.params.id),
+      action: req.body.action,
+      motivo: req.body.motivo,
+      usuario: (req as any).user?.userName || (req.session as any)?.userName || 'Sistema',
+    });
+    return sendSuccess(
+      res,
+      result,
+      req.body.action === 'advance' ? 'Pedido avanzado correctamente' : 'Pedido reabierto correctamente'
+    );
+  } catch (error: any) {
+    return sendError(res, error?.message || 'No se pudo actualizar la etapa del pedido', error?.statusCode || 400);
+  }
 });
 
 router.post('/:id/complete-sale', requirePermission('suppliers', 'edit'), (req, res) => {

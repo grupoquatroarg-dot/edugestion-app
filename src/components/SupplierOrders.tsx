@@ -51,6 +51,12 @@ interface SupplierOrder {
   delivery_reverted_at?: string | null;
   delivery_reverted_by?: string | null;
   delivery_revert_reason?: string | null;
+  status_version?: number;
+  status_changed_at?: string | null;
+  status_changed_by?: string | null;
+  status_changed_from?: string | null;
+  status_last_action?: 'advance' | 'reopen' | null;
+  status_last_reason?: string | null;
 }
 
 export default function SupplierOrders() {
@@ -66,7 +72,7 @@ export default function SupplierOrders() {
   const [revertingOrderId, setRevertingOrderId] = useState<number | null>(null);
   const [savingChanges, setSavingChanges] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [confirmation, setConfirmation] = useState<{ type: 'cancel' | 'complete' | 'revert'; order: SupplierOrder } | null>(null);
+  const [confirmation, setConfirmation] = useState<{ type: 'cancel' | 'complete' | 'revert' | 'reopen-status'; order: SupplierOrder } | null>(null);
   const [cancelReason, setCancelReason] = useState('');
   const [editError, setEditError] = useState('');
   
@@ -432,38 +438,66 @@ export default function SupplierOrders() {
     outputPdfDocument(doc, `Remito_${order.id}_${order.cliente.replace(/\s+/g, '_')}.pdf`, mode);
   };
 
-  const updateStatus = async (id: number, newStatus: string) => {
-    setUpdatingOrderId(id);
+  const advanceStatus = async (order: SupplierOrder) => {
+    setUpdatingOrderId(order.id);
     setFeedback(null);
 
     try {
-      const res = await apiFetch(`/api/sales?endpoint=supplier-order-status&id=${id}`, {
+      const res = await apiFetch(`/api/sales?endpoint=supplier-order-status&id=${order.id}`, {
         method: 'POST',
-        body: JSON.stringify({ estado: newStatus })
+        body: JSON.stringify({ action: 'advance' })
       });
 
       await unwrapResponse(res);
-
-      setOrders(prev => prev.map(o => {
-        if (o.id === id) {
-          const updated = { ...o, estado: newStatus as SupplierOrder['estado'] };
-          if (newStatus === 'entregado') {
-            generateRemitoPDF(updated);
-          }
-          return updated;
-        }
-        return o;
-      }));
-
       setFeedback({
         type: 'success',
-        message: `El pedido quedó en estado “${getStatusLabel(newStatus)}”.`
+        message: order.estado === 'pendiente'
+          ? 'El pedido quedó marcado como realizado.'
+          : 'El pedido fue enviado a auditoría.'
       });
+      await fetchOrders();
     } catch (error) {
-      console.error("Error updating status:", error);
+      console.error("Error advancing supplier order:", error);
       setFeedback({
         type: 'error',
-        message: error instanceof Error ? error.message : 'No se pudo actualizar el estado del pedido.'
+        message: error instanceof Error ? error.message : 'No se pudo avanzar la etapa del pedido.'
+      });
+    } finally {
+      setUpdatingOrderId(null);
+    }
+  };
+
+  const reopenStatus = async (order: SupplierOrder) => {
+    const normalizedReason = cancelReason.trim();
+    if (normalizedReason.length < 3) {
+      setFeedback({ type: 'error', message: 'El motivo de reapertura es obligatorio.' });
+      return;
+    }
+
+    setUpdatingOrderId(order.id);
+    setFeedback(null);
+
+    try {
+      const res = await apiFetch(`/api/sales?endpoint=supplier-order-status&id=${order.id}`, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'reopen', motivo: normalizedReason })
+      });
+
+      await unwrapResponse(res);
+      setFeedback({
+        type: 'success',
+        message: order.estado === 'auditar_pedido'
+          ? 'El pedido volvió a Pedido realizado.'
+          : 'El pedido volvió a Pendiente.'
+      });
+      setConfirmation(null);
+      setCancelReason('');
+      await fetchOrders();
+    } catch (error) {
+      console.error("Error reopening supplier order:", error);
+      setFeedback({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'No se pudo reabrir la etapa del pedido.'
       });
     } finally {
       setUpdatingOrderId(null);
@@ -1329,22 +1363,25 @@ export default function SupplierOrders() {
                       </div>
 
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-                        <label className="min-w-0 space-y-1.5">
-                          <span className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">Estado manual</span>
-                          <select
-                            value={order.estado}
-                            onChange={event => updateStatus(order.id, event.target.value)}
-                            disabled={['entregado', 'cancelado'].includes(order.estado) || !hasPermission('suppliers', 'edit') || updatingOrderId === order.id}
-                            aria-label={`Cambiar estado del pedido ${order.numero_pedido || order.id}`}
-                            className={`min-h-11 w-full rounded-xl border px-3 py-2 text-xs font-black uppercase tracking-wider outline-none transition ${getStatusStyles(order.estado)} disabled:cursor-not-allowed disabled:opacity-50`}
-                          >
-                            <option value="pendiente">Pendiente</option>
-                            <option value="pedido_realizado">Pedido realizado</option>
-                            <option value="auditar_pedido">Auditar pedido</option>
-                            {order.estado === 'entregado' && <option value="entregado">Entregado</option>}
-                            {order.estado === 'cancelado' && <option value="cancelado">Cancelado</option>}
-                          </select>
-                        </label>
+                        <div className="min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                          <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">Etapa controlada</p>
+                          <div className="mt-1 flex flex-wrap items-center gap-2">
+                            <span className={`rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wider ${getStatusStyles(order.estado)}`}>
+                              {getStatusLabel(order.estado)}
+                            </span>
+                            {Number(order.status_version || 0) > 0 && (
+                              <span className="text-[10px] font-bold text-slate-400">
+                                Movimiento #{order.status_version}
+                              </span>
+                            )}
+                          </div>
+                          {order.status_changed_by && order.status_changed_at && (
+                            <p className="mt-1.5 break-words text-[11px] text-slate-500">
+                              {order.status_last_action === 'reopen' ? 'Reabierto' : 'Actualizado'} por {order.status_changed_by}
+                              {' · '}{formatBusinessDateTime(order.status_changed_at)}
+                            </p>
+                          )}
+                        </div>
 
                         <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2 sm:flex sm:items-end">
                           {order.estado === 'auditar_pedido' && hasPermission('suppliers', 'edit') && (
@@ -1489,7 +1526,7 @@ export default function SupplierOrders() {
                       {order.estado === 'pendiente' && hasPermission('suppliers', 'edit') && (
                         <button
                           type="button"
-                          onClick={() => updateStatus(order.id, 'pedido_realizado')}
+                          onClick={() => advanceStatus(order)}
                           disabled={updatingOrderId === order.id}
                           className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-xs font-black text-white transition hover:bg-blue-700 disabled:opacity-60"
                         >
@@ -1499,27 +1536,55 @@ export default function SupplierOrders() {
                       )}
 
                       {order.estado === 'pedido_realizado' && hasPermission('suppliers', 'edit') && (
-                        <button
-                          type="button"
-                          onClick={() => updateStatus(order.id, 'auditar_pedido')}
-                          disabled={updatingOrderId === order.id}
-                          className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 py-3 text-xs font-black text-white transition hover:bg-orange-700 disabled:opacity-60"
-                        >
-                          {updatingOrderId === order.id ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
-                          {updatingOrderId === order.id ? 'Actualizando…' : 'Enviar a auditoría'}
-                        </button>
+                        <div className="space-y-2">
+                          <button
+                            type="button"
+                            onClick={() => advanceStatus(order)}
+                            disabled={updatingOrderId === order.id}
+                            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 py-3 text-xs font-black text-white transition hover:bg-orange-700 disabled:opacity-60"
+                          >
+                            {updatingOrderId === order.id ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+                            {updatingOrderId === order.id ? 'Actualizando…' : 'Enviar a auditoría'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCancelReason('');
+                              setConfirmation({ type: 'reopen-status', order });
+                            }}
+                            disabled={updatingOrderId === order.id}
+                            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-3 text-xs font-black text-slate-700 transition hover:bg-slate-100 disabled:opacity-60"
+                          >
+                            <RefreshCw size={15} />
+                            Reabrir a Pendiente
+                          </button>
+                        </div>
                       )}
 
                       {order.estado === 'auditar_pedido' && hasPermission('suppliers', 'edit') && (
-                        <button
-                          type="button"
-                          onClick={() => setConfirmation({ type: 'complete', order })}
-                          disabled={updatingOrderId === order.id}
-                          className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-xs font-black text-white transition hover:bg-emerald-700 disabled:opacity-60"
-                        >
-                          {updatingOrderId === order.id ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
-                          {updatingOrderId === order.id ? 'Completando…' : 'Completar entrega y actualizar stock'}
-                        </button>
+                        <div className="space-y-2">
+                          <button
+                            type="button"
+                            onClick={() => setConfirmation({ type: 'complete', order })}
+                            disabled={updatingOrderId === order.id}
+                            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-xs font-black text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                          >
+                            {updatingOrderId === order.id ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+                            {updatingOrderId === order.id ? 'Completando…' : 'Completar entrega y actualizar stock'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCancelReason('');
+                              setConfirmation({ type: 'reopen-status', order });
+                            }}
+                            disabled={updatingOrderId === order.id}
+                            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs font-black text-amber-900 transition hover:bg-amber-100 disabled:opacity-60"
+                          >
+                            <RefreshCw size={15} />
+                            Reabrir a Pedido realizado
+                          </button>
+                        </div>
                       )}
 
                       {order.estado === 'entregado' && (() => {
@@ -1766,22 +1831,36 @@ export default function SupplierOrders() {
             <div className={`flex h-14 w-14 items-center justify-center rounded-2xl ${
               confirmation.type === 'cancel'
                 ? 'bg-red-50 text-red-600'
-                : confirmation.type === 'revert'
+                : confirmation.type === 'revert' || confirmation.type === 'reopen-status'
                   ? 'bg-amber-50 text-amber-700'
                   : 'bg-emerald-50 text-emerald-600'
             }`}>
-              {confirmation.type === 'cancel' ? <Ban size={26} /> : confirmation.type === 'revert' ? <RefreshCw size={26} /> : <CheckCircle2 size={26} />}
+              {confirmation.type === 'cancel'
+                ? <Ban size={26} />
+                : confirmation.type === 'revert' || confirmation.type === 'reopen-status'
+                  ? <RefreshCw size={26} />
+                  : <CheckCircle2 size={26} />}
             </div>
 
             <h2 className="mt-5 text-xl font-black text-slate-950">
-              {confirmation.type === 'cancel' ? 'Anular pedido' : confirmation.type === 'revert' ? 'Revertir entrega' : 'Completar entrega'}
+              {confirmation.type === 'cancel'
+                ? 'Anular pedido'
+                : confirmation.type === 'revert'
+                  ? 'Revertir entrega'
+                  : confirmation.type === 'reopen-status'
+                    ? 'Reabrir etapa del pedido'
+                    : 'Completar entrega'}
             </h2>
             <p className="mt-2 break-words text-sm leading-6 text-slate-500">
               {confirmation.type === 'cancel'
                 ? `El pedido #${confirmation.order.numero_pedido || confirmation.order.id} quedará anulado y se conservará como historial.`
                 : confirmation.type === 'revert'
                   ? 'Se retirará únicamente el stock incorporado por esta entrega, se conservarán los movimientos como historial y el pedido volverá a Auditoría.'
-                  : 'Se completará la entrega. Si el pedido proviene de una venta registrada, no se duplicará; si proviene del portal, se cargará el stock necesario para poder entregarlo.'}
+                  : confirmation.type === 'reopen-status'
+                    ? confirmation.order.estado === 'auditar_pedido'
+                      ? 'El pedido volverá a Pedido realizado. La reapertura quedará registrada con usuario, fecha, motivo y snapshot.'
+                      : 'El pedido volverá a Pendiente. La reapertura quedará registrada con usuario, fecha, motivo y snapshot.'
+                    : 'Se completará la entrega. Si el pedido proviene de una venta registrada, no se duplicará; si proviene del portal, se cargará el stock necesario para poder entregarlo.'}
             </p>
 
             {confirmation.type !== 'complete' && (
@@ -1795,7 +1874,13 @@ export default function SupplierOrders() {
                   maxLength={500}
                   rows={4}
                   autoFocus
-                  placeholder={confirmation.type === 'revert' ? 'Ejemplo: entrega confirmada por error' : 'Ejemplo: pedido duplicado o proveedor sin disponibilidad'}
+                  placeholder={
+                    confirmation.type === 'revert'
+                      ? 'Ejemplo: entrega confirmada por error'
+                      : confirmation.type === 'reopen-status'
+                        ? 'Ejemplo: se debe corregir información antes de continuar'
+                        : 'Ejemplo: pedido duplicado o proveedor sin disponibilidad'
+                  }
                   className="w-full resize-y rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm outline-none transition focus:border-red-400 focus:bg-white focus:ring-4 focus:ring-red-100"
                 />
                 <p className="text-right text-[11px] font-bold text-slate-400">
@@ -1820,6 +1905,8 @@ export default function SupplierOrders() {
                     cancelOrder(confirmation.order);
                   } else if (confirmation.type === 'revert') {
                     revertDelivery(confirmation.order);
+                  } else if (confirmation.type === 'reopen-status') {
+                    reopenStatus(confirmation.order);
                   } else {
                     handleCompleteSale(confirmation.order.id);
                   }
@@ -1828,7 +1915,7 @@ export default function SupplierOrders() {
                 className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-black text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${
                   confirmation.type === 'cancel'
                     ? 'bg-red-600 hover:bg-red-700'
-                    : confirmation.type === 'revert'
+                    : confirmation.type === 'revert' || confirmation.type === 'reopen-status'
                       ? 'bg-amber-600 hover:bg-amber-700'
                       : 'bg-emerald-600 hover:bg-emerald-700'
                 }`}
@@ -1840,7 +1927,9 @@ export default function SupplierOrders() {
                     ? 'Confirmar anulación'
                     : confirmation.type === 'revert'
                       ? 'Confirmar reversión'
-                      : 'Completar y actualizar stock'}
+                      : confirmation.type === 'reopen-status'
+                        ? 'Confirmar reapertura'
+                        : 'Completar y actualizar stock'}
               </button>
             </div>
           </div>

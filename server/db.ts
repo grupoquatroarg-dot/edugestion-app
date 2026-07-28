@@ -310,6 +310,12 @@ export function initDb() {
       delivery_reverted_at DATETIME,
       delivery_reverted_by TEXT,
       delivery_revert_reason TEXT,
+      status_version INTEGER NOT NULL DEFAULT 0,
+      status_changed_at DATETIME,
+      status_changed_by TEXT,
+      status_changed_from TEXT,
+      status_last_action TEXT,
+      status_last_reason TEXT,
       FOREIGN KEY (cliente_id) REFERENCES clientes(id),
       FOREIGN KEY (sale_id) REFERENCES sales(id)
     );
@@ -368,6 +374,34 @@ export function initDb() {
       FOREIGN KEY (order_id) REFERENCES supplier_orders(id),
       FOREIGN KEY (product_id) REFERENCES products(id)
     );
+
+    CREATE TABLE IF NOT EXISTS supplier_order_status_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      supplier_order_id INTEGER NOT NULL,
+      version INTEGER NOT NULL CHECK(version > 0),
+      action TEXT NOT NULL CHECK(action IN ('advance', 'reopen')),
+      from_status TEXT NOT NULL CHECK(from_status IN ('pendiente', 'pedido_realizado', 'auditar_pedido')),
+      to_status TEXT NOT NULL CHECK(to_status IN ('pendiente', 'pedido_realizado', 'auditar_pedido')),
+      reason TEXT,
+      changed_by TEXT NOT NULL,
+      changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      snapshot TEXT NOT NULL DEFAULT '{}',
+      CHECK (
+        (action = 'advance' AND reason IS NULL AND (
+          (from_status = 'pendiente' AND to_status = 'pedido_realizado') OR
+          (from_status = 'pedido_realizado' AND to_status = 'auditar_pedido')
+        )) OR
+        (action = 'reopen' AND reason IS NOT NULL AND length(trim(reason)) BETWEEN 3 AND 500 AND (
+          (from_status = 'pedido_realizado' AND to_status = 'pendiente') OR
+          (from_status = 'auditar_pedido' AND to_status = 'pedido_realizado')
+        ))
+      ),
+      UNIQUE (supplier_order_id, version),
+      FOREIGN KEY (supplier_order_id) REFERENCES supplier_orders(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_supplier_order_status_history_order
+      ON supplier_order_status_history (supplier_order_id, changed_at DESC);
 
     CREATE TABLE IF NOT EXISTS checklist_templates (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -923,6 +957,12 @@ export function initDb() {
   try { db.exec("ALTER TABLE supplier_orders ADD COLUMN delivery_reverted_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE supplier_orders ADD COLUMN delivery_reverted_by TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE supplier_orders ADD COLUMN delivery_revert_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN status_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN status_changed_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN status_changed_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN status_changed_from TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN status_last_action TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN status_last_reason TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE stock_movimientos ADD COLUMN supplier_order_id INTEGER"); } catch (e) {}
 
   try { db.exec("ALTER TABLE sales ADD COLUMN costo_total REAL DEFAULT 0"); } catch (e) {}
