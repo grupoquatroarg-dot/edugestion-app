@@ -10,6 +10,7 @@ import { saleTraceService } from "../server/services/saleTraceService.js";
 import type { SaleStockAllocationInput } from "../server/services/saleTraceService.js";
 import { saleCancellationService } from "../server/services/saleCancellationService.js";
 import { supplierOrderCancellationService } from "../server/services/supplierOrderCancellationService.js";
+import { supplierOrderDeliveryReversalService } from "../server/services/supplierOrderDeliveryReversalService.js";
 import { customerOrderCancellationService } from "../server/services/customerOrderCancellationService.js";
 import { assertPaymentMethodActive } from "../server/services/paymentMethodAvailabilityService.js";
 
@@ -80,6 +81,10 @@ const supplierOrderCompleteSchema = z.object({
 
 const supplierOrderCancellationSchema = z.object({
   motivo: z.string().trim().min(3, "El motivo de anulación es obligatorio").max(500, "El motivo es demasiado extenso"),
+});
+
+const supplierOrderDeliveryReversalSchema = z.object({
+  motivo: z.string().trim().min(3, "El motivo de reversión es obligatorio").max(500, "El motivo es demasiado extenso"),
 });
 
 const customerOrderApproveSchema = z.object({
@@ -261,6 +266,13 @@ const mapSupplierOrder = (row: any, items: any[] = []) => {
     cancel_reason: row.cancel_reason || null,
     cancellation_source: row.cancellation_source || null,
     cancelled_from_status: row.cancelled_from_status || null,
+    delivery_version: toNumber(row.delivery_version),
+    delivered_at: row.delivered_at || null,
+    delivered_by: row.delivered_by || null,
+    delivered_from_status: row.delivered_from_status || null,
+    delivery_reverted_at: row.delivery_reverted_at || null,
+    delivery_reverted_by: row.delivery_reverted_by || null,
+    delivery_revert_reason: row.delivery_revert_reason || null,
     productos,
   };
 };
@@ -296,6 +308,92 @@ const fetchSupplierOrderItems = async (queryable: any, orderId: number) => {
   return itemsResult.rows;
 };
 
+type SupplierDeliveryTraceItem = {
+  product_id: number;
+  quantity: number;
+  unit_cost: number;
+  ingress_movement_id: number;
+  egress_movement_id?: number | null;
+};
+
+const recordSupplierDelivery = async (client: any, input: {
+  order: any;
+  mode: "stock_only" | "linked_sale" | "created_sale";
+  saleIdAfter?: number | null;
+  deliveredBy: string;
+  items: SupplierDeliveryTraceItem[];
+}) => {
+  const activeDelivery = await client.query(
+    `SELECT id FROM supplier_order_deliveries
+     WHERE supplier_order_id = $1 AND reverted_at IS NULL
+     LIMIT 1`,
+    [input.order.id]
+  );
+  if (activeDelivery.rowCount) {
+    throw new Error("El pedido ya posee una entrega activa registrada");
+  }
+
+  const deliveryResult = await client.query(
+    `INSERT INTO supplier_order_deliveries (
+       supplier_order_id, delivery_mode, previous_status, sale_id_before,
+       sale_id_after, customer_order_id, delivered_by, snapshot
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+     RETURNING id`,
+    [
+      input.order.id,
+      input.mode,
+      String(input.order.estado || "auditar_pedido"),
+      input.order.sale_id || null,
+      input.saleIdAfter || null,
+      input.order.customer_order_id || null,
+      input.deliveredBy,
+      JSON.stringify({ order: input.order, items: input.items }),
+    ]
+  );
+  const deliveryId = toNumber(deliveryResult.rows[0]?.id);
+
+  for (const item of input.items) {
+    await client.query(
+      `INSERT INTO supplier_order_delivery_items (
+         delivery_id, product_id, quantity, unit_cost, ingress_movement_id, egress_movement_id
+       )
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        deliveryId,
+        item.product_id,
+        item.quantity,
+        item.unit_cost,
+        item.ingress_movement_id,
+        item.egress_movement_id || null,
+      ]
+    );
+  }
+
+  await client.query(
+    `UPDATE supplier_orders
+     SET estado = 'entregado',
+         stock_actualizado = 1,
+         sale_id = $1,
+         delivery_version = 1,
+         delivered_at = now(),
+         delivered_by = $2,
+         delivered_from_status = $3,
+         delivery_reverted_at = NULL,
+         delivery_reverted_by = NULL,
+         delivery_revert_reason = NULL
+     WHERE id = $4`,
+    [
+      input.saleIdAfter || null,
+      input.deliveredBy,
+      String(input.order.estado || "auditar_pedido"),
+      input.order.id,
+    ]
+  );
+
+  return deliveryId;
+};
+
 const handleSupplierOrders = async (req: any, res: any) => {
   const endpoint = getEndpoint(req);
   const id = getId(req);
@@ -311,6 +409,8 @@ const handleSupplierOrders = async (req: any, res: any) => {
           SELECT
             so.id, so.numero_pedido, so.cliente, so.cliente_id, so.sale_id, so.customer_order_id, so.fecha, so.estado, so.notes, so.stock_actualizado,
             so.cancelled_at, so.cancelled_by, so.cancel_reason, so.cancellation_source, so.cancelled_from_status,
+            so.delivery_version, so.delivered_at, so.delivered_by, so.delivered_from_status,
+            so.delivery_reverted_at, so.delivery_reverted_by, so.delivery_revert_reason,
             s.total AS sale_total,
             s.monto_pagado AS sale_monto_pagado,
             s.monto_pendiente AS sale_monto_pendiente,
@@ -347,6 +447,8 @@ const handleSupplierOrders = async (req: any, res: any) => {
           SELECT
             so.id, so.numero_pedido, so.cliente, so.cliente_id, so.sale_id, so.customer_order_id, so.fecha, so.estado, so.notes, so.stock_actualizado,
             so.cancelled_at, so.cancelled_by, so.cancel_reason, so.cancellation_source, so.cancelled_from_status,
+            so.delivery_version, so.delivered_at, so.delivered_by, so.delivered_from_status,
+            so.delivery_reverted_at, so.delivery_reverted_by, so.delivery_revert_reason,
             s.total AS sale_total,
             s.monto_pagado AS sale_monto_pagado,
             s.monto_pendiente AS sale_monto_pendiente,
@@ -560,6 +662,36 @@ const handleSupplierOrders = async (req: any, res: any) => {
     }
   }
 
+  if (endpoint === "supplier-order-delivery-revert" && req.method === "POST") {
+    const user = await requirePermission(req, res, "suppliers", "edit");
+    if (!user) return;
+    if (!id) return sendError(res, "ID de pedido inválido", 400);
+
+    const parsed = supplierOrderDeliveryReversalSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+      })));
+    }
+
+    try {
+      const result = await supplierOrderDeliveryReversalService.revert({
+        supplierOrderId: id,
+        motivo: parsed.data.motivo,
+        usuario: user.userName || "Sistema",
+      });
+      return sendSuccess(res, result, "Entrega revertida correctamente");
+    } catch (error: any) {
+      return sendError(
+        res,
+        error?.message || "No se pudo revertir la entrega",
+        error?.statusCode || 400,
+        error?.errors || []
+      );
+    }
+  }
+
   if (endpoint === "supplier-order-complete" && req.method === "POST") {
     const user = await requirePermission(req, res, "suppliers", "edit");
     if (!user) return;
@@ -621,6 +753,8 @@ const handleSupplierOrders = async (req: any, res: any) => {
         return sendError(res, "El pedido no tiene productos", 400);
       }
 
+      const deliveryTraceItems: SupplierDeliveryTraceItem[] = [];
+
       if (order.customer_order_id && !order.sale_id) {
         for (const item of itemResult.rows) {
           const productId = toNumber(item.product_id);
@@ -634,9 +768,13 @@ const handleSupplierOrders = async (req: any, res: any) => {
             [cantidad, productId]
           );
 
-          await client.query(
-            `INSERT INTO stock_movimientos (product_id, cantidad, costo_unitario, cantidad_restante, descripcion, tipo_movimiento, motivo, usuario)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          const ingressResult = await client.query(
+            `INSERT INTO stock_movimientos (
+               product_id, cantidad, costo_unitario, cantidad_restante, descripcion,
+               tipo_movimiento, motivo, usuario, supplier_order_id, reversion_version
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1)
+             RETURNING id`,
             [
               productId,
               cantidad,
@@ -646,17 +784,26 @@ const handleSupplierOrders = async (req: any, res: any) => {
               "ingreso",
               "pedido_proveedor",
               user.userName || "Sistema",
+              id,
             ]
           );
+
+          deliveryTraceItems.push({
+            product_id: productId,
+            quantity: cantidad,
+            unit_cost: costoUnitario,
+            ingress_movement_id: toNumber(ingressResult.rows[0]?.id),
+            egress_movement_id: null,
+          });
         }
 
-        await client.query(
-          `UPDATE supplier_orders
-           SET estado = $1,
-               stock_actualizado = 1
-           WHERE id = $2`,
-          ["entregado", id]
-        );
+        await recordSupplierDelivery(client, {
+          order,
+          mode: "stock_only",
+          saleIdAfter: null,
+          deliveredBy: user.userName || "Sistema",
+          items: deliveryTraceItems,
+        });
 
         await client.query(
           `UPDATE customer_orders
@@ -708,7 +855,7 @@ const handleSupplierOrders = async (req: any, res: any) => {
           precio_unitario_bonificado: precioVenta,
         });
 
-        await client.query(
+        const ingressResult = await client.query(
           `
             INSERT INTO stock_movimientos (
               product_id,
@@ -718,9 +865,12 @@ const handleSupplierOrders = async (req: any, res: any) => {
               descripcion,
               tipo_movimiento,
               motivo,
-              usuario
+              usuario,
+              supplier_order_id,
+              reversion_version
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1)
+            RETURNING id
           `,
           [
             productId,
@@ -731,6 +881,7 @@ const handleSupplierOrders = async (req: any, res: any) => {
             "ingreso",
             "pedido_proveedor",
             user.userName || "Sistema",
+            id,
           ]
         );
 
@@ -745,9 +896,10 @@ const handleSupplierOrders = async (req: any, res: any) => {
               tipo_movimiento,
               motivo,
               usuario,
-              sale_id
+              sale_id,
+              supplier_order_id
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING id
           `,
           [
@@ -760,6 +912,7 @@ const handleSupplierOrders = async (req: any, res: any) => {
             "venta",
             user.userName || "Sistema",
             order.sale_id || null,
+            id,
           ]
         );
 
@@ -770,6 +923,14 @@ const handleSupplierOrders = async (req: any, res: any) => {
           source_type: "supplier_delivery",
           purchase_invoice_item_id: null,
           stock_movement_id: toNumber(saleStockMovementResult.rows[0]?.id),
+        });
+
+        deliveryTraceItems.push({
+          product_id: productId,
+          quantity: cantidad,
+          unit_cost: costoUnitario,
+          ingress_movement_id: toNumber(ingressResult.rows[0]?.id),
+          egress_movement_id: toNumber(saleStockMovementResult.rows[0]?.id),
         });
 
         if (order.sale_id) {
@@ -807,15 +968,13 @@ const handleSupplierOrders = async (req: any, res: any) => {
           [totalCosto, order.sale_id]
         );
 
-        await client.query(
-          `
-            UPDATE supplier_orders
-            SET estado = $1,
-                stock_actualizado = 1
-            WHERE id = $2
-          `,
-          ["entregado", id]
-        );
+        await recordSupplierDelivery(client, {
+          order,
+          mode: "linked_sale",
+          saleIdAfter: toNumber(order.sale_id),
+          deliveredBy: user.userName || "Sistema",
+          items: deliveryTraceItems,
+        });
 
         await client.query("COMMIT");
         return sendSuccess(
@@ -907,16 +1066,13 @@ const handleSupplierOrders = async (req: any, res: any) => {
         );
       }
 
-      await client.query(
-        `
-          UPDATE supplier_orders
-          SET estado = $1,
-              sale_id = $2,
-              stock_actualizado = 1
-          WHERE id = $3
-        `,
-        ["entregado", saleId, id]
-      );
+      await recordSupplierDelivery(client, {
+        order,
+        mode: "created_sale",
+        saleIdAfter: saleId,
+        deliveredBy: user.userName || "Sistema",
+        items: deliveryTraceItems,
+      });
 
       await client.query("COMMIT");
 
@@ -1667,6 +1823,7 @@ export default async function handler(req: any, res: any) {
       "supplier-order-items",
       "supplier-order-complete",
       "supplier-order-cancel",
+      "supplier-order-delivery-revert",
     ].includes(endpoint)
   ) {
     return handleSupplierOrders(req, res);

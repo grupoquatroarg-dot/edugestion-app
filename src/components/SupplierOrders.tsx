@@ -44,6 +44,13 @@ interface SupplierOrder {
   cancel_reason?: string | null;
   cancellation_source?: string | null;
   cancelled_from_status?: string | null;
+  delivery_version?: number;
+  delivered_at?: string | null;
+  delivered_by?: string | null;
+  delivered_from_status?: string | null;
+  delivery_reverted_at?: string | null;
+  delivery_reverted_by?: string | null;
+  delivery_revert_reason?: string | null;
 }
 
 export default function SupplierOrders() {
@@ -56,9 +63,10 @@ export default function SupplierOrders() {
   const [loadError, setLoadError] = useState('');
   const [updatingOrderId, setUpdatingOrderId] = useState<number | null>(null);
   const [cancellingOrderId, setCancellingOrderId] = useState<number | null>(null);
+  const [revertingOrderId, setRevertingOrderId] = useState<number | null>(null);
   const [savingChanges, setSavingChanges] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [confirmation, setConfirmation] = useState<{ type: 'cancel' | 'complete'; order: SupplierOrder } | null>(null);
+  const [confirmation, setConfirmation] = useState<{ type: 'cancel' | 'complete' | 'revert'; order: SupplierOrder } | null>(null);
   const [cancelReason, setCancelReason] = useState('');
   const [editError, setEditError] = useState('');
   
@@ -519,6 +527,55 @@ export default function SupplierOrders() {
     }
   };
 
+  const getDeliveryReversalProtectionReason = (order: SupplierOrder) => {
+    if (order.estado !== 'entregado' || Number(order.stock_actualizado || 0) !== 1) {
+      return 'Solo puede revertirse una entrega completada.';
+    }
+    if (Number(order.delivery_version || 0) !== 1) {
+      return 'Entrega histórica sin trazabilidad reversible.';
+    }
+    if (order.delivery_reverted_at) {
+      return 'La entrega ya fue revertida.';
+    }
+    if (order.sale_id && String(order.sale_estado || '').toLowerCase() !== 'anulada') {
+      return 'Primero debe anularse la venta vinculada.';
+    }
+    if (String(order.customer_order_estado || '').toLowerCase() === 'entregado') {
+      return 'Primero debe anularse la venta del pedido de cliente.';
+    }
+    return '';
+  };
+
+  const revertDelivery = async (order: SupplierOrder) => {
+    const normalizedReason = cancelReason.trim();
+    if (normalizedReason.length < 3) {
+      setFeedback({ type: 'error', message: 'El motivo de reversión es obligatorio.' });
+      return;
+    }
+
+    setRevertingOrderId(order.id);
+    setFeedback(null);
+    try {
+      const res = await apiFetch(`/api/sales?endpoint=supplier-order-delivery-revert&id=${order.id}`, {
+        method: 'POST',
+        body: JSON.stringify({ motivo: normalizedReason })
+      });
+      await unwrapResponse(res);
+      setFeedback({ type: 'success', message: 'Entrega revertida correctamente. El pedido volvió a Auditoría.' });
+      setConfirmation(null);
+      setCancelReason('');
+      await fetchOrders();
+    } catch (error) {
+      console.error('Error reverting supplier delivery:', error);
+      setFeedback({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'No se pudo revertir la entrega.'
+      });
+    } finally {
+      setRevertingOrderId(null);
+    }
+  };
+
   const handleStartEdit = (order: SupplierOrder) => {
     setEditingOrder(order);
     setEditingItems(order.productos.map(p => ({ ...p })));
@@ -908,7 +965,8 @@ export default function SupplierOrders() {
   const confirmationBusy = Boolean(
     confirmation && (
       updatingOrderId === confirmation.order.id ||
-      cancellingOrderId === confirmation.order.id
+      cancellingOrderId === confirmation.order.id ||
+      revertingOrderId === confirmation.order.id
     )
   );
 
@@ -1464,12 +1522,33 @@ export default function SupplierOrders() {
                         </button>
                       )}
 
-                      {order.estado === 'entregado' && (
-                        <div className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-black text-emerald-700">
-                          <CheckCircle2 size={15} />
-                          Entrega realizada
-                        </div>
-                      )}
+                      {order.estado === 'entregado' && (() => {
+                        const reversalProtection = getDeliveryReversalProtectionReason(order);
+                        return (
+                          <div className="space-y-2">
+                            <div className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-black text-emerald-700">
+                              <CheckCircle2 size={15} />
+                              Entrega realizada
+                            </div>
+                            {hasPermission('suppliers', 'edit') && !reversalProtection && (
+                              <button
+                                type="button"
+                                onClick={() => { setCancelReason(''); setConfirmation({ type: 'revert', order }); }}
+                                disabled={revertingOrderId === order.id}
+                                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs font-black text-amber-900 transition hover:bg-amber-100 disabled:opacity-60"
+                              >
+                                {revertingOrderId === order.id ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+                                {revertingOrderId === order.id ? 'Revirtiendo…' : 'Revertir entrega'}
+                              </button>
+                            )}
+                            {reversalProtection && (
+                              <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-bold leading-5 text-slate-600">
+                                {reversalProtection}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })()}
                       {order.estado === 'cancelado' && (
                         <div className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-black text-red-700">
                           <AlertCircle size={15} />
@@ -1687,21 +1766,25 @@ export default function SupplierOrders() {
             <div className={`flex h-14 w-14 items-center justify-center rounded-2xl ${
               confirmation.type === 'cancel'
                 ? 'bg-red-50 text-red-600'
-                : 'bg-emerald-50 text-emerald-600'
+                : confirmation.type === 'revert'
+                  ? 'bg-amber-50 text-amber-700'
+                  : 'bg-emerald-50 text-emerald-600'
             }`}>
-              {confirmation.type === 'cancel' ? <Ban size={26} /> : <CheckCircle2 size={26} />}
+              {confirmation.type === 'cancel' ? <Ban size={26} /> : confirmation.type === 'revert' ? <RefreshCw size={26} /> : <CheckCircle2 size={26} />}
             </div>
 
             <h2 className="mt-5 text-xl font-black text-slate-950">
-              {confirmation.type === 'cancel' ? 'Anular pedido' : 'Completar entrega'}
+              {confirmation.type === 'cancel' ? 'Anular pedido' : confirmation.type === 'revert' ? 'Revertir entrega' : 'Completar entrega'}
             </h2>
             <p className="mt-2 break-words text-sm leading-6 text-slate-500">
               {confirmation.type === 'cancel'
                 ? `El pedido #${confirmation.order.numero_pedido || confirmation.order.id} quedará anulado y se conservará como historial.`
-                : 'Se completará la entrega. Si el pedido proviene de una venta registrada, no se duplicará; si proviene del portal, se cargará el stock necesario para poder entregarlo.'}
+                : confirmation.type === 'revert'
+                  ? 'Se retirará únicamente el stock incorporado por esta entrega, se conservarán los movimientos como historial y el pedido volverá a Auditoría.'
+                  : 'Se completará la entrega. Si el pedido proviene de una venta registrada, no se duplicará; si proviene del portal, se cargará el stock necesario para poder entregarlo.'}
             </p>
 
-            {confirmation.type === 'cancel' && (
+            {confirmation.type !== 'complete' && (
               <label className="mt-5 block space-y-2">
                 <span className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">
                   Motivo obligatorio
@@ -1712,7 +1795,7 @@ export default function SupplierOrders() {
                   maxLength={500}
                   rows={4}
                   autoFocus
-                  placeholder="Ejemplo: pedido duplicado o proveedor sin disponibilidad"
+                  placeholder={confirmation.type === 'revert' ? 'Ejemplo: entrega confirmada por error' : 'Ejemplo: pedido duplicado o proveedor sin disponibilidad'}
                   className="w-full resize-y rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm outline-none transition focus:border-red-400 focus:bg-white focus:ring-4 focus:ring-red-100"
                 />
                 <p className="text-right text-[11px] font-bold text-slate-400">
@@ -1735,15 +1818,19 @@ export default function SupplierOrders() {
                 onClick={() => {
                   if (confirmation.type === 'cancel') {
                     cancelOrder(confirmation.order);
+                  } else if (confirmation.type === 'revert') {
+                    revertDelivery(confirmation.order);
                   } else {
                     handleCompleteSale(confirmation.order.id);
                   }
                 }}
-                disabled={confirmationBusy || (confirmation.type === 'cancel' && cancelReason.trim().length < 3)}
+                disabled={confirmationBusy || (confirmation.type !== 'complete' && cancelReason.trim().length < 3)}
                 className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-black text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${
                   confirmation.type === 'cancel'
                     ? 'bg-red-600 hover:bg-red-700'
-                    : 'bg-emerald-600 hover:bg-emerald-700'
+                    : confirmation.type === 'revert'
+                      ? 'bg-amber-600 hover:bg-amber-700'
+                      : 'bg-emerald-600 hover:bg-emerald-700'
                 }`}
               >
                 {confirmationBusy && <Loader2 size={17} className="animate-spin" />}
@@ -1751,7 +1838,9 @@ export default function SupplierOrders() {
                   ? 'Procesando…'
                   : confirmation.type === 'cancel'
                     ? 'Confirmar anulación'
-                    : 'Completar y actualizar stock'}
+                    : confirmation.type === 'revert'
+                      ? 'Confirmar reversión'
+                      : 'Completar y actualizar stock'}
               </button>
             </div>
           </div>

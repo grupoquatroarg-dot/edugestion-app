@@ -20,13 +20,34 @@ export const supplierOrderService = {
 
       if (items.length === 0) throw new Error("El pedido no tiene productos");
 
+      const deliveryItems: Array<{ product_id: number; quantity: number; unit_cost: number; ingress_movement_id: number; egress_movement_id?: number | null }> = [];
+
       // 1. Registrar ingreso de stock y lote de compra (para PEPS)
       for (const item of items) {
-        db.prepare(`
-          INSERT INTO stock_movimientos (product_id, cantidad, costo_unitario, cantidad_restante, descripcion, tipo_movimiento) 
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).run(item.product_id, item.cantidad, item.cost || 0, item.cantidad, `Ingreso desde Pedido #${order.numero_pedido}`, 'ingreso');
-        
+        const ingress = db.prepare(`
+          INSERT INTO stock_movimientos (
+            product_id, cantidad, costo_unitario, cantidad_restante, descripcion,
+            tipo_movimiento, motivo, usuario, supplier_order_id, reversion_version
+          )
+          VALUES (?, ?, ?, ?, ?, 'ingreso', 'pedido_proveedor', ?, ?, 1)
+        `).run(
+          item.product_id,
+          item.cantidad,
+          item.cost || 0,
+          item.cantidad,
+          `Ingreso desde Pedido #${order.numero_pedido}`,
+          usuario || 'Sistema',
+          orderId
+        );
+
+        deliveryItems.push({
+          product_id: item.product_id,
+          quantity: item.cantidad,
+          unit_cost: item.cost || 0,
+          ingress_movement_id: Number(ingress.lastInsertRowid),
+          egress_movement_id: null,
+        });
+
         db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?").run(item.cantidad, item.product_id);
       }
 
@@ -85,9 +106,79 @@ export const supplierOrderService = {
 
       const saleId = salesRepository.create(saleData, processedItems);
 
-      // 4. Actualizar el pedido
+      // 4. Registrar egresos y trazabilidad de la entrega
+      for (const deliveryItem of deliveryItems) {
+        const egress = db.prepare(`
+          INSERT INTO stock_movimientos (
+            product_id, cantidad, costo_unitario, cantidad_restante, descripcion,
+            tipo_movimiento, motivo, usuario, sale_id, supplier_order_id, reversion_version
+          ) VALUES (?, ?, ?, 0, ?, 'egreso', 'venta', ?, ?, ?, 0)
+        `).run(
+          deliveryItem.product_id,
+          -deliveryItem.quantity,
+          deliveryItem.unit_cost,
+          `Entrega desde Pedido #${order.numero_pedido}`,
+          usuario || 'Sistema',
+          saleId,
+          orderId
+        );
+        deliveryItem.egress_movement_id = Number(egress.lastInsertRowid);
+        db.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?")
+          .run(deliveryItem.quantity, deliveryItem.product_id);
+        db.prepare(`
+          INSERT INTO sale_stock_allocations (
+            sale_id, product_id, purchase_invoice_item_id, stock_movement_id,
+            source_type, cantidad, costo_unitario
+          ) VALUES (?, ?, NULL, ?, 'supplier_delivery', ?, ?)
+        `).run(
+          saleId,
+          deliveryItem.product_id,
+          deliveryItem.egress_movement_id,
+          deliveryItem.quantity,
+          deliveryItem.unit_cost
+        );
+      }
+
+      const delivery = db.prepare(`
+        INSERT INTO supplier_order_deliveries (
+          supplier_order_id, delivery_mode, previous_status, sale_id_before,
+          sale_id_after, customer_order_id, delivered_by, snapshot
+        ) VALUES (?, 'created_sale', ?, NULL, ?, ?, ?, ?)
+      `).run(
+        orderId,
+        order.estado,
+        saleId,
+        order.customer_order_id || null,
+        usuario || 'Sistema',
+        JSON.stringify({ order, items: deliveryItems })
+      );
+
+      const insertDeliveryItem = db.prepare(`
+        INSERT INTO supplier_order_delivery_items (
+          delivery_id, product_id, quantity, unit_cost, ingress_movement_id, egress_movement_id
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      for (const item of deliveryItems) {
+        insertDeliveryItem.run(
+          Number(delivery.lastInsertRowid),
+          item.product_id,
+          item.quantity,
+          item.unit_cost,
+          item.ingress_movement_id,
+          item.egress_movement_id || null
+        );
+      }
+
       db.prepare("UPDATE settings SET value = ? WHERE key = 'next_sale_number'").run((nextSaleNum + 1).toString());
-      db.prepare("UPDATE supplier_orders SET estado = 'entregado', sale_id = ? WHERE id = ?").run(saleId, orderId);
+      db.prepare(`
+        UPDATE supplier_orders
+        SET estado = 'entregado', sale_id = ?, stock_actualizado = 1,
+            delivery_version = 1, delivered_at = CURRENT_TIMESTAMP,
+            delivered_by = ?, delivered_from_status = ?,
+            delivery_reverted_at = NULL, delivery_reverted_by = NULL,
+            delivery_revert_reason = NULL
+        WHERE id = ?
+      `).run(saleId, usuario || 'Sistema', order.estado, orderId);
 
       // 5. Registrar movimiento financiero
       const nextPaymentNum = parseInt(db.prepare("SELECT value FROM settings WHERE key = 'next_payment_number'").get()?.value || '1');

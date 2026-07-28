@@ -271,6 +271,22 @@ export function initDb() {
       FOREIGN KEY (product_id) REFERENCES products(id)
     );
 
+    CREATE TABLE IF NOT EXISTS sale_stock_allocations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sale_id INTEGER NOT NULL,
+      product_id INTEGER NOT NULL,
+      purchase_invoice_item_id INTEGER,
+      stock_movement_id INTEGER NOT NULL,
+      source_type TEXT NOT NULL,
+      cantidad REAL NOT NULL,
+      costo_unitario REAL NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (sale_id) REFERENCES sales(id),
+      FOREIGN KEY (product_id) REFERENCES products(id),
+      FOREIGN KEY (purchase_invoice_item_id) REFERENCES purchase_invoice_items(id),
+      FOREIGN KEY (stock_movement_id) REFERENCES stock_movimientos(id)
+    );
+
     CREATE TABLE IF NOT EXISTS supplier_orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       numero_pedido INTEGER,
@@ -287,6 +303,13 @@ export function initDb() {
       cancel_reason TEXT,
       cancellation_source TEXT,
       cancelled_from_status TEXT,
+      delivery_version INTEGER NOT NULL DEFAULT 0,
+      delivered_at DATETIME,
+      delivered_by TEXT,
+      delivered_from_status TEXT,
+      delivery_reverted_at DATETIME,
+      delivery_reverted_by TEXT,
+      delivery_revert_reason TEXT,
       FOREIGN KEY (cliente_id) REFERENCES clientes(id),
       FOREIGN KEY (sale_id) REFERENCES sales(id)
     );
@@ -301,6 +324,40 @@ export function initDb() {
       cancellation_source TEXT NOT NULL DEFAULT 'manual',
       snapshot TEXT NOT NULL DEFAULT '{}',
       FOREIGN KEY (supplier_order_id) REFERENCES supplier_orders(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS supplier_order_deliveries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      supplier_order_id INTEGER NOT NULL,
+      delivery_mode TEXT NOT NULL CHECK(delivery_mode IN ('stock_only', 'linked_sale', 'created_sale')),
+      previous_status TEXT NOT NULL,
+      sale_id_before INTEGER,
+      sale_id_after INTEGER,
+      customer_order_id INTEGER,
+      delivered_by TEXT NOT NULL,
+      delivered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      reverted_at DATETIME,
+      reverted_by TEXT,
+      revert_reason TEXT,
+      snapshot TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (supplier_order_id) REFERENCES supplier_orders(id),
+      FOREIGN KEY (sale_id_before) REFERENCES sales(id),
+      FOREIGN KEY (sale_id_after) REFERENCES sales(id),
+      FOREIGN KEY (customer_order_id) REFERENCES customer_orders(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS supplier_order_delivery_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      delivery_id INTEGER NOT NULL,
+      product_id INTEGER NOT NULL,
+      quantity REAL NOT NULL CHECK(quantity > 0),
+      unit_cost REAL NOT NULL DEFAULT 0,
+      ingress_movement_id INTEGER NOT NULL UNIQUE,
+      egress_movement_id INTEGER UNIQUE,
+      FOREIGN KEY (delivery_id) REFERENCES supplier_order_deliveries(id),
+      FOREIGN KEY (product_id) REFERENCES products(id),
+      FOREIGN KEY (ingress_movement_id) REFERENCES stock_movimientos(id),
+      FOREIGN KEY (egress_movement_id) REFERENCES stock_movimientos(id)
     );
 
     CREATE TABLE IF NOT EXISTS supplier_order_items (
@@ -589,6 +646,7 @@ export function initDb() {
       sale_id INTEGER,
       purchase_invoice_id INTEGER,
       purchase_invoice_item_id INTEGER,
+      supplier_order_id INTEGER,
       reversed_movement_id INTEGER,
       reversion_version INTEGER NOT NULL DEFAULT 0,
       anulada_at TEXT,
@@ -599,6 +657,7 @@ export function initDb() {
       FOREIGN KEY (sale_id) REFERENCES sales(id),
       FOREIGN KEY (purchase_invoice_id) REFERENCES purchase_invoices(id),
       FOREIGN KEY (purchase_invoice_item_id) REFERENCES purchase_invoice_items(id),
+      FOREIGN KEY (supplier_order_id) REFERENCES supplier_orders(id),
       FOREIGN KEY (reversed_movement_id) REFERENCES stock_movimientos(id)
     );
 
@@ -852,6 +911,14 @@ export function initDb() {
   try { db.exec("ALTER TABLE supplier_orders ADD COLUMN cancel_reason TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE supplier_orders ADD COLUMN cancellation_source TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE supplier_orders ADD COLUMN cancelled_from_status TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN delivery_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN delivered_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN delivered_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN delivered_from_status TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN delivery_reverted_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN delivery_reverted_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN delivery_revert_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE stock_movimientos ADD COLUMN supplier_order_id INTEGER"); } catch (e) {}
 
   try { db.exec("ALTER TABLE sales ADD COLUMN costo_total REAL DEFAULT 0"); } catch (e) {}
   try { db.exec("ALTER TABLE sales ADD COLUMN ganancia REAL DEFAULT 0"); } catch (e) {}
