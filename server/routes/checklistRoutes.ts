@@ -4,6 +4,7 @@ import { requireAuth, requirePermission } from "../middleware/authMiddleware.js"
 import { sendSuccess, sendError } from "../utils/response.js";
 import { getBusinessDate } from "../utils/businessDate.js";
 import { checklistTemplateLifecycleService } from "../services/checklistTemplateLifecycleService.js";
+import { checklistLifecycleService } from "../services/checklistLifecycleService.js";
 
 const router = Router();
 
@@ -171,7 +172,7 @@ router.post("/checklists", requireAuth, requirePermission('checklist', 'create')
     if (Number(template.active || 0) !== 1) {
       throw new Error("La plantilla está inactiva y no puede iniciar nuevos checklists.");
     }
-    const info = db.prepare("INSERT INTO checklists (template_id, date, notes) VALUES (?, ?, ?)").run(template_id, date, notes);
+    const info = db.prepare("INSERT INTO checklists (template_id, date, notes, status, lifecycle_version) VALUES (?, ?, ?, 'pendiente', 1)").run(template_id, date, notes);
     checklistId = info.lastInsertRowid;
     
     // Copy items from template
@@ -186,18 +187,82 @@ router.post("/checklists", requireAuth, requirePermission('checklist', 'create')
 
 router.patch("/checklists/:id", requireAuth, requirePermission('checklist', 'edit'), (req, res) => {
   const { id } = req.params;
-  const { status, notes } = req.body;
-  const completedAt = status === 'completado' ? new Date().toISOString() : null;
-  db.prepare("UPDATE checklists SET status = ?, notes = ?, completed_at = ? WHERE id = ?").run(status, notes || '', completedAt, id);
-  return sendSuccess(res, null, "Checklist actualizado");
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'status')) {
+    return sendError(res, "El estado debe cambiarse desde Finalizar, Cancelar o Reabrir", 405);
+  }
+
+  try {
+    db.transaction(() => {
+      const checklist = db.prepare("SELECT id, status FROM checklists WHERE id = ? LIMIT 1").get(id) as any;
+      if (!checklist) throw Object.assign(new Error("Checklist no encontrado"), { statusCode: 404 });
+      if (String(checklist.status || 'pendiente').toLowerCase() !== 'pendiente') {
+        throw Object.assign(new Error("El checklist está cerrado. Reabrilo antes de editar sus notas."), { statusCode: 409 });
+      }
+      db.prepare("UPDATE checklists SET notes = COALESCE(?, notes) WHERE id = ?").run(req.body?.notes ?? null, id);
+    })();
+    return sendSuccess(res, null, "Checklist actualizado");
+  } catch (error: any) {
+    return sendError(res, error?.message || "Error al actualizar checklist", error?.statusCode || 400);
+  }
+});
+
+const requireChecklistLifecyclePermission = (req: any, res: any, next: any) => {
+  const action = String(req.body?.action || '');
+  if (!['finalize', 'cancel', 'reopen'].includes(action)) {
+    return sendError(res, "Acción de checklist inválida", 400);
+  }
+  return requirePermission('checklist', action === 'cancel' ? 'delete' : 'edit')(req, res, next);
+};
+
+router.post("/checklists/:id/lifecycle", requireChecklistLifecyclePermission, async (req, res) => {
+  const action = String(req.body?.action || '') as 'finalize' | 'cancel' | 'reopen';
+  try {
+    const result = await checklistLifecycleService.changeStatus({
+      checklistId: Number(req.params.id),
+      action,
+      motivo: String(req.body?.motivo || ''),
+      usuario: (req as any).user?.userName || 'Sistema',
+    });
+    return sendSuccess(res, result, action === 'finalize' ? 'Checklist finalizado correctamente' : action === 'cancel' ? 'Checklist cancelado correctamente' : 'Checklist reabierto correctamente');
+  } catch (error: any) {
+    return sendError(res, error?.message || 'Error al cambiar el estado del checklist', error?.statusCode || 400);
+  }
 });
 
 router.patch("/checklist-items/:id", requireAuth, requirePermission('checklist', 'edit'), (req, res) => {
   const { id } = req.params;
   const { completed, completed_by } = req.body;
-  const completedAt = completed ? new Date().toISOString() : null;
-  db.prepare("UPDATE checklist_items SET completed = ?, completed_at = ?, completed_by = ? WHERE id = ?").run(completed, completedAt, completed_by, id);
-  return sendSuccess(res, null, "Item de checklist actualizado");
+
+  try {
+    const result = db.transaction(() => {
+      const current = db.prepare(`
+        SELECT ci.id, ci.checklist_id, c.status
+        FROM checklist_items ci
+        JOIN checklists c ON c.id = ci.checklist_id
+        WHERE ci.id = ?
+        LIMIT 1
+      `).get(id) as any;
+      if (!current) throw Object.assign(new Error("Tarea de checklist no encontrada"), { statusCode: 404 });
+      if (String(current.status || 'pendiente').toLowerCase() !== 'pendiente') {
+        throw Object.assign(new Error("El checklist está cerrado. Reabrilo antes de modificar sus tareas."), { statusCode: 409 });
+      }
+
+      const completedFlag = completed ? 1 : 0;
+      const completedAt = completedFlag ? new Date().toISOString() : null;
+      db.prepare("UPDATE checklist_items SET completed = ?, completed_at = ?, completed_by = ? WHERE id = ?")
+        .run(completedFlag, completedAt, completed_by || null, id);
+      const item = db.prepare("SELECT * FROM checklist_items WHERE id = ?").get(id) as any;
+      const counts = db.prepare(`
+        SELECT COUNT(*) AS total_tasks,
+               SUM(CASE WHEN completed = 1 THEN 1 ELSE 0 END) AS completed_tasks
+        FROM checklist_items WHERE checklist_id = ?
+      `).get(current.checklist_id) as any;
+      return { item, checklist: { id: Number(current.checklist_id), status: 'pendiente', completed_at: null, total_tasks: Number(counts?.total_tasks || 0), completed_tasks: Number(counts?.completed_tasks || 0) } };
+    })();
+    return sendSuccess(res, result, completed ? "Tarea marcada como completada" : "Tarea marcada como pendiente");
+  } catch (error: any) {
+    return sendError(res, error?.message || "Error al actualizar tarea", error?.statusCode || 400);
+  }
 });
 
 router.get("/checklist/summary", requireAuth, requirePermission('checklist', 'view'), (req, res) => {

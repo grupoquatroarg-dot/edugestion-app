@@ -355,8 +355,33 @@ export function initDb() {
       notes TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       completed_at DATETIME,
+      completed_by TEXT,
+      lifecycle_version INTEGER NOT NULL DEFAULT 1,
+      cancelled_at DATETIME,
+      cancelled_by TEXT,
+      cancel_reason TEXT,
+      cancelled_from_status TEXT,
+      reopened_at DATETIME,
+      reopened_by TEXT,
+      reopen_reason TEXT,
       FOREIGN KEY (template_id) REFERENCES checklist_templates(id)
     );
+
+    CREATE TABLE IF NOT EXISTS checklist_status_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      checklist_id INTEGER NOT NULL,
+      action TEXT NOT NULL CHECK(action IN ('finalize', 'cancel', 'reopen')),
+      reason TEXT NOT NULL,
+      performed_by TEXT NOT NULL,
+      performed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      previous_status TEXT NOT NULL,
+      new_status TEXT NOT NULL,
+      snapshot TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (checklist_id) REFERENCES checklists(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_checklist_status_history_checklist
+      ON checklist_status_history (checklist_id, performed_at DESC, id DESC);
 
     CREATE TABLE IF NOT EXISTS checklist_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -832,6 +857,16 @@ export function initDb() {
   try { db.exec("ALTER TABLE sales ADD COLUMN ganancia REAL DEFAULT 0"); } catch (e) {}
   try { db.exec("ALTER TABLE sales ADD COLUMN estado TEXT DEFAULT 'Pagada'"); } catch (e) {}
   try { db.exec("ALTER TABLE checklist_items RENAME COLUMN user_id TO completed_by"); } catch (e) {}
+  try { db.exec("ALTER TABLE checklists ADD COLUMN lifecycle_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE checklists ADD COLUMN completed_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE checklists ADD COLUMN cancelled_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE checklists ADD COLUMN cancelled_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE checklists ADD COLUMN cancel_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE checklists ADD COLUMN cancelled_from_status TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE checklists ADD COLUMN reopened_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE checklists ADD COLUMN reopened_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE checklists ADD COLUMN reopen_reason TEXT"); } catch (e) {}
+  try { db.exec("UPDATE checklists SET lifecycle_version = 1 WHERE lower(COALESCE(status, 'pendiente')) = 'pendiente' AND lifecycle_version = 0"); } catch (e) {}
   try { db.exec("ALTER TABLE checklist_templates ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE checklist_templates ADD COLUMN deactivated_by TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE checklist_templates ADD COLUMN deactivation_reason TEXT"); } catch (e) {}

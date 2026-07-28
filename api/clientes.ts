@@ -12,6 +12,7 @@ import { userLifecycleService, type UserLifecycleAction } from "../server/servic
 import { requireBearerUser } from "../server/services/currentUserAuthService.js";
 import { checklistTemplateLifecycleService, type ChecklistTemplateLifecycleAction } from "../server/services/checklistTemplateLifecycleService.js";
 import { routeLifecycleService, type RouteLifecycleAction } from "../server/services/routeLifecycleService.js";
+import { checklistLifecycleService, type ChecklistLifecycleAction } from "../server/services/checklistLifecycleService.js";
 
 const clientSchema = z.object({
   nombre_apellido: z.string().min(2, "El nombre es requerido"),
@@ -1071,8 +1072,12 @@ const checklistCreateSchema = z.object({
 });
 
 const checklistUpdateSchema = z.object({
-  status: z.string().optional(),
   notes: z.string().optional().nullable(),
+}).strict();
+
+const checklistLifecycleSchema = z.object({
+  action: z.enum(["finalize", "cancel", "reopen"]),
+  motivo: z.string().trim().max(500).optional(),
 });
 
 const checklistItemUpdateSchema = z.object({
@@ -1113,6 +1118,15 @@ const mapChecklist = (row: any, items?: any[]) => ({
   notes: row.notes || "",
   created_at: row.created_at || null,
   completed_at: row.completed_at || null,
+  completed_by: row.completed_by || null,
+  lifecycle_version: toNumber(row.lifecycle_version),
+  cancelled_at: row.cancelled_at || null,
+  cancelled_by: row.cancelled_by || null,
+  cancel_reason: row.cancel_reason || null,
+  cancelled_from_status: row.cancelled_from_status || null,
+  reopened_at: row.reopened_at || null,
+  reopened_by: row.reopened_by || null,
+  reopen_reason: row.reopen_reason || null,
   total_tasks: toNumber(row.total_tasks),
   completed_tasks: toNumber(row.completed_tasks),
   ...(items ? { items: items.map(mapChecklistItem) } : {}),
@@ -1132,7 +1146,7 @@ const getChecklistItems = async (pool: any, checklistId: number) => {
   return itemsResult.rows;
 };
 
-const updateChecklistCompletionStatus = async (pool: any, checklistId: number) => {
+const getChecklistProgress = async (pool: any, checklistId: number) => {
   const countsResult = await pool.query(
     `
       SELECT
@@ -1144,20 +1158,10 @@ const updateChecklistCompletionStatus = async (pool: any, checklistId: number) =
     [checklistId]
   );
 
-  const total = toNumber(countsResult.rows[0]?.total);
-  const completed = toNumber(countsResult.rows[0]?.completed);
-
-  if (total > 0 && total === completed) {
-    await pool.query(
-      `UPDATE checklists SET status = 'completado', completed_at = COALESCE(completed_at, now()) WHERE id = $1`,
-      [checklistId]
-    );
-  } else {
-    await pool.query(
-      `UPDATE checklists SET status = 'pendiente', completed_at = NULL WHERE id = $1`,
-      [checklistId]
-    );
-  }
+  return {
+    total: toNumber(countsResult.rows[0]?.total),
+    completed: toNumber(countsResult.rows[0]?.completed),
+  };
 };
 
 const handleChecklist = async (req: any, res: any) => {
@@ -1417,6 +1421,15 @@ const handleChecklist = async (req: any, res: any) => {
               c.notes,
               c.created_at,
               c.completed_at,
+              c.completed_by,
+              c.lifecycle_version,
+              c.cancelled_at,
+              c.cancelled_by,
+              c.cancel_reason,
+              c.cancelled_from_status,
+              c.reopened_at,
+              c.reopened_by,
+              c.reopen_reason,
               t.name AS template_name,
               COUNT(ci.id)::int AS total_tasks,
               COALESCE(SUM(CASE WHEN COALESCE(ci.completed, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS completed_tasks
@@ -1466,8 +1479,8 @@ const handleChecklist = async (req: any, res: any) => {
 
         const checklistResult = await client.query(
           `
-            INSERT INTO checklists (template_id, date, notes, status)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO checklists (template_id, date, notes, status, lifecycle_version)
+            VALUES ($1, $2, $3, $4, 1)
             RETURNING id
           `,
           [
@@ -1526,6 +1539,15 @@ const handleChecklist = async (req: any, res: any) => {
             c.notes,
             c.created_at,
             c.completed_at,
+            c.completed_by,
+            c.lifecycle_version,
+            c.cancelled_at,
+            c.cancelled_by,
+            c.cancel_reason,
+            c.cancelled_from_status,
+            c.reopened_at,
+            c.reopened_by,
+            c.reopen_reason,
             t.name AS template_name
           FROM checklists c
           JOIN checklist_templates t ON c.template_id = t.id
@@ -1565,6 +1587,15 @@ const handleChecklist = async (req: any, res: any) => {
               c.notes,
               c.created_at,
               c.completed_at,
+              c.completed_by,
+              c.lifecycle_version,
+              c.cancelled_at,
+              c.cancelled_by,
+              c.cancel_reason,
+              c.cancelled_from_status,
+              c.reopened_at,
+              c.reopened_by,
+              c.reopen_reason,
               t.name AS template_name
             FROM checklists c
             JOIN checklist_templates t ON c.template_id = t.id
@@ -1589,37 +1620,71 @@ const handleChecklist = async (req: any, res: any) => {
 
       const parsed = checklistUpdateSchema.safeParse(getBody(req));
       if (!parsed.success) {
-        return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
+        return sendError(res, "El estado del checklist debe cambiarse desde Finalizar, Cancelar o Reabrir", 400, parsed.error.issues.map((issue) => ({
           path: issue.path.join("."),
           message: issue.message,
         })));
       }
 
+      const client = await pool.connect();
       try {
-        const completedAt = parsed.data.status === "completado" ? new Date().toISOString() : null;
-        await pool.query(
-          `
-            UPDATE checklists
-            SET status = COALESCE($1, status),
-                notes = COALESCE($2, notes),
-                completed_at = $3
-            WHERE id = $4
-          `,
-          [
-            parsed.data.status || null,
-            parsed.data.notes ?? null,
-            completedAt,
-            id,
-          ]
+        await client.query("BEGIN");
+        const currentResult = await client.query(
+          `SELECT id, status FROM checklists WHERE id = $1 LIMIT 1 FOR UPDATE`,
+          [id]
         );
+        if (!currentResult.rowCount) throw Object.assign(new Error("Checklist no encontrado"), { statusCode: 404 });
+        if (String(currentResult.rows[0]?.status || "pendiente").toLowerCase() !== "pendiente") {
+          throw Object.assign(new Error("El checklist está cerrado. Reabrilo antes de editar sus notas."), { statusCode: 409 });
+        }
 
+        await client.query(`UPDATE checklists SET notes = COALESCE($1, notes) WHERE id = $2`, [parsed.data.notes ?? null, id]);
+        await client.query("COMMIT");
         return sendSuccess(res, null, "Checklist actualizado");
       } catch (error: any) {
-        return sendError(res, error?.message || "Error al actualizar checklist", 400);
+        await client.query("ROLLBACK");
+        return sendError(res, error?.message || "Error al actualizar checklist", error?.statusCode || 400);
+      } finally {
+        client.release();
       }
     }
 
     return sendError(res, "Method not allowed", 405);
+  }
+
+  if (endpoint === "checklist-status") {
+    if (!id) return sendError(res, "ID de checklist inválido", 400);
+    if (req.method !== "PATCH") return sendError(res, "Method not allowed", 405);
+
+    const parsed = checklistLifecycleSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+      })));
+    }
+
+    const action = parsed.data.action as ChecklistLifecycleAction;
+    const permission = action === "cancel" ? "delete" : "edit";
+    const user = await requireChecklistPermission(req, res, permission);
+    if (!user) return;
+
+    try {
+      const result = await checklistLifecycleService.changeStatus({
+        checklistId: id,
+        action,
+        motivo: parsed.data.motivo,
+        usuario: user.userName || "Sistema",
+      });
+      const message = action === "finalize"
+        ? "Checklist finalizado correctamente"
+        : action === "cancel"
+          ? "Checklist cancelado correctamente"
+          : "Checklist reabierto correctamente";
+      return sendSuccess(res, result, message);
+    } catch (error: any) {
+      return sendError(res, error?.message || "Error al cambiar el estado del checklist", error?.statusCode || 400);
+    }
   }
 
   if (endpoint === "checklist-item") {
@@ -1636,68 +1701,52 @@ const handleChecklist = async (req: any, res: any) => {
       })));
     }
 
+    const client = await pool.connect();
     try {
-      const completed = toIntFlag(parsed.data.completed);
-      const completedAt = completed ? new Date().toISOString() : null;
-
-      const itemResult = await pool.query(
-        `
-          UPDATE checklist_items
-          SET completed = $1,
-              completed_at = $2,
-              completed_by = $3
-          WHERE id = $4
-          RETURNING id, checklist_id, task_name, completed, completed_at, completed_by
-        `,
-        [
-          completed,
-          completedAt,
-          parsed.data.completed_by || null,
-          id,
-        ]
+      await client.query("BEGIN");
+      const itemLookup = await client.query(
+        `SELECT ci.id, ci.checklist_id, c.status
+         FROM checklist_items ci
+         JOIN checklists c ON c.id = ci.checklist_id
+         WHERE ci.id = $1
+         LIMIT 1
+         FOR UPDATE OF ci, c`,
+        [id]
       );
-
-      if (!itemResult.rowCount) {
-        return sendError(res, "Tarea de checklist no encontrada", 404);
+      if (!itemLookup.rowCount) throw Object.assign(new Error("Tarea de checklist no encontrada"), { statusCode: 404 });
+      if (String(itemLookup.rows[0]?.status || "pendiente").toLowerCase() !== "pendiente") {
+        throw Object.assign(new Error("El checklist está cerrado. Reabrilo antes de modificar sus tareas."), { statusCode: 409 });
       }
 
-      const checklistId = toNumber(itemResult.rows[0]?.checklist_id);
-      await updateChecklistCompletionStatus(pool, checklistId);
-
-      const checklistResult = await pool.query(
-        `
-          SELECT
-            c.id,
-            c.status,
-            c.completed_at,
-            COUNT(ci.id)::int AS total_tasks,
-            COALESCE(SUM(CASE WHEN COALESCE(ci.completed, 0) <> 0 THEN 1 ELSE 0 END), 0)::int AS completed_tasks
-          FROM checklists c
-          LEFT JOIN checklist_items ci ON ci.checklist_id = c.id
-          WHERE c.id = $1
-          GROUP BY c.id
-        `,
-        [checklistId]
+      const completed = toIntFlag(parsed.data.completed);
+      const completedAt = completed ? new Date().toISOString() : null;
+      const itemResult = await client.query(
+        `UPDATE checklist_items
+         SET completed = $1, completed_at = $2, completed_by = $3
+         WHERE id = $4
+         RETURNING id, checklist_id, task_name, completed, completed_at, completed_by`,
+        [completed, completedAt, parsed.data.completed_by || null, id]
       );
 
-      const checklistRow = checklistResult.rows[0];
+      const checklistId = toNumber(itemLookup.rows[0]?.checklist_id);
+      const progress = await getChecklistProgress(client, checklistId);
+      await client.query("COMMIT");
 
-      return sendSuccess(
-        res,
-        {
-          item: mapChecklistItem(itemResult.rows[0]),
-          checklist: {
-            id: checklistId,
-            status: checklistRow?.status || "pendiente",
-            completed_at: checklistRow?.completed_at || null,
-            total_tasks: toNumber(checklistRow?.total_tasks),
-            completed_tasks: toNumber(checklistRow?.completed_tasks),
-          },
+      return sendSuccess(res, {
+        item: mapChecklistItem(itemResult.rows[0]),
+        checklist: {
+          id: checklistId,
+          status: "pendiente",
+          completed_at: null,
+          total_tasks: progress.total,
+          completed_tasks: progress.completed,
         },
-        completed ? "Tarea marcada como completada" : "Tarea marcada como pendiente"
-      );
+      }, completed ? "Tarea marcada como completada" : "Tarea marcada como pendiente");
     } catch (error: any) {
-      return sendError(res, error?.message || "Error al actualizar item", 400);
+      await client.query("ROLLBACK");
+      return sendError(res, error?.message || "Error al actualizar item", error?.statusCode || 400);
+    } finally {
+      client.release();
     }
   }
 
@@ -2664,6 +2713,7 @@ export default async function handler(req: any, res: any) {
     "checklists",
     "checklists-today",
     "checklist",
+    "checklist-status",
     "checklist-item",
     "checklist-summary",
   ].includes(endpoint)) {

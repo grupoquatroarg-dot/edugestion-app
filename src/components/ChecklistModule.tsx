@@ -32,7 +32,8 @@ import {
   Loader2,
   RefreshCw,
   Archive,
-  RotateCcw
+  RotateCcw,
+  XCircle
 } from 'lucide-react';
 
 export default function ChecklistModule() {
@@ -55,6 +56,9 @@ export default function ChecklistModule() {
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [editingTemplateLoading, setEditingTemplateLoading] = useState(false);
   const [finishingChecklistId, setFinishingChecklistId] = useState<number | null>(null);
+  const [checklistLifecycleTarget, setChecklistLifecycleTarget] = useState<{ checklist: Checklist; action: 'cancel' | 'reopen' } | null>(null);
+  const [checklistLifecycleReason, setChecklistLifecycleReason] = useState('');
+  const [checklistLifecycleLoading, setChecklistLifecycleLoading] = useState(false);
   const [templateLifecycleTarget, setTemplateLifecycleTarget] = useState<{
     template: Template;
     action: 'deactivate' | 'reactivate';
@@ -381,7 +385,7 @@ export default function ChecklistModule() {
         items: updatedItems,
         total_tasks: updatedItems.length,
         completed_tasks: completedTasks,
-        status: updatedItems.length > 0 && completedTasks === updatedItems.length ? 'completado' : 'pendiente'
+        status: 'pendiente'
       };
     }));
 
@@ -427,7 +431,7 @@ export default function ChecklistModule() {
           completed_tasks: completedTasks,
           total_tasks: totalTasks,
           status: data?.checklist?.status
-            ?? (totalTasks > 0 && completedTasks === totalTasks ? 'completado' : 'pendiente'),
+            ?? 'pendiente',
           completed_at: data?.checklist ? data.checklist.completed_at ?? null : checklist.completed_at
         };
       }));
@@ -476,9 +480,9 @@ export default function ChecklistModule() {
     if (finishingChecklistId !== null) return;
     setFinishingChecklistId(id);
     try {
-      const res = await apiFetch(`/api/clientes?endpoint=checklist&id=${id}`, {
+      const res = await apiFetch(`/api/clientes?endpoint=checklist-status&id=${id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ status: 'completado' })
+        body: JSON.stringify({ action: 'finalize', motivo: 'Finalización manual' })
       });
 
       if (!res.ok) {
@@ -488,12 +492,48 @@ export default function ChecklistModule() {
       setTodayChecklists(previous => previous.filter(checklist => checklist.id !== id));
       setSelectedActiveChecklistId(previousId => previousId === id ? null : previousId);
       showNotification('success', 'Checklist finalizado correctamente.');
-      void fetchInitialData(false);
+      await fetchInitialData(false);
     } catch (error: any) {
       console.error('Error finishing checklist:', error);
       showNotification('error', error?.message || 'No se pudo finalizar el checklist.');
     } finally {
       setFinishingChecklistId(null);
+    }
+  };
+
+  const openChecklistLifecycle = (checklist: Checklist, action: 'cancel' | 'reopen') => {
+    setChecklistLifecycleTarget({ checklist, action });
+    setChecklistLifecycleReason('');
+  };
+
+  const handleChecklistLifecycle = async () => {
+    if (!checklistLifecycleTarget || checklistLifecycleLoading) return;
+    const motivo = checklistLifecycleReason.trim();
+    if (motivo.length < 3) {
+      showNotification('error', 'Ingresá un motivo de al menos 3 caracteres.');
+      return;
+    }
+
+    setChecklistLifecycleLoading(true);
+    try {
+      const res = await apiFetch(`/api/clientes?endpoint=checklist-status&id=${checklistLifecycleTarget.checklist.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ action: checklistLifecycleTarget.action, motivo })
+      });
+      if (!res.ok) {
+        throw new Error(await readApiError(res, 'No se pudo cambiar el estado del checklist.'));
+      }
+
+      showNotification('success', checklistLifecycleTarget.action === 'cancel' ? 'Checklist cancelado correctamente.' : 'Checklist reabierto correctamente.');
+      setChecklistLifecycleTarget(null);
+      setChecklistLifecycleReason('');
+      setSelectedChecklistForDetail(null);
+      await fetchInitialData(false);
+    } catch (error: any) {
+      console.error('Error updating checklist lifecycle:', error);
+      showNotification('error', error?.message || 'No se pudo cambiar el estado del checklist.');
+    } finally {
+      setChecklistLifecycleLoading(false);
     }
   };
 
@@ -799,15 +839,27 @@ export default function ChecklistModule() {
                                   {(activeChecklist.items || []).filter(item => Number(item.completed) === 1).length}/{(activeChecklist.items || []).length} tareas completadas
                                 </p>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => handleFinishChecklist(activeChecklist.id)}
-                                disabled={finishingChecklistId !== null}
-                                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60 lg:w-auto"
-                              >
-                                {finishingChecklistId === activeChecklist.id && <Loader2 size={17} className="animate-spin" />}
-                                {finishingChecklistId === activeChecklist.id ? 'Finalizando...' : 'Finalizar control'}
-                              </button>
+                              <div className="grid w-full gap-2 sm:grid-cols-2 lg:w-auto">
+                                {hasPermission('checklist', 'delete') && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openChecklistLifecycle(activeChecklist, 'cancel')}
+                                    disabled={finishingChecklistId !== null || checklistLifecycleLoading}
+                                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-60"
+                                  >
+                                    <XCircle size={17} /> Cancelar control
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleFinishChecklist(activeChecklist.id)}
+                                  disabled={finishingChecklistId !== null || checklistLifecycleLoading || !hasPermission('checklist', 'edit')}
+                                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
+                                >
+                                  {finishingChecklistId === activeChecklist.id && <Loader2 size={17} className="animate-spin" />}
+                                  {finishingChecklistId === activeChecklist.id ? 'Finalizando...' : 'Finalizar control'}
+                                </button>
+                              </div>
                             </div>
                           </div>
                           <div className="space-y-3 p-4 sm:p-6">
@@ -1009,6 +1061,10 @@ export default function ChecklistModule() {
                       const completed = item.completed_tasks || 0;
                       const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
                       const complete = item.status === 'completado';
+                      const cancelled = item.status === 'cancelado';
+                      const lifecycleEnabled = Number(item.lifecycle_version || 0) === 1;
+                      const statusLabel = cancelled ? 'Cancelado' : complete ? 'Finalizado' : 'Pendiente';
+                      const statusClass = cancelled ? 'bg-rose-50 text-rose-700' : complete ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700';
                       return (
                         <article key={item.id} className="min-w-0 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
                           <div className="flex items-start justify-between gap-3">
@@ -1016,18 +1072,31 @@ export default function ChecklistModule() {
                               <p className="flex items-center gap-2 text-xs font-bold text-slate-500"><Calendar size={15} /> {formatBusinessDate(item.date)}</p>
                               <h3 className="mt-2 break-words text-lg font-black text-slate-900">{item.template_name}</h3>
                             </div>
-                            <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${complete ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{complete ? 'Completo' : 'Incompleto'}</span>
+                            <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${statusClass}`}>{statusLabel}</span>
                           </div>
                           <div className="mt-4 grid grid-cols-2 gap-3 rounded-2xl bg-slate-50 p-3">
                             <div><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Tareas</p><p className="mt-1 text-lg font-black text-slate-900">{total}</p></div>
                             <div><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Completadas</p><p className="mt-1 text-lg font-black text-indigo-700">{completed}</p></div>
                           </div>
-                          <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${complete ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${percentage}%` }} /></div>
-                          <div className="mt-4 flex items-center justify-between gap-3">
-                            <span className="text-xs font-bold text-slate-500">{percentage}% completado</span>
+                          {cancelled && item.cancel_reason && (
+                            <div className="mt-3 rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs text-rose-800">
+                              <p className="font-black">Motivo de cancelación</p>
+                              <p className="mt-1 break-words">{item.cancel_reason}</p>
+                              <p className="mt-2 text-[11px] text-rose-600">{item.cancelled_by || 'Sistema'}{item.cancelled_at ? ` · ${formatBusinessDate(item.cancelled_at)} ${formatBusinessTime(item.cancelled_at)}` : ''}</p>
+                            </div>
+                          )}
+                          <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${cancelled ? 'bg-rose-400' : complete ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${percentage}%` }} /></div>
+                          <div className="mt-4 grid gap-2 sm:grid-cols-2">
                             <button type="button" onClick={() => { setDetailError(null); setSelectedChecklistForDetail(item); }} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-50 px-4 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100">
                               Ver detalle <ChevronRight size={15} />
                             </button>
+                            {(complete || cancelled) && lifecycleEnabled && hasPermission('checklist', 'edit') ? (
+                              <button type="button" onClick={() => openChecklistLifecycle(item, 'reopen')} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100">
+                                <RotateCcw size={15} /> Reabrir
+                              </button>
+                            ) : (
+                              <span className="inline-flex min-h-11 items-center justify-center rounded-xl bg-slate-50 px-3 text-center text-[11px] font-bold text-slate-500">{lifecycleEnabled ? `${percentage}% completado` : 'Histórico sin reapertura'}</span>
+                            )}
                           </div>
                         </article>
                       );
@@ -1109,6 +1178,35 @@ export default function ChecklistModule() {
             <div className="grid gap-3 border-t border-slate-200 bg-slate-50 p-4 sm:grid-cols-2 sm:p-5">
               <button type="button" onClick={resetTemplateForm} disabled={savingTemplate} className="min-h-12 rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50">Cancelar</button>
               <button type="button" onClick={handleCreateTemplate} disabled={!newTemplateName.trim() || newTemplateTasks.every(task => !task.trim()) || savingTemplate} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50">{savingTemplate && <Loader2 size={17} className="animate-spin" />}{savingTemplate ? 'Guardando...' : editingTemplateId ? 'Actualizar plantilla' : 'Guardar plantilla'}</button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {checklistLifecycleTarget && (
+        <div className="fixed inset-0 z-[76] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+          <motion.div initial={{ opacity: 0, y: 25 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md rounded-t-[28px] bg-white p-5 shadow-2xl sm:rounded-[28px] sm:p-6" role="dialog" aria-modal="true" aria-labelledby="checklist-lifecycle-title">
+            <div className={`flex h-14 w-14 items-center justify-center rounded-2xl ${checklistLifecycleTarget.action === 'cancel' ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>
+              {checklistLifecycleTarget.action === 'cancel' ? <XCircle size={25} /> : <RotateCcw size={25} />}
+            </div>
+            <h2 id="checklist-lifecycle-title" className="mt-4 text-xl font-black text-slate-900">
+              {checklistLifecycleTarget.action === 'cancel' ? 'Cancelar checklist' : 'Reabrir checklist'}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              {checklistLifecycleTarget.action === 'cancel'
+                ? 'El control dejará de estar activo, pero todas sus tareas y datos permanecerán en el historial.'
+                : 'El control volverá a quedar pendiente y sus tareas podrán modificarse nuevamente.'}
+            </p>
+            <div className="mt-4 rounded-xl bg-slate-50 p-3 text-sm font-bold text-slate-800">{checklistLifecycleTarget.checklist.template_name}</div>
+            <label htmlFor="checklist-lifecycle-reason" className="mt-5 block text-xs font-black uppercase tracking-wider text-slate-600">Motivo obligatorio</label>
+            <textarea id="checklist-lifecycle-reason" value={checklistLifecycleReason} onChange={event => setChecklistLifecycleReason(event.target.value)} maxLength={500} autoFocus placeholder={checklistLifecycleTarget.action === 'cancel' ? 'Ej.: control iniciado por error' : 'Ej.: se necesita corregir una tarea'} className="mt-2 min-h-28 w-full resize-none rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" />
+            <p className="mt-1 text-right text-[11px] text-slate-400">{checklistLifecycleReason.trim().length}/500</p>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <button type="button" onClick={() => { setChecklistLifecycleTarget(null); setChecklistLifecycleReason(''); }} disabled={checklistLifecycleLoading} className="min-h-12 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 disabled:opacity-50">Cerrar</button>
+              <button type="button" onClick={handleChecklistLifecycle} disabled={checklistLifecycleReason.trim().length < 3 || checklistLifecycleLoading} className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-white disabled:opacity-50 ${checklistLifecycleTarget.action === 'cancel' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
+                {checklistLifecycleLoading && <Loader2 size={17} className="animate-spin" />}
+                {checklistLifecycleLoading ? 'Guardando...' : checklistLifecycleTarget.action === 'cancel' ? 'Cancelar checklist' : 'Reabrir checklist'}
+              </button>
             </div>
           </motion.div>
         </div>
