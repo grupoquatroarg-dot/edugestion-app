@@ -12,6 +12,7 @@ import { userLifecycleService, type UserLifecycleAction } from "../server/servic
 import { requireBearerUser } from "../server/services/currentUserAuthService.js";
 import { checklistTemplateLifecycleService, type ChecklistTemplateLifecycleAction } from "../server/services/checklistTemplateLifecycleService.js";
 import { routeLifecycleService, type RouteLifecycleAction } from "../server/services/routeLifecycleService.js";
+import { routeItemLifecycleService, type RouteItemLifecycleAction } from "../server/services/routeItemLifecycleService.js";
 import { checklistLifecycleService, type ChecklistLifecycleAction } from "../server/services/checklistLifecycleService.js";
 
 const clientSchema = z.object({
@@ -387,14 +388,11 @@ const routeLifecycleSchema = z.object({
   motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
 });
 
-const routeItemSchema = z.object({
-  status: z.string().optional(),
-  notes: z.string().optional(),
-  visitado: z.union([z.number(), z.boolean()]).optional(),
-  venta_registrada: z.union([z.number(), z.boolean()]).optional(),
-  pedido_generado: z.union([z.number(), z.boolean()]).optional(),
-  cobranza_realizada: z.union([z.number(), z.boolean()]).optional(),
-});
+const routeItemLifecycleSchema = z.object({
+  action: z.enum(["visit", "omit", "reopen"]),
+  motivo: z.string().trim().max(500).optional().nullable(),
+  notes: z.string().max(2000).optional().nullable(),
+}).strict();
 
 const routeReorderSchema = z.object({
   items: z.array(z.object({
@@ -469,6 +467,12 @@ const mapRouteItem = (row: any) => ({
   cobranza_realizada: toNumber(row.cobranza_realizada),
   notes: row.notes || null,
   visited_at: row.visited_at || null,
+  lifecycle_version: toNumber(row.lifecycle_version),
+  status_changed_at: row.status_changed_at || null,
+  status_changed_by: row.status_changed_by || null,
+  status_changed_from: row.status_changed_from || null,
+  status_last_action: row.status_last_action || null,
+  status_last_reason: row.status_last_reason || null,
   nombre_apellido: row.nombre_apellido || row.client_name || "",
   razon_social: row.razon_social || "",
   localidad: row.localidad || "",
@@ -521,6 +525,12 @@ const getRouteItems = async (routeId: number) => {
         COALESCE(ri.cobranza_realizada, 0) AS cobranza_realizada,
         ri.notes,
         ri.visited_at,
+        COALESCE(ri.lifecycle_version, 0) AS lifecycle_version,
+        ri.status_changed_at,
+        ri.status_changed_by,
+        ri.status_changed_from,
+        ri.status_last_action,
+        ri.status_last_reason,
         c.nombre_apellido,
         c.razon_social,
         c.localidad,
@@ -646,10 +656,20 @@ const handleRoutes = async (req: any, res: any) => {
   if (endpoint === "route-item") {
     const user = await requireRoutePermission(req, res, "edit");
     if (!user) return;
-    if (!id) return sendError(res, "ID de ítem inválido", 400);
-    if (req.method !== "PATCH") return sendError(res, "Method not allowed", 405);
+    return sendError(
+      res,
+      "El cambio directo de estado e indicadores de la visita fue deshabilitado. Usá las acciones auditadas.",
+      409
+    );
+  }
 
-    const parsed = routeItemSchema.safeParse(getBody(req));
+  if (endpoint === "route-item-lifecycle") {
+    const user = await requireRoutePermission(req, res, "edit");
+    if (!user) return;
+    if (!id) return sendError(res, "ID de visita inválido", 400);
+    if (req.method !== "POST") return sendError(res, "Method not allowed", 405);
+
+    const parsed = routeItemLifecycleSchema.safeParse(getBody(req));
     if (!parsed.success) {
       return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
         path: issue.path.join("."),
@@ -657,67 +677,28 @@ const handleRoutes = async (req: any, res: any) => {
       })));
     }
 
-    const client = await pool.connect();
     try {
-      await client.query("BEGIN");
+      const result = await routeItemLifecycleService.changeStatus({
+        routeItemId: id,
+        action: parsed.data.action as RouteItemLifecycleAction,
+        motivo: parsed.data.motivo,
+        notes: parsed.data.notes,
+        usuario: user.userName || "Sistema",
+      });
 
-      const routeItemResult = await client.query(
-        `SELECT ri.id, ri.route_id, r.status AS route_status
-         FROM route_items ri
-         JOIN routes r ON r.id = ri.route_id
-         WHERE ri.id = $1
-         LIMIT 1
-         FOR UPDATE OF r, ri`,
-        [id]
-      );
-
-      if (!routeItemResult.rowCount) {
-        throw new Error("El ítem de ruta no existe");
-      }
-
-      const routeStatus = String(routeItemResult.rows[0]?.route_status || "planificada").toLowerCase();
-      if (["cancelada", "finalizada"].includes(routeStatus)) {
-        throw new Error(`La ruta está ${routeStatus} y no admite cambios`);
-      }
-
-      const fields: string[] = [];
-      const values: any[] = [];
-      const addField = (sqlField: string, value: any) => {
-        values.push(value);
-        fields.push(`${sqlField} = $${values.length}`);
-      };
-
-      if (parsed.data.status !== undefined) addField("status", parsed.data.status);
-      if (parsed.data.notes !== undefined) addField("notes", parsed.data.notes);
-      if (parsed.data.visitado !== undefined) addField("visitado", toIntFlag(parsed.data.visitado));
-      if (parsed.data.venta_registrada !== undefined) addField("venta_registrada", toIntFlag(parsed.data.venta_registrada));
-      if (parsed.data.pedido_generado !== undefined) addField("pedido_generado", toIntFlag(parsed.data.pedido_generado));
-      if (parsed.data.cobranza_realizada !== undefined) addField("cobranza_realizada", toIntFlag(parsed.data.cobranza_realizada));
-
-      const shouldSetVisitedAt = parsed.data.visitado !== undefined || ["visitado", "pedido tomado", "venta realizada"].includes(parsed.data.status || "");
-      if (shouldSetVisitedAt) addField("visited_at", new Date().toISOString());
-
-      if (fields.length === 0) {
-        await client.query("ROLLBACK");
-        return sendSuccess(res, null, "Sin cambios");
-      }
-
-      values.push(id);
-      await client.query(`UPDATE route_items SET ${fields.join(", ")} WHERE id = $${values.length}`, values);
-      await client.query(
-        `UPDATE routes
-         SET status = 'en curso'
-         WHERE id = $1 AND status IN ('planificada', 'pendiente')`,
-        [toNumber(routeItemResult.rows[0]?.route_id)]
-      );
-
-      await client.query("COMMIT");
-      return sendSuccess(res, null, "Item de ruta actualizado");
+      const message = parsed.data.action === "visit"
+        ? "Visita marcada correctamente"
+        : parsed.data.action === "omit"
+          ? "Visita omitida correctamente"
+          : "Visita reabierta correctamente";
+      return sendSuccess(res, result, message);
     } catch (error: any) {
-      await client.query("ROLLBACK");
-      return sendError(res, error?.message || "No se pudo actualizar el ítem de ruta", 409);
-    } finally {
-      client.release();
+      return sendError(
+        res,
+        error?.message || "No se pudo actualizar la visita",
+        error?.statusCode || 400,
+        error?.errors || []
+      );
     }
   }
 
@@ -2711,7 +2692,7 @@ export default async function handler(req: any, res: any) {
     return handleUserLifecycle(req, res);
   }
 
-  if (["routes", "routes-today", "route-item", "routes-reorder", "route-supplier-order", "route-lifecycle"].includes(endpoint)) {
+  if (["routes", "routes-today", "route-item", "route-item-lifecycle", "routes-reorder", "route-supplier-order", "route-lifecycle"].includes(endpoint)) {
     return handleRoutes(req, res);
   }
 

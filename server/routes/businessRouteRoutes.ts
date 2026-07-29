@@ -4,6 +4,7 @@ import { requireAuth, requirePermission } from "../middleware/authMiddleware.js"
 import { sendSuccess, sendError } from "../utils/response.js";
 import { getBusinessDate } from "../utils/businessDate.js";
 import { routeLifecycleService } from "../services/routeLifecycleService.js";
+import { routeItemLifecycleService, type RouteItemLifecycleAction } from "../services/routeItemLifecycleService.js";
 
 const router = Router();
 
@@ -48,48 +49,39 @@ router.post("/", requireAuth, requirePermission('routes', 'create'), (req, res) 
   return sendSuccess(res, { id: routeId! }, "Ruta creada exitosamente", 201);
 });
 
-router.patch("/items/:id", requireAuth, requirePermission('routes', 'edit'), (req, res) => {
-  const { id } = req.params;
-  const { status, notes, visitado, venta_registrada, pedido_generado, cobranza_realizada } = req.body;
+router.post("/items/:id/lifecycle", requireAuth, requirePermission('routes', 'edit'), async (req: any, res) => {
+  const routeItemId = Number(req.params.id);
+  const action = String(req.body?.action || "").trim() as RouteItemLifecycleAction;
+  if (!routeItemId) return sendError(res, "ID de visita inválido", 400);
+  if (!["visit", "omit", "reopen"].includes(action)) {
+    return sendError(res, "Acción de visita inválida", 400);
+  }
 
   try {
-    db.transaction(() => {
-      const routeItem = db.prepare(`
-        SELECT ri.id, ri.route_id, r.status AS route_status
-        FROM route_items ri
-        JOIN routes r ON r.id = ri.route_id
-        WHERE ri.id = ?
-        LIMIT 1
-      `).get(id) as any;
-
-      if (!routeItem) throw new Error("El ítem de ruta no existe");
-      const routeStatus = String(routeItem.route_status || "planificada").toLowerCase();
-      if (["cancelada", "finalizada"].includes(routeStatus)) {
-        throw new Error(`La ruta está ${routeStatus} y no admite cambios`);
-      }
-
-      const fields: string[] = [];
-      const params: any[] = [];
-      if (status !== undefined) { fields.push("status = ?"); params.push(status); }
-      if (notes !== undefined) { fields.push("notes = ?"); params.push(notes); }
-      if (visitado !== undefined) { fields.push("visitado = ?"); params.push(visitado ? 1 : 0); }
-      if (venta_registrada !== undefined) { fields.push("venta_registrada = ?"); params.push(venta_registrada ? 1 : 0); }
-      if (pedido_generado !== undefined) { fields.push("pedido_generado = ?"); params.push(pedido_generado ? 1 : 0); }
-      if (cobranza_realizada !== undefined) { fields.push("cobranza_realizada = ?"); params.push(cobranza_realizada ? 1 : 0); }
-      if (visitado !== undefined || ["visitado", "pedido tomado", "venta realizada"].includes(String(status || ""))) {
-        fields.push("visited_at = CURRENT_TIMESTAMP");
-      }
-
-      if (fields.length > 0) {
-        params.push(id);
-        db.prepare(`UPDATE route_items SET ${fields.join(", ")} WHERE id = ?`).run(...params);
-        db.prepare(`UPDATE routes SET status = 'en curso' WHERE id = ? AND status IN ('planificada', 'pendiente')`).run(routeItem.route_id);
-      }
-    })();
-    return sendSuccess(res, null, "Item de ruta actualizado");
+    const result = await routeItemLifecycleService.changeStatus({
+      routeItemId,
+      action,
+      motivo: req.body?.motivo,
+      notes: req.body?.notes,
+      usuario: req.user?.userName || req.user?.name || "Sistema",
+    });
+    const message = action === "visit"
+      ? "Visita marcada correctamente"
+      : action === "omit"
+        ? "Visita omitida correctamente"
+        : "Visita reabierta correctamente";
+    return sendSuccess(res, result, message);
   } catch (error: any) {
-    return sendError(res, error?.message || "No se pudo actualizar el ítem de ruta", 409);
+    return sendError(res, error?.message || "No se pudo actualizar la visita", error?.statusCode || 400);
   }
+});
+
+router.patch("/items/:id", requireAuth, requirePermission('routes', 'edit'), (_req, res) => {
+  return sendError(
+    res,
+    "El cambio directo de estado e indicadores de la visita fue deshabilitado. Usá las acciones auditadas.",
+    409
+  );
 });
 
 router.patch("/:id", requireAuth, requirePermission('routes', 'edit'), (req, res) => {

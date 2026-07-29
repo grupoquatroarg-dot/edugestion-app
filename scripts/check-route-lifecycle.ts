@@ -202,10 +202,12 @@ const runStaticAudit = () => {
   assert(salesService.includes("Venta N° ${nextSaleNum} registrada desde la ruta"), "La venta rápida no actualiza el ítem de forma atómica.");
 
   const express = read("server/routes/businessRouteRoutes.ts");
+  const routeItemService = read("server/services/routeItemLifecycleService.ts");
   assert(express.includes('"/:id/cancel"'), "Express no expone cancelación de rutas.");
   assert(express.includes('"/:id/reopen"'), "Express no expone reapertura de rutas.");
   assert(express.includes("La eliminación física de rutas está deshabilitada"), "Express no bloquea DELETE físico.");
-  assert(express.includes("La ruta está ${routeStatus} y no admite cambios"), "Express no bloquea ítems de rutas cerradas.");
+  assert(express.includes("routeItemLifecycleService.changeStatus"), "Express no delega las visitas al servicio seguro.");
+  assert(routeItemService.includes("La ruta está ${routeStatus} y no admite cambios"), "El servicio de visitas no bloquea rutas cerradas.");
 
   const ui = read("src/components/RouteModule.tsx");
   assert(ui.includes("Cancelar ruta"), "La interfaz no ofrece cancelación segura.");

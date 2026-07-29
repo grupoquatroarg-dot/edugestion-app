@@ -55,6 +55,12 @@ interface RouteItem {
   cobranza_realizada: number;
   notes: string | null;
   visited_at: string | null;
+  lifecycle_version: number;
+  status_changed_at: string | null;
+  status_changed_by: string | null;
+  status_changed_from: string | null;
+  status_last_action: 'visit' | 'omit' | 'reopen' | null;
+  status_last_reason: string | null;
   nombre_apellido: string;
   razon_social: string;
   localidad: string;
@@ -141,6 +147,8 @@ export default function RouteModule() {
   const [routeActionId, setRouteActionId] = useState<number | null>(null);
   const [confirmAction, setConfirmAction] = useState<{ type: 'finalize' | 'cancel' | 'reopen'; routeId: number; routeName: string } | null>(null);
   const [routeLifecycleReason, setRouteLifecycleReason] = useState('');
+  const [routeItemReopenTarget, setRouteItemReopenTarget] = useState<RouteItem | null>(null);
+  const [routeItemReopenReason, setRouteItemReopenReason] = useState('');
 
   // Planning state
   const [planDate, setPlanDate] = useState(() => addBusinessDays(getBusinessDateInputValue(), 1));
@@ -468,37 +476,59 @@ export default function RouteModule() {
     }
   };
 
-  const handleUpdateItemStatus = async (itemId: number, status: 'visitado' | 'omitido' | 'pendiente' | 'pedido tomado' | 'venta realizada', notes: string = '', extraFields: any = {}) => {
-    setUpdatingItemId(itemId);
+  const handleRouteItemAction = async (
+    item: RouteItem,
+    action: 'visit' | 'omit' | 'reopen',
+    motivo?: string,
+  ) => {
+    setUpdatingItemId(item.id);
     try {
-      const body: any = { status, notes, ...extraFields };
-      if (status === 'visitado' || status === 'pedido tomado' || status === 'venta realizada') {
-        body.visitado = 1;
-      }
-      if (status === 'pedido tomado') body.pedido_generado = 1;
-      if (status === 'venta realizada') body.venta_registrada = 1;
-
-      const res = await apiFetch(`/api/clientes?endpoint=route-item&id=${itemId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(body)
+      const res = await apiFetch(`/api/clientes?endpoint=route-item-lifecycle&id=${item.id}`, {
+        method: 'POST',
+        body: JSON.stringify({ action, motivo })
       });
 
       const resBody = await res.json();
       if (res.ok) {
         unwrapResponse(resBody);
-        fetchTodayRoute();
-      } else {
-        const errorData = unwrapResponse(resBody);
-        showNotification('error', errorData.message || 'No se pudo actualizar el estado.');
+        await fetchTodayRoute();
+        showNotification(
+          'success',
+          action === 'visit'
+            ? 'Visita marcada correctamente.'
+            : action === 'omit'
+              ? 'Visita omitida correctamente.'
+              : 'Visita reabierta correctamente.'
+        );
+        return true;
       }
+
+      const errorData = unwrapResponse(resBody);
+      showNotification('error', errorData.message || 'No se pudo actualizar la visita.');
+      return false;
     } catch (error) {
-      console.error("Error updating route item:", error);
+      console.error("Error updating route item lifecycle:", error);
       showNotification('error', 'No se pudo actualizar la visita.');
+      return false;
     } finally {
       setUpdatingItemId(null);
     }
   };
 
+  const handleConfirmRouteItemReopen = async () => {
+    if (!routeItemReopenTarget) return;
+    const reason = routeItemReopenReason.trim();
+    if (reason.length < 3) {
+      showNotification('error', 'Ingresá un motivo de al menos 3 caracteres.');
+      return;
+    }
+
+    const success = await handleRouteItemAction(routeItemReopenTarget, 'reopen', reason);
+    if (success) {
+      setRouteItemReopenTarget(null);
+      setRouteItemReopenReason('');
+    }
+  };
 
   const handleReorderItem = async (routeId: number, itemId: number, direction: 'up' | 'down') => {
     if (!todayRoute || !todayRoute.items) return;
@@ -1048,6 +1078,13 @@ export default function RouteModule() {
                     {todayItems.map((item, index) => {
                       const processing = updatingItemId === item.id;
                       const distance = userLocation && item.latitud && item.longitud ? calculateDistance(userLocation[0], userLocation[1], item.latitud, item.longitud) : null;
+                      const hasLinkedOperation = Boolean(item.venta_registrada || item.pedido_generado || item.cobranza_realizada);
+                      const canReopenVisit = ['visitado', 'omitido'].includes(item.status)
+                        && Number(item.lifecycle_version || 0) > 0
+                        && ['visit', 'omit'].includes(String(item.status_last_action || ''))
+                        && !hasLinkedOperation;
+                      const historicalWithoutTrace = ['visitado', 'omitido'].includes(item.status)
+                        && Number(item.lifecycle_version || 0) === 0;
                       return (
                         <article key={item.id} className={`min-w-0 rounded-[26px] border p-4 shadow-sm sm:p-5 ${itemStatusClasses(item.status)}`}>
                           <div className="flex min-w-0 items-start gap-3 sm:gap-4">
@@ -1068,6 +1105,7 @@ export default function RouteModule() {
                                 {[['Visitado', item.visitado], ['Venta', item.venta_registrada], ['Pedido', item.pedido_generado], ['Cobranza', item.cobranza_realizada]].map(([label, done]) => <span key={String(label)} className={`rounded-full px-2.5 py-1 text-[9px] font-black uppercase ${done ? 'bg-emerald-600 text-white' : 'bg-white/70 text-slate-400'}`}>{String(label)}</span>)}
                               </div>
                               {item.notes && <div className="mt-3 flex items-start gap-2 rounded-xl bg-white/70 p-3 text-xs text-slate-600"><MessageSquare size={14} className="mt-0.5 shrink-0" /><p className="break-words italic">{item.notes}</p></div>}
+                              {item.status_changed_at && <div className="mt-2 rounded-xl bg-slate-950/5 px-3 py-2 text-[10px] font-semibold leading-5 text-slate-500"><span className="font-black text-slate-700">Último cambio auditado:</span> {item.status_changed_by || 'Sistema'} · {formatDate(item.status_changed_at)}{item.status_last_reason ? ` · ${item.status_last_reason}` : ''}</div>}
                             </div>
                           </div>
 
@@ -1075,8 +1113,8 @@ export default function RouteModule() {
                             {todayRoute.status !== 'finalizada' && item.status === 'pendiente' ? (
                               <>
                                 {hasPermission('routes', 'edit') && <button type="button" onClick={() => handleVisitNext(todayRoute.id, item.id)} disabled={processing} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-indigo-200 bg-indigo-50 px-3 text-xs font-black text-indigo-700 disabled:opacity-50"><ArrowRight size={15} />Siguiente</button>}
-                                {hasPermission('routes', 'edit') && <button type="button" onClick={() => handleUpdateItemStatus(item.id, 'visitado')} disabled={processing} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 disabled:opacity-50">{processing ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}Visitar</button>}
-                                {hasPermission('routes', 'edit') && <button type="button" onClick={() => handleUpdateItemStatus(item.id, 'omitido')} disabled={processing} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3 text-xs font-black text-rose-700 disabled:opacity-50"><XCircle size={15} />Omitir</button>}
+                                {hasPermission('routes', 'edit') && <button type="button" onClick={() => handleRouteItemAction(item, 'visit')} disabled={processing} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 disabled:opacity-50">{processing ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}Visitar</button>}
+                                {hasPermission('routes', 'edit') && <button type="button" onClick={() => handleRouteItemAction(item, 'omit')} disabled={processing} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3 text-xs font-black text-rose-700 disabled:opacity-50"><XCircle size={15} />Omitir</button>}
                                 {hasPermission('suppliers', 'create') && <button type="button" onClick={() => { setSelectedItemForAction(item); setQuickActionType('pedido'); setActionCart([]); setProductSearch(''); setShowQuickActionModal(true); }} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl bg-amber-500 px-3 text-xs font-black text-white"><ClipboardList size={15} />Pedido</button>}
                                 {hasPermission('sales', 'create') && <button type="button" onClick={() => { setSelectedItemForAction(item); setQuickActionType('venta'); setActionCart([]); setProductSearch(''); setShowQuickActionModal(true); }} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl bg-indigo-600 px-3 text-xs font-black text-white"><ShoppingCart size={15} />Venta</button>}
                                 {hasPermission('routes', 'edit') && <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => handleReorderItem(todayRoute.id, item.id, 'up')} disabled={index === 0} className="inline-flex min-h-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 disabled:opacity-30" aria-label="Subir visita"><ArrowUp size={16} /></button><button type="button" onClick={() => handleReorderItem(todayRoute.id, item.id, 'down')} disabled={index === todayItems.length - 1} className="inline-flex min-h-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 disabled:opacity-30" aria-label="Bajar visita"><ArrowDown size={16} /></button></div>}
@@ -1084,7 +1122,9 @@ export default function RouteModule() {
                             ) : (
                               <>
                                 <button type="button" onClick={() => setShowCustomerDetailId(item.cliente_id)} className="col-span-1 inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700"><Eye size={15} />Ver ficha</button>
-                                {todayRoute.status !== 'finalizada' && hasPermission('routes', 'edit') && <button type="button" onClick={() => handleUpdateItemStatus(item.id, 'pendiente')} disabled={processing} className="col-span-1 inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 disabled:opacity-50"><RotateCcw size={15} />Deshacer</button>}
+                                {todayRoute.status !== 'finalizada' && hasPermission('routes', 'edit') && canReopenVisit && <button type="button" onClick={() => { setRouteItemReopenReason(''); setRouteItemReopenTarget(item); }} disabled={processing} className="col-span-1 inline-flex min-h-11 items-center justify-center gap-1 rounded-xl border border-sky-200 bg-sky-50 px-3 text-xs font-black text-sky-700 disabled:opacity-50"><RotateCcw size={15} />Reabrir</button>}
+                                {hasLinkedOperation && <p className="col-span-2 rounded-xl bg-amber-50 px-3 py-2 text-center text-[10px] font-semibold leading-5 text-amber-800">La visita tiene una venta, pedido o cobranza vinculada. Primero anulá o revertí esa operación desde su módulo.</p>}
+                                {historicalWithoutTrace && <p className="col-span-2 rounded-xl bg-slate-100 px-3 py-2 text-center text-[10px] font-semibold leading-5 text-slate-600">Visita histórica sin trazabilidad suficiente para reabrir.</p>}
                               </>
                             )}
                           </div>
@@ -1206,7 +1246,7 @@ export default function RouteModule() {
           <motion.div initial={{ opacity: 0, y: 35 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 35 }} className="fixed inset-x-3 bottom-3 z-[90] mx-auto max-w-lg rounded-[24px] bg-slate-950 p-4 text-white shadow-2xl ring-1 ring-white/10 sm:bottom-6 sm:p-5">
             <div className="flex items-start gap-3"><div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-indigo-500"><BellRing size={22} /></div><div className="min-w-0 flex-1"><h3 className="font-black">Llegaste cerca de un cliente</h3><p className="mt-1 break-words text-sm text-slate-300">{nearbyClient.nombre_apellido}</p></div><button type="button" onClick={() => setShowProximityAlert(false)} className="rounded-xl p-2 text-slate-400 hover:bg-white/10" aria-label="Cerrar aviso"><X size={18} /></button></div>
             <div className="mt-4 grid grid-cols-2 gap-2">
-              <button type="button" onClick={() => { setShowProximityAlert(false); handleUpdateItemStatus(nearbyClient.id, 'visitado'); }} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl bg-white/10 text-xs font-black"><Check size={15} />Visita</button>
+              <button type="button" onClick={() => { setShowProximityAlert(false); handleRouteItemAction(nearbyClient, 'visit'); }} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl bg-white/10 text-xs font-black"><Check size={15} />Visita</button>
               <button type="button" onClick={() => { setShowProximityAlert(false); setSelectedItemForAction(nearbyClient); setQuickActionType('venta'); setActionCart([]); setProductSearch(''); setShowQuickActionModal(true); }} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl bg-indigo-600 text-xs font-black"><ShoppingCart size={15} />Venta</button>
               <button type="button" onClick={() => { setShowProximityAlert(false); setSelectedItemForAction(nearbyClient); setQuickActionType('pedido'); setActionCart([]); setProductSearch(''); setShowQuickActionModal(true); }} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl bg-amber-500 text-xs font-black"><ClipboardList size={15} />Pedido</button>
               {hasPermission('current_accounts', 'create') && <button type="button" onClick={() => { setShowProximityAlert(false); setSelectedItemForAction(nearbyClient); setQuickActionType('pago'); setPaymentAmount(0); setPaymentMethod('efectivo'); setQuickChequeNumber(''); setQuickChequeBank(''); setQuickChequeDueDate(''); setShowQuickActionModal(true); }} className="inline-flex min-h-11 items-center justify-center gap-1 rounded-xl bg-emerald-500 text-xs font-black"><DollarSign size={15} />Cobro</button>}
@@ -1288,6 +1328,30 @@ export default function RouteModule() {
                 <button type="button" onClick={handleRouteLifecycle} disabled={routeActionId !== null || routeLifecycleReason.trim().length < 3} className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-xl text-sm font-black text-white disabled:opacity-50 ${confirmAction.type === 'cancel' ? 'bg-rose-600' : confirmAction.type === 'reopen' ? 'bg-sky-600' : 'bg-emerald-600'}`}>
                   {routeActionId !== null && <Loader2 size={17} className="animate-spin" />}
                   {confirmAction.type === 'cancel' ? 'Confirmar cancelación' : confirmAction.type === 'reopen' ? 'Confirmar reapertura' : 'Finalizar'}
+                </button>
+              </div>
+            </motion.section>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {routeItemReopenTarget && (
+          <div className="fixed inset-0 z-[110] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+            <motion.section initial={{ opacity: 0, y: 30, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 30, scale: 0.98 }} className="w-full max-w-md rounded-t-[28px] bg-white p-5 shadow-2xl sm:rounded-[28px] sm:p-6">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-100 text-sky-700"><RotateCcw size={22} /></div>
+              <h2 className="mt-4 text-xl font-black text-slate-900">Reabrir visita</h2>
+              <p className="mt-2 break-words text-sm leading-6 text-slate-500">La visita de <strong>{routeItemReopenTarget.nombre_apellido}</strong> volverá a Pendiente. El estado anterior quedará guardado en el historial.</p>
+              <label className="mt-4 block">
+                <span className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Motivo obligatorio</span>
+                <textarea value={routeItemReopenReason} onChange={event => setRouteItemReopenReason(event.target.value)} maxLength={500} placeholder="Ej.: La visita se marcó por error y debe realizarse nuevamente" className="min-h-24 w-full resize-none rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-sky-500 focus:ring-4 focus:ring-sky-100" />
+                <span className="mt-1 block text-right text-[10px] font-semibold text-slate-400">{routeItemReopenReason.trim().length}/500</span>
+              </label>
+              <div className="mt-5 grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => { setRouteItemReopenTarget(null); setRouteItemReopenReason(''); }} disabled={updatingItemId !== null} className="min-h-12 rounded-xl border border-slate-200 bg-white text-sm font-black text-slate-700">Volver</button>
+                <button type="button" onClick={handleConfirmRouteItemReopen} disabled={updatingItemId !== null || routeItemReopenReason.trim().length < 3} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-sky-600 text-sm font-black text-white disabled:opacity-50">
+                  {updatingItemId !== null && <Loader2 size={17} className="animate-spin" />}
+                  Confirmar reapertura
                 </button>
               </div>
             </motion.section>

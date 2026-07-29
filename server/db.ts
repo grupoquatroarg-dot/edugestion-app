@@ -529,9 +529,38 @@ export function initDb() {
       status TEXT DEFAULT 'pendiente',
       notes TEXT,
       visited_at DATETIME,
+      lifecycle_version INTEGER NOT NULL DEFAULT 0 CHECK(lifecycle_version >= 0),
+      status_changed_at DATETIME,
+      status_changed_by TEXT,
+      status_changed_from TEXT,
+      status_last_action TEXT CHECK(status_last_action IS NULL OR status_last_action IN ('visit', 'omit', 'reopen')),
+      status_last_reason TEXT,
       FOREIGN KEY (route_id) REFERENCES routes(id) ON DELETE CASCADE,
       FOREIGN KEY (client_id) REFERENCES clientes(id)
     );
+
+    CREATE TABLE IF NOT EXISTS route_item_status_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      route_item_id INTEGER NOT NULL,
+      route_id INTEGER NOT NULL,
+      version INTEGER NOT NULL CHECK(version > 0),
+      action TEXT NOT NULL CHECK(action IN ('visit', 'omit', 'reopen')),
+      from_status TEXT NOT NULL,
+      to_status TEXT NOT NULL,
+      reason TEXT,
+      changed_by TEXT NOT NULL,
+      changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      snapshot TEXT NOT NULL DEFAULT '{}',
+      UNIQUE(route_item_id, version),
+      FOREIGN KEY (route_item_id) REFERENCES route_items(id),
+      FOREIGN KEY (route_id) REFERENCES routes(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_route_item_status_history_item
+      ON route_item_status_history (route_item_id, changed_at DESC, id DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_route_item_status_history_route
+      ON route_item_status_history (route_id, changed_at DESC, id DESC);
 
     CREATE TABLE IF NOT EXISTS movimientos_financieros (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1037,6 +1066,36 @@ export function initDb() {
   try { db.exec("ALTER TABLE route_items ADD COLUMN status TEXT DEFAULT 'pendiente'"); } catch (e) {}
   try { db.exec("ALTER TABLE route_items ADD COLUMN notes TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE route_items ADD COLUMN visited_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE route_items ADD COLUMN lifecycle_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE route_items ADD COLUMN status_changed_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE route_items ADD COLUMN status_changed_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE route_items ADD COLUMN status_changed_from TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE route_items ADD COLUMN status_last_action TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE route_items ADD COLUMN status_last_reason TEXT"); } catch (e) {}
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS route_item_status_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        route_item_id INTEGER NOT NULL,
+        route_id INTEGER NOT NULL,
+        version INTEGER NOT NULL CHECK(version > 0),
+        action TEXT NOT NULL CHECK(action IN ('visit', 'omit', 'reopen')),
+        from_status TEXT NOT NULL,
+        to_status TEXT NOT NULL,
+        reason TEXT,
+        changed_by TEXT NOT NULL,
+        changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        snapshot TEXT NOT NULL DEFAULT '{}',
+        UNIQUE(route_item_id, version),
+        FOREIGN KEY (route_item_id) REFERENCES route_items(id),
+        FOREIGN KEY (route_id) REFERENCES routes(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_route_item_status_history_item
+        ON route_item_status_history (route_item_id, changed_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_route_item_status_history_route
+        ON route_item_status_history (route_id, changed_at DESC, id DESC);
+    `);
+  } catch (e) {}
 
   try { db.exec("ALTER TABLE clientes ADD COLUMN razon_social TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN cuit TEXT"); } catch (e) {}
