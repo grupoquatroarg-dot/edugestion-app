@@ -5,6 +5,7 @@ import { sendSuccess, sendError } from "../utils/response.js";
 import { getBusinessDate } from "../utils/businessDate.js";
 import { routeLifecycleService } from "../services/routeLifecycleService.js";
 import { routeItemLifecycleService, type RouteItemLifecycleAction } from "../services/routeItemLifecycleService.js";
+import { routeOperationalLifecycleService, type RouteOperationalAction } from "../services/routeOperationalLifecycleService.js";
 
 const router = Router();
 
@@ -84,27 +85,39 @@ router.patch("/items/:id", requireAuth, requirePermission('routes', 'edit'), (_r
   );
 });
 
-router.patch("/:id", requireAuth, requirePermission('routes', 'edit'), (req, res) => {
+router.post("/:id/operational", requireAuth, requirePermission('routes', 'edit'), async (req: any, res) => {
   const routeId = Number(req.params.id);
-  const nextStatus = String(req.body?.status || "").trim().toLowerCase();
+  const action = String(req.body?.action || "").trim() as RouteOperationalAction;
+  const expectedVersion = Number(req.body?.expectedVersion);
   if (!routeId) return sendError(res, "ID de ruta inválido", 400);
-  if (!["planificada", "pendiente", "en curso"].includes(nextStatus)) {
-    return sendError(res, "Estado de ruta inválido", 400);
+  if (!["start", "reopen"].includes(action)) {
+    return sendError(res, "Acción operativa de ruta inválida", 400);
   }
 
   try {
-    db.transaction(() => {
-      const route = db.prepare("SELECT id, status FROM routes WHERE id = ? LIMIT 1").get(routeId) as any;
-      if (!route) throw new Error("Ruta no encontrada");
-      const currentStatus = String(route.status || "planificada").toLowerCase();
-      if (currentStatus === "cancelada") throw new Error("La ruta está cancelada. Debe reabrirse antes de modificarla");
-      if (currentStatus === "finalizada") throw new Error("La ruta ya está finalizada");
-      db.prepare("UPDATE routes SET status = ? WHERE id = ?").run(nextStatus, routeId);
-    })();
-    return sendSuccess(res, null, "Ruta actualizada");
+    const result = await routeOperationalLifecycleService.changeStatus({
+      routeId,
+      action,
+      motivo: req.body?.motivo,
+      usuario: req.user?.userName || req.user?.name || "Sistema",
+      expectedVersion,
+    });
+    return sendSuccess(
+      res,
+      result,
+      action === "start" ? "Ruta iniciada correctamente" : "Ruta devuelta a planificación correctamente",
+    );
   } catch (error: any) {
-    return sendError(res, error?.message || "No se pudo actualizar la ruta", 409);
+    return sendError(res, error?.message || "No se pudo actualizar el estado operativo de la ruta", error?.statusCode || 400);
   }
+});
+
+router.patch("/:id", requireAuth, requirePermission('routes', 'edit'), (_req, res) => {
+  return sendError(
+    res,
+    "El cambio directo del estado operativo de la ruta fue deshabilitado. Usá las acciones auditadas.",
+    409,
+  );
 });
 
 

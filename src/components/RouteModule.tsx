@@ -76,7 +76,7 @@ interface Route {
   id: number;
   name: string;
   date: string;
-  status: 'planificada' | 'en curso' | 'finalizada' | 'cancelada';
+  status: 'planificada' | 'pendiente' | 'en curso' | 'finalizada' | 'cancelada';
   created_at: string;
   cancelled_at?: string | null;
   cancelled_by?: string | null;
@@ -90,6 +90,12 @@ interface Route {
   finalized_by?: string | null;
   finalization_reason?: string | null;
   finalized_from_status?: string | null;
+  operational_version?: number;
+  operational_last_action?: 'start' | 'reopen' | null;
+  operational_changed_at?: string | null;
+  operational_changed_by?: string | null;
+  operational_reason?: string | null;
+  operational_from_status?: 'planificada' | 'pendiente' | null;
   total_customers?: number;
   visited_customers?: number;
   sales_count?: number;
@@ -149,6 +155,8 @@ export default function RouteModule() {
   const [routeLifecycleReason, setRouteLifecycleReason] = useState('');
   const [routeItemReopenTarget, setRouteItemReopenTarget] = useState<RouteItem | null>(null);
   const [routeItemReopenReason, setRouteItemReopenReason] = useState('');
+  const [routeOperationalReopenTarget, setRouteOperationalReopenTarget] = useState<Route | null>(null);
+  const [routeOperationalReason, setRouteOperationalReason] = useState('');
 
   // Planning state
   const [planDate, setPlanDate] = useState(() => addBusinessDays(getBusinessDateInputValue(), 1));
@@ -685,6 +693,61 @@ export default function RouteModule() {
     }
   };
 
+  const handleRouteOperational = async (
+    route: Route,
+    action: 'start' | 'reopen',
+    motivo?: string,
+  ) => {
+    const reason = String(motivo || '').trim();
+    if (action === 'reopen' && reason.length < 3) {
+      showNotification('error', 'Ingresá un motivo de al menos 3 caracteres.');
+      return false;
+    }
+
+    setRouteActionId(route.id);
+    try {
+      const response = await apiFetch(`/api/clientes?endpoint=route-operational-lifecycle&id=${route.id}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          action,
+          motivo: action === 'reopen' ? reason : null,
+          expectedVersion: Number(route.operational_version || 0),
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(await readApiError(
+          response,
+          action === 'start' ? 'No se pudo iniciar la ruta.' : 'No se pudo volver a planificación.',
+        ));
+      }
+      await response.json();
+      await Promise.all([fetchTodayRoute(), fetchRoutes()]);
+      showNotification(
+        'success',
+        action === 'start' ? 'Ruta iniciada correctamente.' : 'La ruta volvió a planificación.',
+      );
+      return true;
+    } catch (error: any) {
+      showNotification('error', error?.message || 'No se pudo actualizar la ruta.');
+      return false;
+    } finally {
+      setRouteActionId(null);
+    }
+  };
+
+  const handleConfirmRouteOperationalReopen = async () => {
+    if (!routeOperationalReopenTarget) return;
+    const success = await handleRouteOperational(
+      routeOperationalReopenTarget,
+      'reopen',
+      routeOperationalReason,
+    );
+    if (success) {
+      setRouteOperationalReopenTarget(null);
+      setRouteOperationalReason('');
+    }
+  };
+
   const optimizeRoute = () => {
     if (selectedCustomerIds.length === 0 || !userLocation) {
       if (!userLocation) showNotification('error', 'Se requiere tu ubicación actual para optimizar la ruta.');
@@ -755,6 +818,22 @@ export default function RouteModule() {
   const pendingToday = todayItems.filter(item => item.status === 'pendiente').length;
   const salesToday = todayItems.filter(item => item.venta_registrada || item.status === 'venta realizada').length;
   const ordersToday = todayItems.filter(item => item.pedido_generado || item.status === 'pedido tomado').length;
+  const todayHasRecordedActivity = todayItems.some(item => (
+    item.status !== 'pendiente'
+    || Boolean(item.visitado)
+    || Boolean(item.venta_registrada)
+    || Boolean(item.pedido_generado)
+    || Boolean(item.cobranza_realizada)
+    || Boolean(item.visited_at)
+    || Boolean(item.notes?.trim())
+  ));
+  const canReturnTodayRouteToPlanning = Boolean(
+    todayRoute
+    && todayRoute.status === 'en curso'
+    && Number(todayRoute.operational_version || 0) > 0
+    && todayRoute.operational_last_action === 'start'
+    && !todayHasRecordedActivity
+  );
   const selectedCustomers = selectedCustomerIds
     .map(id => clientes.find(cliente => cliente.id === id))
     .filter(Boolean);
@@ -1056,8 +1135,11 @@ export default function RouteModule() {
                       </div>
                       <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                         <button type="button" onClick={() => setShowMap(value => !value)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-white/10 px-4 py-3 text-sm font-black text-white hover:bg-white/20"><Map size={17} />{showMap ? 'Ocultar mapa' : 'Ver mapa'}</button>
-                        {todayRoute.status === 'planificada' && hasPermission('routes', 'edit') && (
-                          <button type="button" onClick={async () => { try { const response = await apiFetch(`/api/clientes?endpoint=routes&id=${todayRoute.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'en curso' }) }); if (!response.ok) throw new Error(await readApiError(response, 'No se pudo iniciar la ruta.')); await response.json(); await fetchTodayRoute(); showNotification('success', 'Ruta iniciada.'); } catch (error: any) { showNotification('error', error?.message || 'No se pudo iniciar la ruta.'); } }} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-black text-white hover:bg-emerald-600"><ArrowRight size={17} />Iniciar</button>
+                        {['planificada', 'pendiente'].includes(todayRoute.status) && hasPermission('routes', 'edit') && (
+                          <button type="button" onClick={() => handleRouteOperational(todayRoute, 'start')} disabled={routeActionId === todayRoute.id} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-black text-white hover:bg-emerald-600 disabled:opacity-50">{routeActionId === todayRoute.id ? <Loader2 size={17} className="animate-spin" /> : <ArrowRight size={17} />}Iniciar</button>
+                        )}
+                        {canReturnTodayRouteToPlanning && hasPermission('routes', 'edit') && (
+                          <button type="button" onClick={() => { setRouteOperationalReason(''); setRouteOperationalReopenTarget(todayRoute); }} disabled={routeActionId === todayRoute.id} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-sky-500 px-4 py-3 text-sm font-black text-white hover:bg-sky-600 disabled:opacity-50"><RotateCcw size={17} />Volver a planificación</button>
                         )}
                         {todayRoute.status !== 'finalizada' && hasPermission('routes', 'edit') && (
                           <button type="button" onClick={() => { setRouteLifecycleReason(''); setConfirmAction({ type: 'finalize', routeId: todayRoute.id, routeName: todayRoute.name }); }} className="col-span-2 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-black text-indigo-900 sm:col-auto"><CheckCircle2 size={17} />Finalizar ruta</button>
@@ -1170,6 +1252,13 @@ export default function RouteModule() {
                         <div className="rounded-xl bg-indigo-50 p-3 text-center"><p className="text-[9px] font-bold uppercase text-indigo-400">Ventas</p><p className="mt-1 font-black text-indigo-700">{route.sales_count || 0}</p></div>
                         <div className="rounded-xl bg-amber-50 p-3 text-center"><p className="text-[9px] font-bold uppercase text-amber-500">Pedidos</p><p className="mt-1 font-black text-amber-700">{route.orders_count || 0}</p></div>
                       </div>
+                      {route.operational_last_action && route.operational_changed_at && (
+                        <div className="mt-4 rounded-xl bg-indigo-50 px-3 py-3 text-xs leading-5 text-indigo-800">
+                          <p className="font-black">{route.operational_last_action === 'start' ? 'Inicio auditado' : 'Vuelta a planificación auditada'}</p>
+                          <p className="mt-1 break-words">{route.operational_reason || 'Sin detalle'}</p>
+                          <p className="mt-1 text-[10px] font-semibold opacity-75">{route.operational_changed_by || 'Sistema'} · {formatBusinessDate(route.operational_changed_at)}</p>
+                        </div>
+                      )}
                       {(route.cancel_reason || route.reopen_reason || route.finalization_reason) && (
                         <div className={`mt-4 rounded-xl px-3 py-3 text-xs leading-5 ${route.status === 'cancelada' ? 'bg-rose-50 text-rose-800' : route.status === 'finalizada' ? 'bg-emerald-50 text-emerald-800' : 'bg-sky-50 text-sky-800'}`}>
                           <p className="font-black">{route.status === 'cancelada' ? 'Ruta cancelada' : route.status === 'finalizada' ? 'Ruta finalizada' : 'Ruta reabierta'}</p>
@@ -1328,6 +1417,30 @@ export default function RouteModule() {
                 <button type="button" onClick={handleRouteLifecycle} disabled={routeActionId !== null || routeLifecycleReason.trim().length < 3} className={`inline-flex min-h-12 items-center justify-center gap-2 rounded-xl text-sm font-black text-white disabled:opacity-50 ${confirmAction.type === 'cancel' ? 'bg-rose-600' : confirmAction.type === 'reopen' ? 'bg-sky-600' : 'bg-emerald-600'}`}>
                   {routeActionId !== null && <Loader2 size={17} className="animate-spin" />}
                   {confirmAction.type === 'cancel' ? 'Confirmar cancelación' : confirmAction.type === 'reopen' ? 'Confirmar reapertura' : 'Finalizar'}
+                </button>
+              </div>
+            </motion.section>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {routeOperationalReopenTarget && (
+          <div className="fixed inset-0 z-[105] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+            <motion.section initial={{ opacity: 0, y: 30, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 30, scale: 0.98 }} className="w-full max-w-md rounded-t-[28px] bg-white p-5 shadow-2xl sm:rounded-[28px] sm:p-6">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-100 text-sky-700"><RotateCcw size={22} /></div>
+              <h2 className="mt-4 text-xl font-black text-slate-900">Volver a planificación</h2>
+              <p className="mt-2 break-words text-sm leading-6 text-slate-500">La ruta <strong>{routeOperationalReopenTarget.name}</strong> volverá a {routeOperationalReopenTarget.operational_from_status === 'pendiente' ? 'Pendiente' : 'Planificada'}. Solo es posible mientras no tenga visitas ni operaciones registradas.</p>
+              <label className="mt-4 block">
+                <span className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Motivo obligatorio</span>
+                <textarea value={routeOperationalReason} onChange={event => setRouteOperationalReason(event.target.value)} maxLength={500} placeholder="Ej.: La ruta se inició por error y todavía no comenzó la actividad" className="min-h-24 w-full resize-none rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-sky-500 focus:ring-4 focus:ring-sky-100" />
+                <span className="mt-1 block text-right text-[10px] font-semibold text-slate-400">{routeOperationalReason.trim().length}/500</span>
+              </label>
+              <div className="mt-5 grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => { setRouteOperationalReopenTarget(null); setRouteOperationalReason(''); }} disabled={routeActionId !== null} className="min-h-12 rounded-xl border border-slate-200 bg-white text-sm font-black text-slate-700">Volver</button>
+                <button type="button" onClick={handleConfirmRouteOperationalReopen} disabled={routeActionId !== null || routeOperationalReason.trim().length < 3} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-sky-600 text-sm font-black text-white disabled:opacity-50">
+                  {routeActionId !== null && <Loader2 size={17} className="animate-spin" />}
+                  Confirmar
                 </button>
               </div>
             </motion.section>

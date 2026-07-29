@@ -13,6 +13,7 @@ import { requireBearerUser } from "../server/services/currentUserAuthService.js"
 import { checklistTemplateLifecycleService, type ChecklistTemplateLifecycleAction } from "../server/services/checklistTemplateLifecycleService.js";
 import { routeLifecycleService, type RouteLifecycleAction } from "../server/services/routeLifecycleService.js";
 import { routeItemLifecycleService, type RouteItemLifecycleAction } from "../server/services/routeItemLifecycleService.js";
+import { routeOperationalLifecycleService, type RouteOperationalAction } from "../server/services/routeOperationalLifecycleService.js";
 import { checklistLifecycleService, type ChecklistLifecycleAction } from "../server/services/checklistLifecycleService.js";
 
 const clientSchema = z.object({
@@ -381,6 +382,12 @@ const routeSchema = z.object({
 
 const routeStatusSchema = z.object({
   status: z.enum(["planificada", "en curso", "pendiente"]),
+}).strict();
+
+const routeOperationalLifecycleSchema = z.object({
+  action: z.enum(["start", "reopen"]),
+  motivo: z.string().trim().max(500).optional().nullable(),
+  expectedVersion: z.number().int().min(0),
 }).strict();
 
 const routeLifecycleSchema = z.object({
@@ -834,6 +841,45 @@ const handleRoutes = async (req: any, res: any) => {
     }
   }
 
+  if (endpoint === "route-operational-lifecycle") {
+    const user = await requireRoutePermission(req, res, "edit");
+    if (!user) return;
+    if (!id) return sendError(res, "ID de ruta inválido", 400);
+    if (req.method !== "POST") return sendError(res, "Method not allowed", 405);
+
+    const parsed = routeOperationalLifecycleSchema.safeParse(getBody(req));
+    if (!parsed.success) {
+      return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+      })));
+    }
+
+    try {
+      const result = await routeOperationalLifecycleService.changeStatus({
+        routeId: id,
+        action: parsed.data.action as RouteOperationalAction,
+        motivo: parsed.data.motivo,
+        usuario: user.userName || "Sistema",
+        expectedVersion: parsed.data.expectedVersion,
+      });
+      return sendSuccess(
+        res,
+        result,
+        parsed.data.action === "start"
+          ? "Ruta iniciada correctamente"
+          : "Ruta devuelta a planificación correctamente",
+      );
+    } catch (error: any) {
+      return sendError(
+        res,
+        error?.message || "No se pudo actualizar el estado operativo de la ruta",
+        error?.statusCode || 400,
+        error?.errors || [],
+      );
+    }
+  }
+
   if (endpoint === "routes") {
     if (req.method === "GET") {
       const user = await requireRoutePermission(req, res, "view");
@@ -958,46 +1004,11 @@ const handleRoutes = async (req: any, res: any) => {
     if (req.method === "PATCH") {
       const user = await requireRoutePermission(req, res, "edit");
       if (!user) return;
-      if (!id) return sendError(res, "ID de ruta inválido", 400);
-
-      const parsed = routeStatusSchema.safeParse(getBody(req));
-      if (!parsed.success) {
-        return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
-          path: issue.path.join("."),
-          message: issue.message,
-        })));
-      }
-
-      const client = await pool.connect();
-      try {
-        await client.query("BEGIN");
-        const routeResult = await client.query(
-          `SELECT id, status
-           FROM routes
-           WHERE id = $1
-           LIMIT 1
-           FOR UPDATE`,
-          [id]
-        );
-        if (!routeResult.rowCount) throw new Error("Ruta no encontrada");
-
-        const currentStatus = String(routeResult.rows[0]?.status || "planificada").toLowerCase();
-        if (currentStatus === "cancelada") {
-          throw new Error("La ruta está cancelada. Debe reabrirse antes de modificarla");
-        }
-        if (currentStatus === "finalizada") {
-          throw new Error("La ruta ya está finalizada. Debe reabrirse antes de modificarla");
-        }
-
-        await client.query(`UPDATE routes SET status = $1 WHERE id = $2`, [parsed.data.status, id]);
-        await client.query("COMMIT");
-        return sendSuccess(res, null, "Ruta actualizada");
-      } catch (error: any) {
-        await client.query("ROLLBACK");
-        return sendError(res, error?.message || "No se pudo actualizar la ruta", 409);
-      } finally {
-        client.release();
-      }
+      return sendError(
+        res,
+        "El cambio directo del estado operativo de la ruta fue deshabilitado. Usá las acciones auditadas.",
+        409,
+      );
     }
 
     if (req.method === "DELETE") {
@@ -2692,7 +2703,7 @@ export default async function handler(req: any, res: any) {
     return handleUserLifecycle(req, res);
   }
 
-  if (["routes", "routes-today", "route-item", "route-item-lifecycle", "routes-reorder", "route-supplier-order", "route-lifecycle"].includes(endpoint)) {
+  if (["routes", "routes-today", "route-item", "route-item-lifecycle", "routes-reorder", "route-supplier-order", "route-lifecycle", "route-operational-lifecycle"].includes(endpoint)) {
     return handleRoutes(req, res);
   }
 

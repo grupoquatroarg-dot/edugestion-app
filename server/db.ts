@@ -501,6 +501,12 @@ export function initDb() {
       reopened_at DATETIME,
       reopened_by TEXT,
       reopen_reason TEXT,
+      operational_version INTEGER NOT NULL DEFAULT 0 CHECK(operational_version >= 0),
+      operational_last_action TEXT CHECK(operational_last_action IS NULL OR operational_last_action IN ('start', 'reopen')),
+      operational_changed_at DATETIME,
+      operational_changed_by TEXT,
+      operational_reason TEXT,
+      operational_from_status TEXT CHECK(operational_from_status IS NULL OR operational_from_status IN ('planificada', 'pendiente')),
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -516,6 +522,24 @@ export function initDb() {
       snapshot TEXT NOT NULL DEFAULT '{}',
       FOREIGN KEY (route_id) REFERENCES routes(id)
     );
+
+    CREATE TABLE IF NOT EXISTS route_operational_status_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      route_id INTEGER NOT NULL,
+      version INTEGER NOT NULL CHECK(version > 0),
+      action TEXT NOT NULL CHECK(action IN ('start', 'reopen')),
+      reason TEXT NOT NULL,
+      performed_by TEXT NOT NULL,
+      performed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      previous_status TEXT NOT NULL,
+      new_status TEXT NOT NULL,
+      snapshot TEXT NOT NULL DEFAULT '{}',
+      UNIQUE(route_id, version),
+      FOREIGN KEY (route_id) REFERENCES routes(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_route_operational_history_route
+      ON route_operational_status_history (route_id, performed_at DESC, id DESC);
 
     CREATE TABLE IF NOT EXISTS route_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1027,6 +1051,32 @@ export function initDb() {
   try { db.exec("ALTER TABLE routes ADD COLUMN reopened_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE routes ADD COLUMN reopened_by TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE routes ADD COLUMN reopen_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE routes ADD COLUMN operational_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE routes ADD COLUMN operational_last_action TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE routes ADD COLUMN operational_changed_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE routes ADD COLUMN operational_changed_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE routes ADD COLUMN operational_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE routes ADD COLUMN operational_from_status TEXT"); } catch (e) {}
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS route_operational_status_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        route_id INTEGER NOT NULL,
+        version INTEGER NOT NULL CHECK(version > 0),
+        action TEXT NOT NULL CHECK(action IN ('start', 'reopen')),
+        reason TEXT NOT NULL,
+        performed_by TEXT NOT NULL,
+        performed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        previous_status TEXT NOT NULL,
+        new_status TEXT NOT NULL,
+        snapshot TEXT NOT NULL DEFAULT '{}',
+        UNIQUE(route_id, version),
+        FOREIGN KEY (route_id) REFERENCES routes(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_route_operational_history_route
+        ON route_operational_status_history (route_id, performed_at DESC, id DESC);
+    `);
+  } catch (e) {}
   try {
     const routeHistoryDefinition = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'route_status_history'").get() as any;
     const routeHistorySql = String(routeHistoryDefinition?.sql || "").toLowerCase();
