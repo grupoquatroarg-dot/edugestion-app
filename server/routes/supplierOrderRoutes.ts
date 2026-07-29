@@ -4,6 +4,7 @@ import { supplierOrderService } from '../services/supplierOrderService.js';
 import { supplierOrderCancellationService } from '../services/supplierOrderCancellationService.js';
 import { supplierOrderDeliveryReversalService } from '../services/supplierOrderDeliveryReversalService.js';
 import { supplierOrderStatusLifecycleService } from '../services/supplierOrderStatusLifecycleService.js';
+import { supplierOrderContentLifecycleService } from '../services/supplierOrderContentLifecycleService.js';
 import { requirePermission } from '../middleware/authMiddleware.js';
 import { validate } from '../middleware/validate.js';
 import { z } from 'zod';
@@ -25,6 +26,19 @@ const statusSchema = z.object({
   body: z.object({
     action: z.enum(['advance', 'reopen']),
     motivo: z.string().trim().max(500).optional(),
+  }),
+});
+
+const contentSchema = z.object({
+  body: z.object({
+    notes: z.string().max(2000).optional().nullable(),
+    motivo: z.string().trim().min(3).max(500),
+    expected_content_version: z.number().int().nonnegative(),
+    expected_status_version: z.number().int().nonnegative(),
+    items: z.array(z.object({
+      product_id: z.number().int().positive(),
+      cantidad: z.number().int().positive(),
+    })).min(1, 'Debe incluir al menos un producto'),
   }),
 });
 
@@ -53,6 +67,28 @@ router.post('/:id/status', requirePermission('suppliers', 'edit'), validate(stat
     );
   } catch (error: any) {
     return sendError(res, error?.message || 'No se pudo actualizar la etapa del pedido', error?.statusCode || 400);
+  }
+});
+
+router.put('/:id/items', requirePermission('suppliers', 'edit'), validate(contentSchema), async (req, res) => {
+  try {
+    const result = await supplierOrderContentLifecycleService.update({
+      supplierOrderId: Number(req.params.id),
+      items: req.body.items,
+      notes: req.body.notes,
+      motivo: req.body.motivo,
+      usuario: (req as any).user?.userName || (req.session as any)?.userName || 'Sistema',
+      expectedContentVersion: req.body.expected_content_version,
+      expectedStatusVersion: req.body.expected_status_version,
+    });
+    return sendSuccess(res, result, 'Productos y observaciones actualizados con trazabilidad');
+  } catch (error: any) {
+    return sendError(
+      res,
+      error?.message || 'No se pudo actualizar el pedido',
+      error?.statusCode || 400,
+      error?.errors || []
+    );
   }
 });
 

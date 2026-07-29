@@ -12,6 +12,7 @@ import { saleCancellationService } from "../server/services/saleCancellationServ
 import { supplierOrderCancellationService } from "../server/services/supplierOrderCancellationService.js";
 import { supplierOrderDeliveryReversalService } from "../server/services/supplierOrderDeliveryReversalService.js";
 import { supplierOrderStatusLifecycleService } from "../server/services/supplierOrderStatusLifecycleService.js";
+import { supplierOrderContentLifecycleService } from "../server/services/supplierOrderContentLifecycleService.js";
 import { customerOrderCancellationService } from "../server/services/customerOrderCancellationService.js";
 import { customerOrderDeliveryService } from "../server/services/customerOrderDeliveryService.js";
 import { customerOrderDeliveryReversalService } from "../server/services/customerOrderDeliveryReversalService.js";
@@ -72,10 +73,13 @@ const supplierOrderStatusSchema = z.object({
 });
 
 const supplierOrderItemsSchema = z.object({
-  notes: z.string().optional().nullable(),
+  notes: z.string().max(2000, "Las observaciones son demasiado extensas").optional().nullable(),
+  motivo: z.string().trim().min(3, "El motivo del cambio es obligatorio").max(500, "El motivo es demasiado extenso"),
+  expected_content_version: z.number().int().nonnegative(),
+  expected_status_version: z.number().int().nonnegative(),
   items: z.array(z.object({
-    product_id: z.number(),
-    cantidad: z.number().positive(),
+    product_id: z.number().int().positive(),
+    cantidad: z.number().int().positive(),
   })).min(1, "Debe incluir al menos un producto"),
 });
 
@@ -292,6 +296,10 @@ const mapSupplierOrder = (row: any, items: any[] = []) => {
     status_changed_from: row.status_changed_from || null,
     status_last_action: row.status_last_action || null,
     status_last_reason: row.status_last_reason || null,
+    content_version: toNumber(row.content_version),
+    content_changed_at: row.content_changed_at || null,
+    content_changed_by: row.content_changed_by || null,
+    content_change_reason: row.content_change_reason || null,
     productos,
   };
 };
@@ -432,6 +440,7 @@ const handleSupplierOrders = async (req: any, res: any) => {
             so.delivery_reverted_at, so.delivery_reverted_by, so.delivery_revert_reason,
             so.status_version, so.status_changed_at, so.status_changed_by, so.status_changed_from,
             so.status_last_action, so.status_last_reason,
+            so.content_version, so.content_changed_at, so.content_changed_by, so.content_change_reason,
             s.total AS sale_total,
             s.monto_pagado AS sale_monto_pagado,
             s.monto_pendiente AS sale_monto_pendiente,
@@ -472,6 +481,7 @@ const handleSupplierOrders = async (req: any, res: any) => {
             so.delivery_reverted_at, so.delivery_reverted_by, so.delivery_revert_reason,
             so.status_version, so.status_changed_at, so.status_changed_by, so.status_changed_from,
             so.status_last_action, so.status_last_reason,
+            so.content_version, so.content_changed_at, so.content_changed_by, so.content_change_reason,
             s.total AS sale_total,
             s.monto_pagado AS sale_monto_pagado,
             s.monto_pendiente AS sale_monto_pendiente,
@@ -598,46 +608,25 @@ const handleSupplierOrders = async (req: any, res: any) => {
       })));
     }
 
-    const client = await pool.connect();
     try {
-      await client.query("BEGIN");
+      const result = await supplierOrderContentLifecycleService.update({
+        supplierOrderId: id,
+        items: parsed.data.items,
+        notes: parsed.data.notes,
+        motivo: parsed.data.motivo,
+        usuario: user.userName || "Sistema",
+        expectedContentVersion: parsed.data.expected_content_version,
+        expectedStatusVersion: parsed.data.expected_status_version,
+      });
 
-      const orderResult = await client.query(
-        `SELECT id, estado FROM supplier_orders WHERE id = $1 LIMIT 1`,
-        [id]
-      );
-
-      if (!orderResult.rowCount) {
-        await client.query("ROLLBACK");
-        return sendError(res, "Pedido no encontrado", 404);
-      }
-
-      if (["entregado", "cancelado"].includes(String(orderResult.rows[0]?.estado))) {
-        await client.query("ROLLBACK");
-        return sendError(res, "No se puede editar un pedido entregado o cancelado", 409);
-      }
-
-      await client.query(`DELETE FROM supplier_order_items WHERE order_id = $1`, [id]);
-
-      for (const item of parsed.data.items) {
-        await client.query(
-          `INSERT INTO supplier_order_items (order_id, product_id, cantidad) VALUES ($1, $2, $3)`,
-          [id, item.product_id, item.cantidad]
-        );
-      }
-
-      await client.query(
-        `UPDATE supplier_orders SET notes = $1 WHERE id = $2`,
-        [parsed.data.notes || null, id]
-      );
-
-      await client.query("COMMIT");
-      return sendSuccess(res, null, "Pedido actualizado");
+      return sendSuccess(res, result, "Productos y observaciones actualizados con trazabilidad");
     } catch (error: any) {
-      await client.query("ROLLBACK");
-      return sendError(res, error?.message || "Error al actualizar pedido", 400);
-    } finally {
-      client.release();
+      return sendError(
+        res,
+        error?.message || "Error al actualizar el pedido",
+        error?.statusCode || 400,
+        error?.errors || []
+      );
     }
   }
 

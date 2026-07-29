@@ -316,6 +316,10 @@ export function initDb() {
       status_changed_from TEXT,
       status_last_action TEXT,
       status_last_reason TEXT,
+      content_version INTEGER NOT NULL DEFAULT 0,
+      content_changed_at DATETIME,
+      content_changed_by TEXT,
+      content_change_reason TEXT,
       FOREIGN KEY (cliente_id) REFERENCES clientes(id),
       FOREIGN KEY (sale_id) REFERENCES sales(id)
     );
@@ -402,6 +406,23 @@ export function initDb() {
 
     CREATE INDEX IF NOT EXISTS idx_supplier_order_status_history_order
       ON supplier_order_status_history (supplier_order_id, changed_at DESC);
+
+    CREATE TABLE IF NOT EXISTS supplier_order_content_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      supplier_order_id INTEGER NOT NULL,
+      version INTEGER NOT NULL CHECK(version > 0),
+      status_at_change TEXT NOT NULL CHECK(status_at_change = 'auditar_pedido'),
+      reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 3 AND 500),
+      changed_by TEXT NOT NULL,
+      changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      before_snapshot TEXT NOT NULL DEFAULT '{}',
+      after_snapshot TEXT NOT NULL DEFAULT '{}',
+      UNIQUE (supplier_order_id, version),
+      FOREIGN KEY (supplier_order_id) REFERENCES supplier_orders(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_supplier_order_content_history_order
+      ON supplier_order_content_history (supplier_order_id, changed_at DESC);
 
     CREATE TABLE IF NOT EXISTS checklist_templates (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1016,6 +1037,10 @@ export function initDb() {
   try { db.exec("ALTER TABLE supplier_orders ADD COLUMN status_changed_from TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE supplier_orders ADD COLUMN status_last_action TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE supplier_orders ADD COLUMN status_last_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN content_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN content_changed_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN content_changed_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE supplier_orders ADD COLUMN content_change_reason TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE stock_movimientos ADD COLUMN supplier_order_id INTEGER"); } catch (e) {}
 
   try { db.exec("ALTER TABLE sales ADD COLUMN costo_total REAL DEFAULT 0"); } catch (e) {}

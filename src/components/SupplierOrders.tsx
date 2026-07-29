@@ -57,6 +57,10 @@ interface SupplierOrder {
   status_changed_from?: string | null;
   status_last_action?: 'advance' | 'reopen' | null;
   status_last_reason?: string | null;
+  content_version?: number;
+  content_changed_at?: string | null;
+  content_changed_by?: string | null;
+  content_change_reason?: string | null;
 }
 
 export default function SupplierOrders() {
@@ -80,6 +84,7 @@ export default function SupplierOrders() {
   const [editingOrder, setEditingOrder] = useState<SupplierOrder | null>(null);
   const [editingItems, setEditingItems] = useState<any[]>([]);
   const [editingNotes, setEditingNotes] = useState('');
+  const [editReason, setEditReason] = useState('');
   const [productSearch, setProductSearch] = useState('');
   
   // Filters
@@ -614,6 +619,7 @@ export default function SupplierOrders() {
     setEditingOrder(order);
     setEditingItems(order.productos.map(p => ({ ...p })));
     setEditingNotes(order.notes || '');
+    setEditReason('');
     setProductSearch('');
     setEditError('');
     setIsEditModalOpen(true);
@@ -658,6 +664,12 @@ export default function SupplierOrders() {
       return;
     }
 
+    const normalizedReason = editReason.trim();
+    if (normalizedReason.length < 3) {
+      setEditError('El motivo del cambio es obligatorio y debe tener al menos 3 caracteres.');
+      return;
+    }
+
     setSavingChanges(true);
     setEditError('');
     setFeedback(null);
@@ -665,14 +677,21 @@ export default function SupplierOrders() {
     try {
       const res = await apiFetch(`/api/sales?endpoint=supplier-order-items&id=${editingOrder.id}`, {
         method: 'PUT',
-        body: JSON.stringify({ items: editingItems, notes: editingNotes })
+        body: JSON.stringify({
+          items: editingItems.map(item => ({ product_id: item.product_id, cantidad: item.cantidad })),
+          notes: editingNotes,
+          motivo: normalizedReason,
+          expected_content_version: Number(editingOrder.content_version || 0),
+          expected_status_version: Number(editingOrder.status_version || 0),
+        })
       });
 
       await unwrapResponse(res);
 
       setIsEditModalOpen(false);
-      setFeedback({ type: 'success', message: 'Los productos y observaciones del pedido fueron actualizados.' });
-      fetchOrders();
+      setEditReason('');
+      setFeedback({ type: 'success', message: 'Los productos y observaciones fueron actualizados con trazabilidad.' });
+      await fetchOrders();
     } catch (error) {
       console.error("Error saving changes:", error);
       setEditError(error instanceof Error ? error.message : 'No se pudieron guardar los cambios.');
@@ -1381,6 +1400,13 @@ export default function SupplierOrders() {
                               {' · '}{formatBusinessDateTime(order.status_changed_at)}
                             </p>
                           )}
+                          {order.content_changed_by && order.content_changed_at && (
+                            <p className="mt-1.5 break-words text-[11px] text-indigo-600">
+                              Contenido ajustado por {order.content_changed_by}
+                              {' · '}{formatBusinessDateTime(order.content_changed_at)}
+                              {Number(order.content_version || 0) > 0 ? ` · Versión ${order.content_version}` : ''}
+                            </p>
+                          )}
                         </div>
 
                         <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2 sm:flex sm:items-end">
@@ -1800,6 +1826,22 @@ export default function SupplierOrders() {
                   className="min-h-28 w-full resize-y rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
                 />
               </label>
+
+
+              <label className="mt-5 block space-y-2">
+                <span className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Motivo obligatorio del cambio</span>
+                <textarea
+                  value={editReason}
+                  onChange={event => setEditReason(event.target.value)}
+                  maxLength={500}
+                  rows={3}
+                  placeholder="Ejemplo: se ajustaron las cantidades recibidas según el remito"
+                  className="min-h-24 w-full resize-y rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm outline-none transition focus:border-amber-400 focus:bg-white focus:ring-4 focus:ring-amber-100"
+                />
+                <p className="text-xs text-slate-500">
+                  El cambio guardará usuario, fecha, motivo y snapshots antes y después.
+                </p>
+              </label>
             </div>
 
             <div className="grid grid-cols-1 gap-2 border-t border-slate-100 bg-white p-4 sm:grid-cols-2 sm:p-6">
@@ -1814,7 +1856,7 @@ export default function SupplierOrders() {
               <button
                 type="button"
                 onClick={handleSaveChanges}
-                disabled={savingChanges || editingItems.length === 0}
+                disabled={savingChanges || editingItems.length === 0 || editReason.trim().length < 3}
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-950 px-5 py-3 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {savingChanges && <Loader2 size={17} className="animate-spin" />}
