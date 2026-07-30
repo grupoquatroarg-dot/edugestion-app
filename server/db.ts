@@ -172,6 +172,10 @@ export function initDb() {
       active INTEGER DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       session_version INTEGER NOT NULL DEFAULT 1,
+      permissions_version INTEGER NOT NULL DEFAULT 0,
+      permissions_changed_at DATETIME,
+      permissions_changed_by TEXT,
+      permissions_change_reason TEXT,
       deactivated_at DATETIME,
       deactivated_by TEXT,
       deactivation_reason TEXT
@@ -201,6 +205,22 @@ export function initDb() {
       can_delete INTEGER DEFAULT 0,
       PRIMARY KEY (user_id, module),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+
+    CREATE TABLE IF NOT EXISTS user_permission_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      version INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      changed_by_user_id INTEGER,
+      changed_by TEXT NOT NULL,
+      changed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      permissions_before_snapshot TEXT NOT NULL DEFAULT '[]',
+      permissions_after_snapshot TEXT NOT NULL DEFAULT '[]',
+      UNIQUE (user_id, version),
+      FOREIGN KEY (user_id) REFERENCES users(id),
+      FOREIGN KEY (changed_by_user_id) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS clientes (
@@ -947,6 +967,10 @@ export function initDb() {
   try { db.exec("ALTER TABLE price_update_history ADD COLUMN reverted_count INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
 
   try { db.exec("ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 1"); } catch (e) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN permissions_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN permissions_changed_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN permissions_changed_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN permissions_change_reason TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE users ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE users ADD COLUMN deactivated_by TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE users ADD COLUMN deactivation_reason TEXT"); } catch (e) {}

@@ -9,6 +9,7 @@ import { salesService } from "../server/services/salesService.js";
 import { customerOrderCancellationService } from "../server/services/customerOrderCancellationService.js";
 import { customerLifecycleService, type CustomerLifecycleAction } from "../server/services/customerLifecycleService.js";
 import { userLifecycleService, type UserLifecycleAction } from "../server/services/userLifecycleService.js";
+import { userPermissionLifecycleService } from "../server/services/userPermissionLifecycleService.js";
 import { requireBearerUser } from "../server/services/currentUserAuthService.js";
 import { checklistTemplateLifecycleService, type ChecklistTemplateLifecycleAction } from "../server/services/checklistTemplateLifecycleService.js";
 import { routeLifecycleService, type RouteLifecycleAction } from "../server/services/routeLifecycleService.js";
@@ -66,17 +67,18 @@ const userLifecycleSchema = z.object({
   motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
 });
 
+const permissionEntrySchema = z.object({
+  module: z.string(),
+  can_view: z.boolean(),
+  can_create: z.boolean(),
+  can_edit: z.boolean(),
+  can_delete: z.boolean(),
+});
+
 const permissionsSchema = z.object({
-  permissions: z.record(
-    z.string(),
-    z.object({
-      module: z.string(),
-      can_view: z.boolean(),
-      can_create: z.boolean(),
-      can_edit: z.boolean(),
-      can_delete: z.boolean(),
-    })
-  ),
+  permissions: z.record(z.string(), permissionEntrySchema),
+  motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
+  expectedVersion: z.number().int().min(0),
 });
 
 const getBody = (req: any) => {
@@ -339,8 +341,17 @@ const handleUserPermissions = async (req: any, res: any) => {
 
   if (req.method === "GET") {
     try {
+      const target = await UserRepository.findById(id);
+      if (!target) return sendError(res, "Usuario no encontrado", 404);
+
       const permissions = await UserRepository.getPermissions(id);
-      return sendSuccess(res, permissions);
+      return sendSuccess(res, {
+        permissions,
+        version: Number(target.permissions_version || 0),
+        changed_at: target.permissions_changed_at || null,
+        changed_by: target.permissions_changed_by || null,
+        change_reason: target.permissions_change_reason || null,
+      });
     } catch (error: any) {
       return sendError(res, error?.message || "Error al obtener permisos", error?.statusCode || 400, error?.errors || []);
     }
@@ -362,8 +373,19 @@ const handleUserPermissions = async (req: any, res: any) => {
     }
 
     try {
-      await UserRepository.updatePermissions(id, parsed.data.permissions);
-      return sendSuccess(res, null, "Permisos actualizados");
+      const result = await userPermissionLifecycleService.update({
+        userId: id,
+        permissions: parsed.data.permissions,
+        motivo: parsed.data.motivo,
+        expectedVersion: parsed.data.expectedVersion,
+        changedByUserId: Number(admin.userId),
+        changedByName: admin.userName || "Sistema",
+      });
+      return sendSuccess(
+        res,
+        result,
+        "Permisos actualizados. Las sesiones anteriores del usuario fueron invalidadas."
+      );
     } catch (error: any) {
       return sendError(res, error?.message || "Error al actualizar permisos", error?.statusCode || 400, error?.errors || []);
     }

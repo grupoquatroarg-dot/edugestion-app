@@ -28,6 +28,10 @@ const mapUser = (row: any) => {
     active: Number(row.active ?? 1),
     created_at: row.created_at,
     session_version: Number(row.session_version ?? 1),
+    permissions_version: Number(row.permissions_version ?? 0),
+    permissions_changed_at: row.permissions_changed_at ?? null,
+    permissions_changed_by: row.permissions_changed_by ?? null,
+    permissions_change_reason: row.permissions_change_reason ?? null,
     deactivated_at: row.deactivated_at ?? null,
     deactivated_by: row.deactivated_by ?? null,
     deactivation_reason: row.deactivation_reason ?? null,
@@ -114,7 +118,8 @@ export const UserRepository = {
   async findById(id: number) {
     if (!isPostgresConfigured()) {
       return mapUserWithoutPassword(db.prepare(`
-        SELECT id, name, email, role, avatar, active, created_at, session_version,
+        SELECT id, name, email, role, avatar, active, created_at, session_version, permissions_version,
+               permissions_changed_at, permissions_changed_by, permissions_change_reason,
                deactivated_at, deactivated_by, deactivation_reason
         FROM users WHERE id = ? LIMIT 1
       `).get(id));
@@ -122,7 +127,8 @@ export const UserRepository = {
 
     const pool = getPostgresPool();
     const result = await pool.query(
-      `SELECT id, name, email, role, avatar, active, created_at, session_version,
+      `SELECT id, name, email, role, avatar, active, created_at, session_version, permissions_version,
+              permissions_changed_at, permissions_changed_by, permissions_change_reason,
               deactivated_at, deactivated_by, deactivation_reason
        FROM users WHERE id = $1 LIMIT 1`,
       [id]
@@ -134,7 +140,8 @@ export const UserRepository = {
   async findAll() {
     if (!isPostgresConfigured()) {
       return db.prepare(`
-        SELECT id, name, email, role, avatar, active, created_at, session_version,
+        SELECT id, name, email, role, avatar, active, created_at, session_version, permissions_version,
+               permissions_changed_at, permissions_changed_by, permissions_change_reason,
                deactivated_at, deactivated_by, deactivation_reason
         FROM users ORDER BY name ASC
       `).all().map(mapUserWithoutPassword);
@@ -142,7 +149,8 @@ export const UserRepository = {
 
     const pool = getPostgresPool();
     const result = await pool.query(`
-      SELECT id, name, email, role, avatar, active, created_at, session_version,
+      SELECT id, name, email, role, avatar, active, created_at, session_version, permissions_version,
+             permissions_changed_at, permissions_changed_by, permissions_change_reason,
              deactivated_at, deactivated_by, deactivation_reason
       FROM users ORDER BY name ASC
     `);
@@ -173,7 +181,8 @@ export const UserRepository = {
     const result = await pool.query(
       `INSERT INTO users (name, email, password, role, avatar, active, session_version)
        VALUES ($1, $2, $3, $4, $5, 1, 1)
-       RETURNING id, name, email, role, avatar, active, created_at, session_version,
+       RETURNING id, name, email, role, avatar, active, created_at, session_version, permissions_version,
+                 permissions_changed_at, permissions_changed_by, permissions_change_reason,
                  deactivated_at, deactivated_by, deactivation_reason`,
       [name, email, hashedPassword, role, finalAvatar]
     );
@@ -218,7 +227,8 @@ export const UserRepository = {
         }
 
         return mapUserWithoutPassword(db.prepare(`
-          SELECT id, name, email, role, avatar, active, created_at, session_version,
+          SELECT id, name, email, role, avatar, active, created_at, session_version, permissions_version,
+                 permissions_changed_at, permissions_changed_by, permissions_change_reason,
                  deactivated_at, deactivated_by, deactivation_reason
           FROM users WHERE id = ? LIMIT 1
         `).get(id));
@@ -250,7 +260,8 @@ export const UserRepository = {
            SET name = $1, email = $2, role = $3, avatar = $4, password = $5,
                session_version = COALESCE(session_version, 1) + 1
            WHERE id = $6
-           RETURNING id, name, email, role, avatar, active, created_at, session_version,
+           RETURNING id, name, email, role, avatar, active, created_at, session_version, permissions_version,
+                     permissions_changed_at, permissions_changed_by, permissions_change_reason,
                      deactivated_at, deactivated_by, deactivation_reason`,
           [finalName, finalEmail, finalRole, finalAvatar, hashedPassword, id]
         );
@@ -260,7 +271,8 @@ export const UserRepository = {
            SET name = $1, email = $2, role = $3, avatar = $4,
                session_version = COALESCE(session_version, 1) + 1
            WHERE id = $5
-           RETURNING id, name, email, role, avatar, active, created_at, session_version,
+           RETURNING id, name, email, role, avatar, active, created_at, session_version, permissions_version,
+                     permissions_changed_at, permissions_changed_by, permissions_change_reason,
                      deactivated_at, deactivated_by, deactivation_reason`,
           [finalName, finalEmail, finalRole, finalAvatar, id]
         );
@@ -269,7 +281,8 @@ export const UserRepository = {
           `UPDATE users
            SET name = $1, email = $2, avatar = $3
            WHERE id = $4
-           RETURNING id, name, email, role, avatar, active, created_at, session_version,
+           RETURNING id, name, email, role, avatar, active, created_at, session_version, permissions_version,
+                     permissions_changed_at, permissions_changed_by, permissions_change_reason,
                      deactivated_at, deactivated_by, deactivation_reason`,
           [finalName, finalEmail, finalAvatar, id]
         );
@@ -300,48 +313,11 @@ export const UserRepository = {
     return mapPermissions(result.rows);
   },
 
-  async updatePermissions(userId: number, permissions: any) {
-    if (!isPostgresConfigured()) {
-      const deleteOld = db.prepare("DELETE FROM user_permissions WHERE user_id = ?");
-      const insertNew = db.prepare("INSERT INTO user_permissions (user_id, module, can_view, can_create, can_edit, can_delete) VALUES (?, ?, ?, ?, ?, ?)");
+  async updatePermissions(_userId: number, _permissions: any) {
+    throw new AppError(
+      "La actualización directa de permisos está deshabilitada. Usá el servicio auditado de permisos.",
+      405
+    );
 
-      db.transaction(() => {
-        deleteOld.run(userId);
-        Object.values(permissions).forEach((p: any) => {
-          insertNew.run(userId, p.module, p.can_view ? 1 : 0, p.can_create ? 1 : 0, p.can_edit ? 1 : 0, p.can_delete ? 1 : 0);
-        });
-      })();
-      return;
-    }
-
-    const pool = getPostgresPool();
-    const client = await pool.connect();
-
-    try {
-      await client.query('BEGIN');
-      await client.query("DELETE FROM user_permissions WHERE user_id = $1", [userId]);
-
-      for (const p of Object.values(permissions) as any[]) {
-        await client.query(
-          `INSERT INTO user_permissions (user_id, module, can_view, can_create, can_edit, can_delete)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [
-            userId,
-            p.module,
-            p.can_view ? 1 : 0,
-            p.can_create ? 1 : 0,
-            p.can_edit ? 1 : 0,
-            p.can_delete ? 1 : 0,
-          ]
-        );
-      }
-
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
   }
 };

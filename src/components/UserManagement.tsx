@@ -44,6 +44,13 @@ type UserLifecycleAction = 'deactivate' | 'reactivate';
 type StatusFilter = 'todos' | 'activos' | 'inactivos';
 type RoleFilter = 'todos' | UserRole;
 type PermissionAction = keyof Omit<UserPermission, 'module'>;
+type PermissionStateResponse = {
+  permissions: Record<string, UserPermission>;
+  version: number;
+  changed_at?: string | null;
+  changed_by?: string | null;
+  change_reason?: string | null;
+};
 
 const MODULES = [
   { id: 'dashboard', label: 'Dashboard', description: 'Indicadores, alertas y resumen ejecutivo.' },
@@ -134,7 +141,15 @@ export default function UserManagement() {
   const [lifecycleReason, setLifecycleReason] = useState('');
   const [lifecycleError, setLifecycleError] = useState('');
   const [userPermissions, setUserPermissions] = useState<Record<string, UserPermission>>({});
+  const [permissionsVersion, setPermissionsVersion] = useState(0);
+  const [permissionsReason, setPermissionsReason] = useState('');
+  const [permissionsMetadata, setPermissionsMetadata] = useState<{
+    changed_at?: string | null;
+    changed_by?: string | null;
+    change_reason?: string | null;
+  }>({});
   const [isPermissionsLoading, setIsPermissionsLoading] = useState(false);
+  const [permissionsLoadError, setPermissionsLoadError] = useState('');
   const [permissionsError, setPermissionsError] = useState('');
   const [formError, setFormError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -285,6 +300,10 @@ export default function UserManagement() {
     if (!isPermissionsModalOpen) rememberModalTrigger();
     setEditingUser(user);
     setUserPermissions(buildPermissions());
+    setPermissionsVersion(0);
+    setPermissionsReason('');
+    setPermissionsMetadata({});
+    setPermissionsLoadError('');
     setPermissionsError('');
     setIsPermissionsModalOpen(true);
 
@@ -294,11 +313,17 @@ export default function UserManagement() {
     try {
       const res = await apiFetch(`/api/clientes?endpoint=users-permissions&id=${user.id}`);
       const body = await res.json();
-      const data = unwrapResponse<Record<string, UserPermission>>(body);
-      setUserPermissions(buildPermissions(data));
+      const data = unwrapResponse<PermissionStateResponse>(body);
+      setUserPermissions(buildPermissions(data.permissions));
+      setPermissionsVersion(Number(data.version || 0));
+      setPermissionsMetadata({
+        changed_at: data.changed_at || null,
+        changed_by: data.changed_by || null,
+        change_reason: data.change_reason || null,
+      });
     } catch (err: any) {
       console.error('Error fetching permissions:', err);
-      setPermissionsError(err?.message || 'No se pudieron cargar los permisos.');
+      setPermissionsLoadError(err?.message || 'No se pudieron cargar los permisos.');
     } finally {
       setIsPermissionsLoading(false);
     }
@@ -307,7 +332,9 @@ export default function UserManagement() {
   const closePermissionsModal = () => {
     if (isSubmitting) return;
     setIsPermissionsModalOpen(false);
+    setPermissionsLoadError('');
     setPermissionsError('');
+    setPermissionsReason('');
     restoreModalTrigger();
   };
 
@@ -357,18 +384,32 @@ export default function UserManagement() {
 
   const handleSavePermissions = async () => {
     if (!editingUser || editingUser.role === 'administrador' || isSubmitting) return;
+
+    const motivo = permissionsReason.trim();
+    if (motivo.length < 3) {
+      setPermissionsError('Ingresá un motivo de al menos 3 caracteres.');
+      return;
+    }
+
     setIsSubmitting(true);
     setPermissionsError('');
 
     try {
       const res = await apiFetch(`/api/clientes?endpoint=users-permissions&id=${editingUser.id}`, {
         method: 'PUT',
-        body: JSON.stringify({ permissions: userPermissions }),
+        body: JSON.stringify({
+          permissions: userPermissions,
+          motivo,
+          expectedVersion: permissionsVersion,
+        }),
       });
       const body = await res.json();
       unwrapResponse(body);
       setIsPermissionsModalOpen(false);
-      setSuccessMessage(`Permisos de ${editingUser.name} actualizados correctamente.`);
+      await fetchUsers(false);
+      setSuccessMessage(
+        `Permisos de ${editingUser.name} actualizados. Sus sesiones anteriores fueron invalidadas.`,
+      );
       restoreModalTrigger();
     } catch (err: any) {
       setPermissionsError(err?.message || 'Error al guardar permisos.');
@@ -1039,11 +1080,11 @@ export default function UserManagement() {
                     <Loader2 size={19} className="animate-spin text-indigo-600" /> Cargando permisos...
                   </div>
                 </div>
-              ) : permissionsError ? (
+              ) : permissionsLoadError ? (
                 <div className="flex min-h-64 flex-col items-center justify-center rounded-[28px] border border-red-200 bg-red-50 px-6 py-10 text-center" role="alert">
                   <AlertCircle size={36} className="text-red-600" />
                   <h3 className="mt-4 text-xl font-black text-red-900">No se pudieron cargar los permisos</h3>
-                  <p className="mt-2 max-w-lg break-words text-sm leading-6 text-red-700">{permissionsError}</p>
+                  <p className="mt-2 max-w-lg break-words text-sm leading-6 text-red-700">{permissionsLoadError}</p>
                   <button
                     type="button"
                     onClick={() => void handleOpenPermissionsModal(editingUser)}
@@ -1073,6 +1114,45 @@ export default function UserManagement() {
                       </div>
                     </div>
                   </div>
+
+                  {permissionsError && (
+                    <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-800" role="alert">
+                      <AlertCircle size={19} className="mt-0.5 shrink-0" />
+                      <p className="break-words text-sm font-bold">{permissionsError}</p>
+                    </div>
+                  )}
+
+                  {permissionsMetadata.changed_at && (
+                    <div className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 sm:p-5">
+                      <p className="font-black">Último cambio auditado · versión {permissionsVersion}</p>
+                      <p className="mt-1 leading-6">
+                        {formatDateTime(permissionsMetadata.changed_at)} por {permissionsMetadata.changed_by || 'Sistema'}.
+                      </p>
+                      {permissionsMetadata.change_reason && (
+                        <p className="mt-1 break-words leading-6">Motivo: {permissionsMetadata.change_reason}</p>
+                      )}
+                    </div>
+                  )}
+
+                  <label className="block rounded-3xl border border-indigo-200 bg-indigo-50 p-4 sm:p-5">
+                    <span className="block text-[11px] font-black uppercase tracking-wider text-indigo-700">
+                      Motivo obligatorio del cambio
+                    </span>
+                    <textarea
+                      required
+                      minLength={3}
+                      maxLength={500}
+                      rows={4}
+                      value={permissionsReason}
+                      onChange={(event) => setPermissionsReason(event.target.value)}
+                      placeholder="Ej.: Cambio de funciones y responsabilidades del usuario."
+                      className="mt-3 w-full resize-none rounded-2xl border border-indigo-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                    />
+                    <span className="mt-2 flex flex-col gap-1 text-xs text-indigo-700 sm:flex-row sm:items-center sm:justify-between">
+                      <span>Se guardarán los permisos anteriores y nuevos, con usuario y fecha.</span>
+                      <span className="shrink-0 font-black">{permissionsReason.length}/500</span>
+                    </span>
+                  </label>
 
                   <div className="grid gap-4 lg:grid-cols-2">
                     {MODULES.map((module) => {
@@ -1126,7 +1206,12 @@ export default function UserManagement() {
                 <button
                   type="button"
                   onClick={() => void handleSavePermissions()}
-                  disabled={isSubmitting || isPermissionsLoading || Boolean(permissionsError)}
+                  disabled={
+                    isSubmitting
+                    || isPermissionsLoading
+                    || Boolean(permissionsLoadError)
+                    || permissionsReason.trim().length < 3
+                  }
                   className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-6 py-3 text-sm font-black text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}

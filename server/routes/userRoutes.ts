@@ -3,6 +3,7 @@ import { UserRepository } from "../repositories/userRepository.js";
 import { requireAdmin } from "../middleware/authMiddleware.js";
 import { validate } from "../middleware/validate.js";
 import { userLifecycleService, type UserLifecycleAction } from "../services/userLifecycleService.js";
+import { userPermissionLifecycleService } from "../services/userPermissionLifecycleService.js";
 import { z } from "zod";
 import { sendSuccess, sendError } from "../utils/response.js";
 
@@ -51,6 +52,8 @@ const permissionsSchema = z.object({
       can_edit: z.boolean(),
       can_delete: z.boolean(),
     })),
+    motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
+    expectedVersion: z.number().int().min(0),
   }),
 });
 
@@ -113,13 +116,38 @@ router.delete("/:id", requireAdmin, async (_req, res) => {
 });
 
 router.get("/:id/permissions", requireAdmin, async (req, res) => {
+  const target = await UserRepository.findById(Number(req.params.id));
+  if (!target) return sendError(res, "Usuario no encontrado", 404);
+
   const permissions = await UserRepository.getPermissions(Number(req.params.id));
-  return sendSuccess(res, permissions);
+  return sendSuccess(res, {
+    permissions,
+    version: Number(target.permissions_version || 0),
+    changed_at: target.permissions_changed_at || null,
+    changed_by: target.permissions_changed_by || null,
+    change_reason: target.permissions_change_reason || null,
+  });
 });
 
 router.put("/:id/permissions", requireAdmin, validate(permissionsSchema), async (req, res) => {
-  await UserRepository.updatePermissions(Number(req.params.id), req.body.permissions);
-  return sendSuccess(res, null, "Permisos actualizados");
+  try {
+    const actor = (req as any).user;
+    const result = await userPermissionLifecycleService.update({
+      userId: Number(req.params.id),
+      permissions: req.body.permissions,
+      motivo: req.body.motivo,
+      expectedVersion: req.body.expectedVersion,
+      changedByUserId: Number(actor.userId),
+      changedByName: actor.userName || "Sistema",
+    });
+    return sendSuccess(
+      res,
+      result,
+      "Permisos actualizados. Las sesiones anteriores del usuario fueron invalidadas."
+    );
+  } catch (error: any) {
+    return sendError(res, error?.message || "Error al actualizar permisos", error?.statusCode || 400);
+  }
 });
 
 export default router;
