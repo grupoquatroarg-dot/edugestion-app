@@ -429,6 +429,8 @@ export default function CustomerOrdersAdmin({
             descuento_valor: Number(discount.valor || 0),
             admin_notes:
               adminNotes[order.id] || order.admin_notes || '',
+            expected_approval_version: Number(order.approval_version || 0),
+            expected_rejection_version: Number(order.rejection_version || 0),
           }),
         }
       );
@@ -1046,6 +1048,17 @@ export default function CustomerOrdersAdmin({
                           {order.reopened_by ? `Por ${order.reopened_by}` : ''}
                           {order.reopened_by && order.reopened_at ? ' · ' : ''}
                           {formatBusinessDateTime(order.reopened_at)}
+                        </p>
+                      </div>
+                    )}
+
+                    {Number(order.approval_version || 0) > 0 && order.aprobado_at && (
+                      <div className="mt-2 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-xs font-bold text-emerald-700">
+                        <p>Aprobación auditada · versión {Number(order.approval_version)}</p>
+                        <p className="mt-1 text-[11px] text-emerald-600">
+                          {order.approved_by ? `Por ${order.approved_by}` : 'Usuario no informado'}
+                          {' · '}
+                          {formatBusinessDateTime(order.aprobado_at)}
                         </p>
                       </div>
                     )}

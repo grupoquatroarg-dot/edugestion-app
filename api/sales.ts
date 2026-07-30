@@ -17,6 +17,7 @@ import { customerOrderCancellationService } from "../server/services/customerOrd
 import { customerOrderDeliveryService } from "../server/services/customerOrderDeliveryService.js";
 import { customerOrderDeliveryReversalService } from "../server/services/customerOrderDeliveryReversalService.js";
 import { customerOrderRejectionLifecycleService } from "../server/services/customerOrderRejectionLifecycleService.js";
+import { customerOrderApprovalService } from "../server/services/customerOrderApprovalService.js";
 import { assertPaymentMethodActive } from "../server/services/paymentMethodAvailabilityService.js";
 
 const saleSchema = z.object({
@@ -99,7 +100,9 @@ const supplierOrderDeliveryReversalSchema = z.object({
 const customerOrderApproveSchema = z.object({
   descuento_tipo: z.enum(["none", "percentage", "fixed"]).optional(),
   descuento_valor: z.number().nonnegative().optional(),
-  admin_notes: z.string().optional().nullable(),
+  admin_notes: z.string().max(2000, "La observación es demasiado extensa").optional().nullable(),
+  expected_approval_version: z.number().int().nonnegative(),
+  expected_rejection_version: z.number().int().nonnegative(),
 });
 
 const customerOrderRejectSchema = z.object({
@@ -1136,6 +1139,9 @@ const mapCustomerOrderAdmin = (row: any, items: any[] = []) => {
     rejection_reason: row.rejection_reason || "",
     cancel_reason: row.cancel_reason || "",
     aprobado_at: row.aprobado_at || null,
+    approved_by: row.approved_by || "",
+    approved_from_status: row.approved_from_status || "",
+    approval_version: toNumber(row.approval_version),
     entregado_at: row.entregado_at || null,
     rejected_at: row.rejected_at || null,
     rejected_by: row.rejected_by || "",
@@ -1201,103 +1207,6 @@ const fetchCustomerOrderItems = async (queryable: any, orderIds: number[]) => {
   }
 
   return grouped;
-};
-
-const ensureSupplierOrderForCustomerOrder = async (client: any, customerOrder: any, shortageItems: any[], userName: string) => {
-  const validShortages = shortageItems.filter((item: any) => toNumber(item.cantidad) > 0);
-
-  if (!validShortages.length) {
-    return null;
-  }
-
-  const existingResult = await client.query(
-    `SELECT id, numero_pedido
-     FROM supplier_orders
-     WHERE customer_order_id = $1 AND estado <> 'entregado'
-     ORDER BY id DESC
-     LIMIT 1`,
-    [toNumber(customerOrder.id)]
-  );
-
-  let supplierOrderId: number;
-  let supplierOrderNumber: number;
-
-  if (existingResult.rowCount) {
-    supplierOrderId = toNumber(existingResult.rows[0]?.id);
-    supplierOrderNumber = toNumber(existingResult.rows[0]?.numero_pedido);
-
-    await client.query(`DELETE FROM supplier_order_items WHERE order_id = $1`, [supplierOrderId]);
-    await client.query(
-      `UPDATE supplier_orders
-       SET cliente = $1,
-           cliente_id = $2,
-           notes = $3,
-           estado = CASE WHEN estado = 'entregado' THEN estado ELSE 'pendiente' END
-       WHERE id = $4`,
-      [
-        customerOrder.cliente || customerOrder.nombre_apellido || 'Pedido cliente',
-        customerOrder.cliente_id || null,
-        `Faltante generado por Pedido Cliente #${customerOrder.numero_pedido || customerOrder.id}`,
-        supplierOrderId,
-      ]
-    );
-  } else {
-    supplierOrderNumber = await getAndIncrementSetting(client, "next_order_number");
-    const orderResult = await client.query(
-      `INSERT INTO supplier_orders (numero_pedido, cliente, cliente_id, customer_order_id, estado, notes)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id`,
-      [
-        supplierOrderNumber,
-        customerOrder.cliente || customerOrder.nombre_apellido || 'Pedido cliente',
-        customerOrder.cliente_id || null,
-        toNumber(customerOrder.id),
-        'pendiente',
-        `Faltante generado por Pedido Cliente #${customerOrder.numero_pedido || customerOrder.id}`,
-      ]
-    );
-    supplierOrderId = toNumber(orderResult.rows[0]?.id);
-  }
-
-  for (const item of validShortages) {
-    await client.query(
-      `INSERT INTO supplier_order_items (order_id, product_id, cantidad)
-       VALUES ($1, $2, $3)`,
-      [supplierOrderId, toNumber(item.product_id), toNumber(item.cantidad)]
-    );
-  }
-
-  return { supplierOrderId, supplierOrderNumber };
-};
-
-const getCustomerOrderShortages = async (queryable: any, orderId: number) => {
-  const result = await queryable.query(
-    `SELECT
-       coi.product_id,
-       p.name AS product_name,
-       SUM(COALESCE(coi.cantidad, 0)) AS cantidad,
-       COALESCE(p.stock, 0) AS stock_actual
-     FROM customer_order_items coi
-     JOIN products p ON p.id = coi.product_id
-     WHERE coi.order_id = $1
-     GROUP BY coi.product_id, p.name, p.stock
-     ORDER BY p.name ASC`,
-    [orderId]
-  );
-
-  return result.rows
-    .map((row: any) => {
-      const cantidad = toNumber(row.cantidad);
-      const stockActual = Math.max(0, toNumber(row.stock_actual));
-      return {
-        product_id: toNumber(row.product_id),
-        product_name: row.product_name || 'Producto',
-        cantidad: Math.max(0, cantidad - stockActual),
-        solicitado: cantidad,
-        stock_actual: stockActual,
-      };
-    })
-    .filter((item: any) => item.cantidad > 0);
 };
 
 const handleCustomerOrders = async (req: any, res: any) => {
@@ -1518,77 +1427,31 @@ const handleCustomerOrders = async (req: any, res: any) => {
       return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })));
     }
 
-    const client = await pool.connect();
     try {
-      await client.query("BEGIN");
-
-      const orderResult = await client.query(
-        `SELECT co.*, c.nombre_apellido AS cliente, c.telefono AS cliente_telefono
-         FROM customer_orders co
-         JOIN clientes c ON c.id = co.cliente_id
-         WHERE co.id = $1
-         LIMIT 1`,
-        [id]
-      );
-
-      if (!orderResult.rowCount) {
-        await client.query("ROLLBACK");
-        return sendError(res, "Pedido no encontrado", 404);
-      }
-
-      const order = orderResult.rows[0];
-      if (order.estado !== "pendiente_aprobacion") {
-        await client.query("ROLLBACK");
-        return sendError(res, "Solo se pueden aprobar pedidos pendientes", 400);
-      }
-
-      const subtotal = toNumber(order.subtotal);
-      const discountType = parsed.data.descuento_tipo || "none";
-      const discountValue = toNumber(parsed.data.descuento_valor);
-      const discountAmount = calculateCustomerOrderDiscount(subtotal, discountType, discountValue);
-      const totalFinal = Math.max(0, subtotal - discountAmount);
-      const shortageItems = await getCustomerOrderShortages(client, id);
-      const supplierOrder = await ensureSupplierOrderForCustomerOrder(
-        client,
-        order,
-        shortageItems,
-        user.userName || "Sistema"
-      );
-
-      const result = await client.query(
-        `UPDATE customer_orders
-         SET estado = 'aprobado_pendiente_entrega',
-             descuento_tipo = $1,
-             descuento_valor = $2,
-             descuento_monto = $3,
-             total_final = $4,
-             admin_notes = $5,
-             aprobado_at = now()
-         WHERE id = $6
-         RETURNING *`,
-        [discountType, discountValue, discountAmount, totalFinal, parsed.data.admin_notes || null, id]
-      );
-
-      await client.query("COMMIT");
+      const result = await customerOrderApprovalService.approve({
+        customerOrderId: id,
+        discountType: parsed.data.descuento_tipo || "none",
+        discountValue: parsed.data.descuento_valor || 0,
+        adminNotes: parsed.data.admin_notes,
+        usuario: user.userName || "Sistema",
+        expectedApprovalVersion: parsed.data.expected_approval_version,
+        expectedRejectionVersion: parsed.data.expected_rejection_version,
+      });
 
       return sendSuccess(
         res,
-        {
-          ...result.rows[0],
-          supplierOrderGenerated: Boolean(supplierOrder),
-          supplierOrderId: supplierOrder?.supplierOrderId || null,
-          supplierOrderNumber: supplierOrder?.supplierOrderNumber || null,
-          shortageItems,
-        },
-        shortageItems.length > 0
-          ? "Pedido aprobado. Hay faltantes y se generó/actualizó un pedido a proveedor."
-          : "Pedido aprobado"
+        result,
+        result.shortageItems.length > 0
+          ? "Pedido aprobado. Hay faltantes y se generó un pedido a proveedor trazable."
+          : "Pedido aprobado con trazabilidad"
       );
     } catch (error: any) {
-      await client.query("ROLLBACK");
-      return sendError(res, error?.message || "Error al aprobar pedido", error?.statusCode || 400, error?.errors || []);
-    } finally {
-      client.release();
+      return sendError(
+        res,
+        error?.message || "Error al aprobar pedido",
+        error?.statusCode || 400,
+        error?.errors || []
+      );
     }
   }
 
