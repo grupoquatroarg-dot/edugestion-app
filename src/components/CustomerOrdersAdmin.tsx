@@ -182,6 +182,7 @@ export default function CustomerOrdersAdmin({
   const [adminNotes, setAdminNotes] = useState<Record<number, string>>({});
   const [editingOrderId, setEditingOrderId] = useState<number | null>(null);
   const [draftItems, setDraftItems] = useState<Record<number, any[]>>({});
+  const [editReasons, setEditReasons] = useState<Record<number, string>>({});
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -348,6 +349,15 @@ export default function CustomerOrdersAdmin({
       ...current,
       [order.id]: order.admin_notes || '',
     }));
+    setEditReasons((current) => ({
+      ...current,
+      [order.id]: '',
+    }));
+  };
+
+  const cancelEdit = (orderId: number) => {
+    setEditingOrderId(null);
+    setEditReasons((current) => ({ ...current, [orderId]: '' }));
   };
 
   const updateDraftQty = (
@@ -376,9 +386,14 @@ export default function CustomerOrdersAdmin({
 
   const saveOrderChanges = async (order: any) => {
     const items = getDraft(order);
+    const reason = (editReasons[order.id] || '').trim();
 
     if (!items.length) {
       alert('El pedido debe tener al menos un producto');
+      return;
+    }
+    if (reason.length < 3) {
+      alert('Ingresá un motivo del cambio de al menos 3 caracteres');
       return;
     }
 
@@ -398,6 +413,10 @@ export default function CustomerOrdersAdmin({
             descuento_tipo: discount.tipo,
             descuento_valor: Number(discount.valor || 0),
             admin_notes: adminNotes[order.id] || '',
+            motivo: reason,
+            expected_content_version: Number(order.content_version || 0),
+            expected_approval_version: Number(order.approval_version || 0),
+            expected_rejection_version: Number(order.rejection_version || 0),
           }),
         }
       );
@@ -405,6 +424,7 @@ export default function CustomerOrdersAdmin({
       unwrapResponse(body);
 
       setEditingOrderId(null);
+      setEditReasons((current) => ({ ...current, [order.id]: '' }));
       await fetchOrders();
       onChanged?.();
       alert('Pedido actualizado correctamente');
@@ -431,6 +451,7 @@ export default function CustomerOrdersAdmin({
               adminNotes[order.id] || order.admin_notes || '',
             expected_approval_version: Number(order.approval_version || 0),
             expected_rejection_version: Number(order.rejection_version || 0),
+            expected_content_version: Number(order.content_version || 0),
           }),
         }
       );
@@ -446,7 +467,7 @@ export default function CustomerOrdersAdmin({
           .join('\n');
 
         alert(
-          `Pedido aprobado. Hay productos sin stock y se generó/actualizó el Pedido a Proveedor #${
+          `Pedido aprobado. Hay productos sin stock y se generó el Pedido a Proveedor #${
             data.supplierOrderNumber || ''
           }.\n\n${detail}`
         );
@@ -1063,6 +1084,18 @@ export default function CustomerOrdersAdmin({
                       </div>
                     )}
 
+                    {Number(order.content_version || 0) > 0 && order.content_changed_at && (
+                      <div className="mt-2 rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs font-bold text-blue-700">
+                        <p>Contenido editado · versión {Number(order.content_version)}</p>
+                        <p className="mt-1 break-words">{order.content_change_reason}</p>
+                        <p className="mt-1 text-[11px] text-blue-600">
+                          {order.content_changed_by ? `Por ${order.content_changed_by}` : 'Usuario no informado'}
+                          {' · '}
+                          {formatBusinessDateTime(order.content_changed_at)}
+                        </p>
+                      </div>
+                    )}
+
                     {order.cancel_reason && (
                       <div className="mt-2 rounded-xl border border-red-100 bg-red-50 p-3 text-xs font-bold text-red-700">
                         <p>Cancelado: {order.cancel_reason}</p>
@@ -1313,6 +1346,26 @@ export default function CustomerOrdersAdmin({
                           placeholder="Observación para el cliente"
                         />
 
+                        {editing && (
+                          <div className="space-y-2 rounded-xl border border-blue-100 bg-blue-50 p-3">
+                            <input
+                              value={editReasons[order.id] || ''}
+                              onChange={(event) =>
+                                setEditReasons((current) => ({
+                                  ...current,
+                                  [order.id]: event.target.value,
+                                }))
+                              }
+                              maxLength={500}
+                              className="w-full rounded-xl border border-blue-100 bg-white px-3 py-2 text-sm font-bold"
+                              placeholder="Motivo obligatorio del cambio"
+                            />
+                            <p className="text-[11px] font-semibold leading-5 text-blue-700">
+                              Se guardarán snapshots antes y después, usuario, fecha y versión.
+                            </p>
+                          </div>
+                        )}
+
                         {editing ? (
                           <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
                             <button
@@ -1323,7 +1376,7 @@ export default function CustomerOrdersAdmin({
                               <Save size={16} /> Guardar
                             </button>
                             <button
-                              onClick={() => setEditingOrderId(null)}
+                              onClick={() => cancelEdit(order.id)}
                               className="py-3 bg-white border border-zinc-200 text-zinc-700 rounded-xl font-black uppercase text-xs"
                             >
                               Cancelar
@@ -1334,17 +1387,22 @@ export default function CustomerOrdersAdmin({
                             onClick={() => startEdit(order)}
                             className="w-full py-3 bg-white border border-amber-200 text-amber-700 rounded-xl font-black uppercase text-xs flex items-center justify-center gap-2"
                           >
-                            <Edit3 size={16} /> Editar cantidades
+                            <Edit3 size={16} /> Editar pedido
                           </button>
                         )}
 
                         <button
-                          disabled={actionLoading === order.id}
+                          disabled={actionLoading === order.id || editing}
                           onClick={() => approveOrder(order)}
                           className="w-full py-3 bg-emerald-600 text-white rounded-xl font-black uppercase text-xs flex items-center justify-center gap-2 disabled:opacity-50"
                         >
                           <CheckCircle2 size={16} /> Aprobar pedido
                         </button>
+                        {editing && (
+                          <p className="text-center text-[11px] font-semibold text-amber-700">
+                            Guardá o cancelá la edición antes de aprobar.
+                          </p>
+                        )}
 
                         <div className="border-t border-amber-100 pt-3 space-y-2">
                           <input

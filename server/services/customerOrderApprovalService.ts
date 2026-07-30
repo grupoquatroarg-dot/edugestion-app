@@ -13,6 +13,7 @@ type ApprovalInput = {
   usuario: string;
   expectedApprovalVersion: number;
   expectedRejectionVersion: number;
+  expectedContentVersion: number;
 };
 
 const toNumber = (value: unknown, fallback = 0) => {
@@ -32,6 +33,9 @@ const validateInput = (input: ApprovalInput) => {
   }
   if (!Number.isInteger(input.expectedRejectionVersion) || input.expectedRejectionVersion < 0) {
     throw new AppError("Versión de rechazo inválida", 400);
+  }
+  if (!Number.isInteger(input.expectedContentVersion) || input.expectedContentVersion < 0) {
+    throw new AppError("Versión de contenido inválida", 400);
   }
 
   const discountType = input.discountType || "none";
@@ -141,6 +145,9 @@ export const customerOrderApprovalService = {
       }
       if (toNumber(order.rejection_version) !== input.expectedRejectionVersion) {
         throw new AppError("El ciclo de rechazo del pedido cambió mientras la pantalla estaba abierta", 409);
+      }
+      if (toNumber(order.content_version) !== input.expectedContentVersion) {
+        throw new AppError("El contenido del pedido cambió mientras la pantalla estaba abierta", 409);
       }
 
       const activeRejectionResult = await client.query(
@@ -333,6 +340,7 @@ export const customerOrderApprovalService = {
            AND estado = 'pendiente_aprobacion'
            AND COALESCE(approval_version, 0) = $12
            AND COALESCE(rejection_version, 0) = $13
+           AND COALESCE(content_version, 0) = $14
          RETURNING *`,
         [
           subtotal,
@@ -348,6 +356,7 @@ export const customerOrderApprovalService = {
           input.customerOrderId,
           input.expectedApprovalVersion,
           input.expectedRejectionVersion,
+          input.expectedContentVersion,
         ]
       );
       if (!updateResult.rowCount) {

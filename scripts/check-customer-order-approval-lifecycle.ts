@@ -36,6 +36,7 @@ for (const token of [
   "FOR UPDATE OF coi, p",
   "expectedApprovalVersion",
   "expectedRejectionVersion",
+  "expectedContentVersion",
   "El pedido ya tiene un pedido a proveedor activo",
   "FROM supplier_orders",
   "estado <> 'cancelado'",
@@ -54,10 +55,12 @@ assert(!service.includes("UPDATE supplier_orders\n"), "La aprobación todavía m
 assert(api.includes("customerOrderApprovalService.approve"), "Vercel no delega la aprobación al servicio seguro.");
 assert(api.includes("expected_approval_version"), "Vercel no exige la versión de aprobación.");
 assert(api.includes("expected_rejection_version"), "Vercel no exige la versión de rechazo.");
+assert(api.includes("expected_content_version"), "Vercel no exige la versión de contenido.");
 assert(!api.includes("ensureSupplierOrderForCustomerOrder"), "Vercel conserva el helper que sobrescribía pedidos a proveedor.");
 assert(!api.includes("getCustomerOrderShortages"), "Vercel conserva la generación directa anterior de faltantes.");
 assert(ui.includes("expected_approval_version: Number(order.approval_version || 0)"), "La interfaz no envía la versión de aprobación.");
 assert(ui.includes("expected_rejection_version: Number(order.rejection_version || 0)"), "La interfaz no envía la versión de rechazo.");
+assert(ui.includes("expected_content_version: Number(order.content_version || 0)"), "La interfaz no envía la versión de contenido.");
 assert(ui.includes("Aprobación auditada · versión"), "La interfaz no muestra la trazabilidad de aprobación.");
 assert(packageJson.includes("check:customer-order-approval-lifecycle"), "package.json no registra la auditoría de la Fase 8.14.");
 
@@ -104,6 +107,7 @@ const baseState = (): State => ({
     rejected_at: null,
     rejection_version: 0,
     approval_version: 0,
+    content_version: 0,
   },
   items: [
     { id: 1, product_id: 10, cantidad: 3, precio_unitario: 500 },
@@ -122,6 +126,7 @@ const baseState = (): State => ({
 type ApprovalOptions = {
   expectedApprovalVersion?: number;
   expectedRejectionVersion?: number;
+  expectedContentVersion?: number;
   discountType?: "none" | "percentage" | "fixed";
   discountValue?: number;
   failAfterSupplierOrder?: boolean;
@@ -140,11 +145,15 @@ const approveModel = (state: State, options: ApprovalOptions = {}) => {
 
     const expectedApprovalVersion = options.expectedApprovalVersion ?? 0;
     const expectedRejectionVersion = options.expectedRejectionVersion ?? 0;
+    const expectedContentVersion = options.expectedContentVersion ?? 0;
     if (state.order.approval_version !== expectedApprovalVersion) {
       throw new Error("Versión de aprobación desactualizada");
     }
     if (state.order.rejection_version !== expectedRejectionVersion) {
       throw new Error("Versión de rechazo desactualizada");
+    }
+    if (state.order.content_version !== expectedContentVersion) {
+      throw new Error("Versión de contenido desactualizada");
     }
 
     const activeSupplierOrders = state.supplierOrders.filter((order) => order.estado !== "cancelado");
@@ -291,6 +300,20 @@ const approveModel = (state: State, options: ApprovalOptions = {}) => {
 
 {
   const state = baseState();
+  state.order.content_version = 2;
+  const before = clone(state);
+  let blocked = false;
+  try {
+    approveModel(state, { expectedContentVersion: 1 });
+  } catch {
+    blocked = true;
+  }
+  assert(blocked, "Una pestaña antigua pudo aprobar después de editar el contenido.");
+  assert(JSON.stringify(state) === JSON.stringify(before), "El bloqueo por contenido dejó cambios parciales.");
+}
+
+{
+  const state = baseState();
   state.products[0].active = false;
   const before = clone(state);
   let blocked = false;
@@ -351,6 +374,7 @@ class FakeApprovalClient {
     rejected_at: null,
     rejection_version: 0,
     approval_version: 0,
+    content_version: 0,
   };
   items = [
     {
@@ -432,6 +456,7 @@ class FakeApprovalClient {
         this.order.estado !== "pendiente_aprobacion"
         || this.order.approval_version !== params[11]
         || this.order.rejection_version !== params[12]
+        || this.order.content_version !== params[13]
       ) {
         return { rows: [], rowCount: 0 };
       }
@@ -467,6 +492,7 @@ class FakeApprovalClient {
       usuario: "Auditor integración",
       expectedApprovalVersion: 0,
       expectedRejectionVersion: 0,
+      expectedContentVersion: 0,
     },
     fake
   );
