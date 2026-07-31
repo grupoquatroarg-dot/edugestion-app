@@ -6,28 +6,38 @@ import { requireAuth, requirePermission } from '../middleware/authMiddleware.js'
 import { validate } from '../middleware/validate.js';
 import { sendSuccess, sendError } from '../utils/response.js';
 import { customerLifecycleService } from '../services/customerLifecycleService.js';
+import { customerContentLifecycleService } from '../services/customerContentLifecycleService.js';
 
 const router = Router();
 
 const optionalEmailSchema = z.string().email('Email inválido').optional().or(z.literal(''));
 
-const clientSchema = z.object({
-  body: z.object({
-    nombre_apellido: z.string().min(3, 'El nombre debe tener al menos 3 caracteres'),
-    razon_social: z.string().optional(),
-    cuit: z.string().optional(),
-    telefono: z.string().optional(),
-    email: optionalEmailSchema,
-    direccion: z.string().optional(),
-    localidad: z.string().optional(),
-    provincia: z.string().optional(),
-    codigo_postal: z.string().optional(),
-    latitud: z.number().nullable().optional(),
-    longitud: z.number().nullable().optional(),
-    observaciones: z.string().optional(),
-    tipo_cliente: z.enum(['minorista', 'mayorista']).default('minorista'),
-    lista_precio: z.string().default('lista1'),
-    limite_credito: z.number().min(0).default(0),
+const clientBodySchema = z.object({
+  nombre_apellido: z.string().min(2, 'El nombre debe tener al menos 2 caracteres'),
+  razon_social: z.string().optional().nullable(),
+  cuit: z.string().optional().nullable(),
+  telefono: z.string().optional().nullable(),
+  email: optionalEmailSchema.nullable(),
+  direccion: z.string().optional().nullable(),
+  localidad: z.string().optional().nullable(),
+  provincia: z.string().optional().nullable(),
+  codigo_postal: z.string().optional().nullable(),
+  latitud: z.number().nullable().optional(),
+  longitud: z.number().nullable().optional(),
+  observaciones: z.string().optional().nullable(),
+  tipo_cliente: z.enum(['minorista', 'mayorista']).default('minorista'),
+  lista_precio: z.enum(['lista1', 'lista2', 'lista3']).default('lista1'),
+  limite_credito: z.number().min(0).default(0),
+  portal_enabled: z.union([z.boolean(), z.number()]).optional().nullable(),
+  portal_username: z.string().optional().nullable(),
+  portal_password: z.string().optional().nullable(),
+});
+
+const clientSchema = z.object({ body: clientBodySchema });
+const customerContentSchema = z.object({
+  body: clientBodySchema.extend({
+    motivo: z.string().trim().min(3, 'El motivo debe tener al menos 3 caracteres').max(500),
+    expectedContentVersion: z.number().int().min(0),
   }),
 });
 
@@ -64,9 +74,36 @@ router.post('/', requireAuth, requirePermission('customers', 'create'), validate
   return sendSuccess(res, { id, ...req.body }, 'Cliente creado exitosamente', 201);
 });
 
-router.put('/:id', requireAuth, requirePermission('customers', 'edit'), validate(clientSchema), async (req, res) => {
-  await clientRepository.update(req.params.id, req.body);
-  return sendSuccess(res, null, 'Cliente actualizado exitosamente');
+router.put('/:id', requireAuth, requirePermission('customers', 'edit'), validate(customerContentSchema), async (req, res) => {
+  try {
+    const result = await customerContentLifecycleService.update({
+      customerId: Number(req.params.id),
+      nombreApellido: req.body.nombre_apellido,
+      razonSocial: req.body.razon_social,
+      cuit: req.body.cuit,
+      telefono: req.body.telefono,
+      email: req.body.email,
+      direccion: req.body.direccion,
+      localidad: req.body.localidad,
+      provincia: req.body.provincia,
+      codigoPostal: req.body.codigo_postal,
+      latitud: req.body.latitud,
+      longitud: req.body.longitud,
+      observaciones: req.body.observaciones,
+      tipoCliente: req.body.tipo_cliente,
+      listaPrecio: req.body.lista_precio,
+      limiteCredito: req.body.limite_credito,
+      portalEnabled: req.body.portal_enabled,
+      portalUsername: req.body.portal_username,
+      portalPassword: req.body.portal_password,
+      motivo: req.body.motivo,
+      usuario: (req as any).user?.userName || 'Sistema',
+      expectedContentVersion: req.body.expectedContentVersion,
+    });
+    return sendSuccess(res, result, 'Cliente actualizado con trazabilidad');
+  } catch (error: any) {
+    return sendError(res, error.message || 'No se pudo actualizar el cliente', error.statusCode || 400, error.errors || []);
+  }
 });
 
 router.post('/:id/deactivate', requireAuth, requirePermission('customers', 'delete'), validate(lifecycleSchema), async (req, res) => {

@@ -8,6 +8,7 @@ import { getPostgresPool } from "../server/utils/postgres.js";
 import { salesService } from "../server/services/salesService.js";
 import { customerOrderCancellationService } from "../server/services/customerOrderCancellationService.js";
 import { customerLifecycleService, type CustomerLifecycleAction } from "../server/services/customerLifecycleService.js";
+import { customerContentLifecycleService } from "../server/services/customerContentLifecycleService.js";
 import { userLifecycleService, type UserLifecycleAction } from "../server/services/userLifecycleService.js";
 import { userPermissionLifecycleService } from "../server/services/userPermissionLifecycleService.js";
 import { requireBearerUser } from "../server/services/currentUserAuthService.js";
@@ -37,6 +38,12 @@ const clientSchema = z.object({
   portal_enabled: z.union([z.boolean(), z.number()]).optional().nullable(),
   portal_username: z.string().optional().nullable(),
   portal_password: z.string().optional().nullable(),
+});
+
+
+const customerContentSchema = clientSchema.extend({
+  motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
+  expectedContentVersion: z.number().int().min(0),
 });
 
 const customerLifecycleSchema = z.object({
@@ -2825,7 +2832,7 @@ export default async function handler(req: any, res: any) {
       return sendError(res, "ID de cliente inválido", 400);
     }
 
-    const parsed = clientSchema.safeParse(normalizeClientBody(getBody(req)));
+    const parsed = customerContentSchema.safeParse(normalizeClientBody(getBody(req)));
 
     if (!parsed.success) {
       return sendError(
@@ -2840,19 +2847,31 @@ export default async function handler(req: any, res: any) {
     }
 
     try {
-      const currentCustomer = await clientRepository.findById(id);
-      if (!currentCustomer) return sendError(res, "Cliente no encontrado", 404);
-      if (Number(currentCustomer.activo ?? 1) === 0 && parsed.data.portal_enabled) {
-        return sendError(
-          res,
-          "Reactivá el cliente antes de habilitar nuevamente su acceso al portal.",
-          409
-        );
-      }
-
-      await clientRepository.update(id, parsed.data as any);
-      const cliente = await clientRepository.findById(id);
-      return sendSuccess(res, cliente, "Cliente actualizado exitosamente");
+      const cliente = await customerContentLifecycleService.update({
+        customerId: id,
+        nombreApellido: parsed.data.nombre_apellido,
+        razonSocial: parsed.data.razon_social,
+        cuit: parsed.data.cuit,
+        telefono: parsed.data.telefono,
+        email: parsed.data.email,
+        direccion: parsed.data.direccion,
+        localidad: parsed.data.localidad,
+        provincia: parsed.data.provincia,
+        codigoPostal: parsed.data.codigo_postal,
+        latitud: parsed.data.latitud,
+        longitud: parsed.data.longitud,
+        observaciones: parsed.data.observaciones,
+        tipoCliente: parsed.data.tipo_cliente || "minorista",
+        listaPrecio: parsed.data.lista_precio,
+        limiteCredito: parsed.data.limite_credito,
+        portalEnabled: parsed.data.portal_enabled,
+        portalUsername: parsed.data.portal_username,
+        portalPassword: parsed.data.portal_password,
+        motivo: parsed.data.motivo,
+        usuario: user.userName || "Sistema",
+        expectedContentVersion: parsed.data.expectedContentVersion,
+      });
+      return sendSuccess(res, cliente, "Cliente actualizado con trazabilidad");
     } catch (error: any) {
       return sendError(res, error?.message || "Error al actualizar cliente", error?.statusCode || 400, error?.errors || []);
     }

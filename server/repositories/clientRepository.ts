@@ -30,6 +30,10 @@ export interface Client {
   deactivated_at?: string | null;
   deactivated_by?: string | null;
   deactivation_reason?: string | null;
+  content_version?: number;
+  content_changed_at?: string | null;
+  content_changed_by?: string | null;
+  content_change_reason?: string | null;
 }
 
 const toNumber = (value: any, fallback: number = 0) => {
@@ -71,6 +75,10 @@ const mapClient = (row: any): Client | undefined => {
     deactivated_at: row.deactivated_at ?? null,
     deactivated_by: row.deactivated_by ?? null,
     deactivation_reason: row.deactivation_reason ?? null,
+    content_version: toNumber(row.content_version),
+    content_changed_at: row.content_changed_at ?? null,
+    content_changed_by: row.content_changed_by ?? null,
+    content_change_reason: row.content_change_reason ?? null,
   };
 };
 

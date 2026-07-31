@@ -34,6 +34,10 @@ interface Cliente {
   deactivated_at?: string | null;
   deactivated_by?: string | null;
   deactivation_reason?: string | null;
+  content_version?: number;
+  content_changed_at?: string | null;
+  content_changed_by?: string | null;
+  content_change_reason?: string | null;
 }
 
 export default function CustomerModule() {
@@ -48,6 +52,7 @@ export default function CustomerModule() {
   const [selectedClienteId, setSelectedClienteId] = useState<number | null>(null);
   const [initialDetailTab, setInitialDetailTab] = useState<'ventas' | 'movimientos' | 'pedidos'>('ventas');
   const [editingCliente, setEditingCliente] = useState<Cliente | null>(null);
+  const [contentChangeReason, setContentChangeReason] = useState('');
   const [lifecycleTarget, setLifecycleTarget] = useState<{ cliente: Cliente; action: 'deactivate' | 'reactivate' } | null>(null);
   const [lifecycleReason, setLifecycleReason] = useState('');
   const [lifecycleLoading, setLifecycleLoading] = useState(false);
@@ -167,6 +172,12 @@ export default function CustomerModule() {
     e.preventDefault();
     const url = editingCliente ? `/api/clientes?id=${editingCliente.id}` : '/api/clientes';
     const method = editingCliente ? 'PUT' : 'POST';
+    const reason = contentChangeReason.trim();
+
+    if (editingCliente && reason.length < 3) {
+      alert('Ingresá un motivo de al menos 3 caracteres para guardar la edición.');
+      return;
+    }
 
     try {
       const direccion = formData.direccion.trim();
@@ -181,7 +192,13 @@ export default function CustomerModule() {
           codigo_postal: formData.codigo_postal.trim() || (direccion ? '2138' : ''),
           latitud: hasCoordinates ? Number(formData.latitud) : null,
           longitud: hasCoordinates ? Number(formData.longitud) : null,
-          telefono: normalizeArgentinaPhone(formData.telefono)
+          telefono: normalizeArgentinaPhone(formData.telefono),
+          ...(editingCliente
+            ? {
+                motivo: reason,
+                expectedContentVersion: Number(editingCliente.content_version || 0),
+              }
+            : {})
         })
       });
       
@@ -190,9 +207,9 @@ export default function CustomerModule() {
 
       fetchClientes(false);
       closeModal();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error saving customer:", error);
-      alert("Error al guardar el cliente");
+      alert(error?.message || "Error al guardar el cliente");
     }
   };
 
@@ -241,6 +258,7 @@ export default function CustomerModule() {
 
     if (cliente) {
       setEditingCliente(cliente);
+      setContentChangeReason('');
       setFormData({
         nombre_apellido: cliente.nombre_apellido,
         razon_social: cliente.razon_social || '',
@@ -273,6 +291,7 @@ export default function CustomerModule() {
       }
 
       setEditingCliente(null);
+      setContentChangeReason('');
       setFormData({
         nombre_apellido: '',
         razon_social: '',
@@ -310,6 +329,7 @@ export default function CustomerModule() {
   const closeModal = () => {
     setIsModalOpen(false);
     setEditingCliente(null);
+    setContentChangeReason('');
     restoreTriggerFocus();
   };
 
@@ -1039,6 +1059,39 @@ export default function CustomerModule() {
                   <label htmlFor="customer-notes" className="mb-2 block text-[10px] font-black uppercase tracking-wider text-slate-500">Observaciones</label>
                   <textarea id="customer-notes" className="min-h-28 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" value={formData.observaciones || ''} onChange={(event) => setFormData({ ...formData, observaciones: event.target.value })} placeholder="Notas internas, referencias o condiciones especiales..." />
                 </section>
+
+                {editingCliente && (
+                  <section className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 sm:p-5">
+                    <div className="flex items-start gap-3">
+                      <div className="rounded-xl bg-amber-100 p-2 text-amber-700"><ShieldCheck size={18} /></div>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="text-sm font-black text-slate-950">Trazabilidad de la edición</h3>
+                        <p className="mt-1 text-xs leading-5 text-slate-600">
+                          Explicá por qué se modifican los datos del cliente. El sistema guardará una copia antes y después.
+                        </p>
+                      </div>
+                    </div>
+                    <label htmlFor="customer-content-reason" className="mb-2 mt-4 block text-[10px] font-black uppercase tracking-wider text-slate-600">Motivo de la edición *</label>
+                    <textarea
+                      id="customer-content-reason"
+                      required
+                      minLength={3}
+                      maxLength={500}
+                      className="min-h-24 w-full resize-y rounded-xl border border-amber-200 bg-white px-4 py-3 outline-none focus:border-amber-400 focus:ring-4 focus:ring-amber-100"
+                      value={contentChangeReason}
+                      onChange={(event) => setContentChangeReason(event.target.value)}
+                      placeholder="Ej.: actualización solicitada por el cliente"
+                    />
+                    <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-bold text-slate-600">
+                      <span className="rounded-full bg-white px-3 py-1.5">Versión actual: {Number(editingCliente.content_version || 0)}</span>
+                      {editingCliente.content_changed_at && (
+                        <span className="rounded-full bg-white px-3 py-1.5">
+                          Última edición: {editingCliente.content_changed_by || 'Usuario no informado'} · {new Date(editingCliente.content_changed_at).toLocaleString('es-AR')}
+                        </span>
+                      )}
+                    </div>
+                  </section>
+                )}
               </div>
 
               <div className="sticky bottom-0 -mx-4 mt-6 border-t border-slate-100 bg-white/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 backdrop-blur sm:-mx-6 sm:px-6">

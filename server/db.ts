@@ -296,7 +296,11 @@ export function initDb() {
       portal_password_hash TEXT,
       deactivated_at DATETIME,
       deactivated_by TEXT,
-      deactivation_reason TEXT
+      deactivation_reason TEXT,
+      content_version INTEGER NOT NULL DEFAULT 0 CHECK(content_version >= 0),
+      content_changed_at DATETIME,
+      content_changed_by TEXT,
+      content_change_reason TEXT CHECK(content_change_reason IS NULL OR length(trim(content_change_reason)) BETWEEN 3 AND 500)
     );
 
     CREATE TABLE IF NOT EXISTS customer_status_history (
@@ -311,6 +315,25 @@ export function initDb() {
       snapshot TEXT NOT NULL DEFAULT '{}',
       FOREIGN KEY (customer_id) REFERENCES clientes(id)
     );
+
+    CREATE TABLE IF NOT EXISTS customer_content_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL,
+      version INTEGER NOT NULL CHECK(version > 0),
+      reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 3 AND 500),
+      changed_by TEXT NOT NULL,
+      changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      before_snapshot TEXT NOT NULL DEFAULT '{}',
+      after_snapshot TEXT NOT NULL DEFAULT '{}',
+      UNIQUE (customer_id, version),
+      FOREIGN KEY (customer_id) REFERENCES clientes(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_customer_content_history_customer
+      ON customer_content_history (customer_id, changed_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_clientes_content_changed_at
+      ON clientes (content_changed_at DESC);
 
     CREATE TABLE IF NOT EXISTS sales (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1369,6 +1392,30 @@ export function initDb() {
   try { db.exec("ALTER TABLE clientes ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN deactivated_by TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN deactivation_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE clientes ADD COLUMN content_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE clientes ADD COLUMN content_changed_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE clientes ADD COLUMN content_changed_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE clientes ADD COLUMN content_change_reason TEXT"); } catch (e) {}
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS customer_content_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        customer_id INTEGER NOT NULL,
+        version INTEGER NOT NULL CHECK(version > 0),
+        reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 3 AND 500),
+        changed_by TEXT NOT NULL,
+        changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        before_snapshot TEXT NOT NULL DEFAULT '{}',
+        after_snapshot TEXT NOT NULL DEFAULT '{}',
+        UNIQUE (customer_id, version),
+        FOREIGN KEY (customer_id) REFERENCES clientes(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_customer_content_history_customer
+        ON customer_content_history (customer_id, changed_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_clientes_content_changed_at
+        ON clientes (content_changed_at DESC);
+    `);
+  } catch (e) {}
 
   try { db.exec("ALTER TABLE sales ADD COLUMN notes TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE sales ADD COLUMN usuario TEXT"); } catch (e) {}

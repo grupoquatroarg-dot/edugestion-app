@@ -167,7 +167,11 @@ const runStaticAudit = () => {
   assert(api.includes("active_only"), "La API no permite solicitar clientes activos.");
   assert(api.includes("La eliminación física de clientes está deshabilitada"), "DELETE físico no está bloqueado.");
   assert(api.includes("El acceso al portal de este cliente está deshabilitado"), "El portal no bloquea clientes inactivos.");
-  assert(api.includes("Reactivá el cliente antes de habilitar nuevamente su acceso al portal"), "Editar no protege el portal de clientes inactivos.");
+  const contentService = read("server/services/customerContentLifecycleService.ts");
+  assert(
+    contentService.includes("El cliente está inactivo. Reactivalo antes de editarlo"),
+    "Editar no protege los datos ni el portal de clientes inactivos."
+  );
   assert(api.includes("La ruta contiene uno o más clientes inactivos"), "Las rutas no validan clientes activos.");
 
   const expressRoutes = read("server/routes/clientRoutes.ts");
