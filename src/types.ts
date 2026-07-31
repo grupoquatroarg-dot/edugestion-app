@@ -133,6 +133,10 @@ export interface ChecklistTemplate {
   reactivated_at?: string | null;
   reactivated_by?: string | null;
   reactivation_reason?: string | null;
+  content_version?: number;
+  content_changed_at?: string | null;
+  content_changed_by?: string | null;
+  content_change_reason?: string | null;
   created_at: string;
   items?: ChecklistTemplateItem[];
 }

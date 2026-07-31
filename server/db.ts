@@ -336,7 +336,7 @@ export function initDb() {
       status_changed_from TEXT,
       status_last_action TEXT,
       status_last_reason TEXT,
-      content_version INTEGER NOT NULL DEFAULT 0,
+      content_version INTEGER NOT NULL DEFAULT 0 CHECK(content_version >= 0),
       content_changed_at DATETIME,
       content_changed_by TEXT,
       content_change_reason TEXT,
@@ -456,6 +456,10 @@ export function initDb() {
       reactivated_at DATETIME,
       reactivated_by TEXT,
       reactivation_reason TEXT,
+      content_version INTEGER NOT NULL DEFAULT 0,
+      content_changed_at DATETIME,
+      content_changed_by TEXT,
+      content_change_reason TEXT CHECK(content_change_reason IS NULL OR length(trim(content_change_reason)) BETWEEN 3 AND 500),
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -471,6 +475,28 @@ export function initDb() {
       snapshot TEXT NOT NULL DEFAULT '{}',
       FOREIGN KEY (template_id) REFERENCES checklist_templates(id)
     );
+
+    CREATE TABLE IF NOT EXISTS checklist_template_content_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      template_id INTEGER NOT NULL,
+      version INTEGER NOT NULL CHECK(version > 0),
+      status_at_change TEXT NOT NULL CHECK(status_at_change = 'activa'),
+      reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 3 AND 500),
+      changed_by TEXT NOT NULL,
+      changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      template_before_snapshot TEXT NOT NULL DEFAULT '{}',
+      items_before_snapshot TEXT NOT NULL DEFAULT '[]',
+      template_after_snapshot TEXT NOT NULL DEFAULT '{}',
+      items_after_snapshot TEXT NOT NULL DEFAULT '[]',
+      UNIQUE (template_id, version),
+      FOREIGN KEY (template_id) REFERENCES checklist_templates(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_checklist_template_content_history_template
+      ON checklist_template_content_history (template_id, changed_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_checklist_templates_content_changed_at
+      ON checklist_templates (content_changed_at DESC);
 
     CREATE TABLE IF NOT EXISTS checklist_template_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1087,6 +1113,33 @@ export function initDb() {
   try { db.exec("ALTER TABLE checklist_templates ADD COLUMN reactivated_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE checklist_templates ADD COLUMN reactivated_by TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE checklist_templates ADD COLUMN reactivation_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE checklist_templates ADD COLUMN content_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE checklist_templates ADD COLUMN content_changed_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE checklist_templates ADD COLUMN content_changed_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE checklist_templates ADD COLUMN content_change_reason TEXT"); } catch (e) {}
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS checklist_template_content_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        template_id INTEGER NOT NULL,
+        version INTEGER NOT NULL CHECK(version > 0),
+        status_at_change TEXT NOT NULL CHECK(status_at_change = 'activa'),
+        reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 3 AND 500),
+        changed_by TEXT NOT NULL,
+        changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        template_before_snapshot TEXT NOT NULL DEFAULT '{}',
+        items_before_snapshot TEXT NOT NULL DEFAULT '[]',
+        template_after_snapshot TEXT NOT NULL DEFAULT '{}',
+        items_after_snapshot TEXT NOT NULL DEFAULT '[]',
+        UNIQUE (template_id, version),
+        FOREIGN KEY (template_id) REFERENCES checklist_templates(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_checklist_template_content_history_template
+        ON checklist_template_content_history (template_id, changed_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_checklist_templates_content_changed_at
+        ON checklist_templates (content_changed_at DESC);
+    `);
+  } catch (e) {}
 
   try { db.exec("ALTER TABLE routes ADD COLUMN finalization_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { db.exec("ALTER TABLE routes ADD COLUMN finalized_at DATETIME"); } catch (e) {}

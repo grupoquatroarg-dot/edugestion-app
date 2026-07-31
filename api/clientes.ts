@@ -12,6 +12,7 @@ import { userLifecycleService, type UserLifecycleAction } from "../server/servic
 import { userPermissionLifecycleService } from "../server/services/userPermissionLifecycleService.js";
 import { requireBearerUser } from "../server/services/currentUserAuthService.js";
 import { checklistTemplateLifecycleService, type ChecklistTemplateLifecycleAction } from "../server/services/checklistTemplateLifecycleService.js";
+import { checklistTemplateContentLifecycleService } from "../server/services/checklistTemplateContentLifecycleService.js";
 import { routeLifecycleService, type RouteLifecycleAction } from "../server/services/routeLifecycleService.js";
 import { routeItemLifecycleService, type RouteItemLifecycleAction } from "../server/services/routeItemLifecycleService.js";
 import { routeOperationalLifecycleService, type RouteOperationalAction } from "../server/services/routeOperationalLifecycleService.js";
@@ -1072,10 +1073,15 @@ const requireChecklistPermission = async (req: any, res: any, action: keyof type
 };
 
 const checklistTemplateSchema = z.object({
-  name: z.string().min(2, "Nombre de plantilla requerido"),
-  description: z.string().optional().nullable(),
-  type: z.string().optional().nullable(),
-  items: z.array(z.string().min(1)).min(1, "Debe incluir al menos una tarea"),
+  name: z.string().min(2, "Nombre de plantilla requerido").max(200),
+  description: z.string().max(2000).optional().nullable(),
+  type: z.enum(["Apertura", "Cierre", "Ruta", "General"]).optional().nullable(),
+  items: z.array(z.string().trim().min(1).max(500)).min(1, "Debe incluir al menos una tarea").max(200),
+});
+
+const checklistTemplateContentSchema = checklistTemplateSchema.extend({
+  motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
+  expectedContentVersion: z.number().int().min(0),
 });
 
 const checklistTemplateLifecycleSchema = z.object({
@@ -1115,6 +1121,10 @@ const mapChecklistTemplate = (row: any) => ({
   reactivated_at: row.reactivated_at || null,
   reactivated_by: row.reactivated_by || null,
   reactivation_reason: row.reactivation_reason || null,
+  content_version: toNumber(row.content_version),
+  content_changed_at: row.content_changed_at || null,
+  content_changed_by: row.content_changed_by || null,
+  content_change_reason: row.content_change_reason || null,
   created_at: row.created_at || null,
 });
 
@@ -1203,6 +1213,7 @@ const handleChecklist = async (req: any, res: any) => {
             SELECT id, name, description, type, active,
                    deactivated_at, deactivated_by, deactivation_reason,
                    reactivated_at, reactivated_by, reactivation_reason,
+                   content_version, content_changed_at, content_changed_by, content_change_reason,
                    created_at
             FROM checklist_templates
             ORDER BY created_at DESC, id DESC
@@ -1280,6 +1291,7 @@ const handleChecklist = async (req: any, res: any) => {
             SELECT id, name, description, type, active,
                    deactivated_at, deactivated_by, deactivation_reason,
                    reactivated_at, reactivated_by, reactivation_reason,
+                   content_version, content_changed_at, content_changed_by, content_change_reason,
                    created_at
             FROM checklist_templates
             WHERE id = $1
@@ -1317,7 +1329,7 @@ const handleChecklist = async (req: any, res: any) => {
       const user = await requireChecklistPermission(req, res, "edit");
       if (!user) return;
 
-      const parsed = checklistTemplateSchema.safeParse(getBody(req));
+      const parsed = checklistTemplateContentSchema.safeParse(getBody(req));
       if (!parsed.success) {
         return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
           path: issue.path.join("."),
@@ -1325,54 +1337,20 @@ const handleChecklist = async (req: any, res: any) => {
         })));
       }
 
-      const client = await pool.connect();
       try {
-        await client.query("BEGIN");
-
-        const currentTemplateResult = await client.query(
-          `SELECT id, active FROM checklist_templates WHERE id = $1 LIMIT 1 FOR UPDATE`,
-          [id]
-        );
-        if (!currentTemplateResult.rowCount) {
-          throw Object.assign(new Error("Plantilla no encontrada"), { statusCode: 404 });
-        }
-        if (toNumber(currentTemplateResult.rows[0]?.active) !== 1) {
-          throw Object.assign(
-            new Error("La plantilla está inactiva. Reactivala antes de editarla."),
-            { statusCode: 409 }
-          );
-        }
-
-        await client.query(
-          `
-            UPDATE checklist_templates
-            SET name = $1, description = $2, type = $3
-            WHERE id = $4
-          `,
-          [
-            parsed.data.name,
-            parsed.data.description || null,
-            parsed.data.type || "General",
-            id,
-          ]
-        );
-
-        await client.query(`DELETE FROM checklist_template_items WHERE template_id = $1`, [id]);
-
-        for (const taskName of parsed.data.items) {
-          await client.query(
-            `INSERT INTO checklist_template_items (template_id, task_name) VALUES ($1, $2)`,
-            [id, taskName.trim()]
-          );
-        }
-
-        await client.query("COMMIT");
-        return sendSuccess(res, null, "Plantilla actualizada exitosamente");
+        const result = await checklistTemplateContentLifecycleService.update({
+          templateId: id,
+          name: parsed.data.name,
+          description: parsed.data.description || null,
+          type: parsed.data.type || "General",
+          items: parsed.data.items,
+          motivo: parsed.data.motivo,
+          usuario: user.userName || "Sistema",
+          expectedContentVersion: parsed.data.expectedContentVersion,
+        });
+        return sendSuccess(res, result, "Plantilla actualizada exitosamente");
       } catch (error: any) {
-        await client.query("ROLLBACK");
         return sendError(res, error?.message || "Error al actualizar plantilla", error?.statusCode || 400);
-      } finally {
-        client.release();
       }
     }
 

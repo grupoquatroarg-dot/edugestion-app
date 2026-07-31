@@ -4,6 +4,7 @@ import { requireAuth, requirePermission } from "../middleware/authMiddleware.js"
 import { sendSuccess, sendError } from "../utils/response.js";
 import { getBusinessDate } from "../utils/businessDate.js";
 import { checklistTemplateLifecycleService } from "../services/checklistTemplateLifecycleService.js";
+import { checklistTemplateContentLifecycleService } from "../services/checklistTemplateContentLifecycleService.js";
 import { checklistLifecycleService } from "../services/checklistLifecycleService.js";
 
 const router = Router();
@@ -35,23 +36,22 @@ router.post("/checklist-templates", requireAuth, requirePermission('checklist', 
   return sendSuccess(res, null, "Template creado exitosamente", 201);
 });
 
-router.put("/checklist-templates/:id", requireAuth, requirePermission('checklist', 'edit'), (req, res) => {
-  const { id } = req.params;
-  const { name, description, type, items } = req.body;
-  db.transaction(() => {
-    const template = db.prepare("SELECT id, active FROM checklist_templates WHERE id = ? LIMIT 1").get(id) as any;
-    if (!template) throw new Error("Plantilla no encontrada");
-    if (Number(template.active || 0) !== 1) {
-      throw new Error("La plantilla está inactiva. Reactivala antes de editarla.");
-    }
-    db.prepare("UPDATE checklist_templates SET name = ?, description = ?, type = ? WHERE id = ?").run(name, description, type, id);
-    db.prepare("DELETE FROM checklist_template_items WHERE template_id = ?").run(id);
-    const insertItem = db.prepare("INSERT INTO checklist_template_items (template_id, task_name) VALUES (?, ?)");
-    for (const taskName of items) {
-      insertItem.run(id, taskName);
-    }
-  })();
-  return sendSuccess(res, null, "Template actualizado exitosamente");
+router.put("/checklist-templates/:id", requireAuth, requirePermission('checklist', 'edit'), async (req, res) => {
+  try {
+    const result = await checklistTemplateContentLifecycleService.update({
+      templateId: Number(req.params.id),
+      name: String(req.body?.name || ""),
+      description: req.body?.description ?? null,
+      type: req.body?.type || "General",
+      items: Array.isArray(req.body?.items) ? req.body.items : [],
+      motivo: String(req.body?.motivo || ""),
+      usuario: (req as any).user?.userName || "Sistema",
+      expectedContentVersion: Number(req.body?.expectedContentVersion),
+    });
+    return sendSuccess(res, result, "Plantilla actualizada exitosamente");
+  } catch (error: any) {
+    return sendError(res, error?.message || "Error al actualizar plantilla", error?.statusCode || 400);
+  }
 });
 
 router.post(

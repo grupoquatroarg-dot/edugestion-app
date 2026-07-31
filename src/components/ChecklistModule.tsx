@@ -80,6 +80,8 @@ export default function ChecklistModule() {
   const [newTemplateDesc, setNewTemplateDesc] = useState('');
   const [newTemplateType, setNewTemplateType] = useState<'Apertura' | 'Cierre' | 'Ruta' | 'General'>('General');
   const [newTemplateTasks, setNewTemplateTasks] = useState<string[]>(['']);
+  const [templateEditReason, setTemplateEditReason] = useState('');
+  const [editingTemplateContentVersion, setEditingTemplateContentVersion] = useState(0);
 
   useEffect(() => {
     fetchInitialData();
@@ -198,13 +200,22 @@ export default function ChecklistModule() {
 
   const handleCreateTemplate = async () => {
     const validTasks = newTemplateTasks.map(task => task.trim()).filter(Boolean);
+    const editReason = templateEditReason.trim();
     if (!newTemplateName.trim() || validTasks.length === 0 || savingTemplate) return;
+    if (editingTemplateId && editReason.length < 3) {
+      showNotification('error', 'Ingresá un motivo de edición de al menos 3 caracteres.');
+      return;
+    }
 
     const payload = {
       name: newTemplateName.trim(),
       description: newTemplateDesc.trim(),
       type: newTemplateType,
-      items: validTasks
+      items: validTasks,
+      ...(editingTemplateId ? {
+        motivo: editReason,
+        expectedContentVersion: editingTemplateContentVersion
+      } : {})
     };
 
     setSavingTemplate(true);
@@ -240,6 +251,8 @@ export default function ChecklistModule() {
     setNewTemplateDesc('');
     setNewTemplateType('General');
     setNewTemplateTasks(['']);
+    setTemplateEditReason('');
+    setEditingTemplateContentVersion(0);
   };
 
   const handleEditTemplate = async (template: Template) => {
@@ -257,6 +270,8 @@ export default function ChecklistModule() {
       setNewTemplateDesc(data.description || '');
       setNewTemplateType(data.type || 'General');
       setNewTemplateTasks(data.items?.map(item => item.task_name) || ['']);
+      setTemplateEditReason('');
+      setEditingTemplateContentVersion(Number(data.content_version || 0));
       setShowNewTemplateModal(true);
     } catch (error: any) {
       console.error('Error fetching template for edit:', error);
@@ -1162,6 +1177,14 @@ export default function ChecklistModule() {
                 <div><label className="mb-2 block text-xs font-bold text-slate-600">Descripción</label><textarea value={newTemplateDesc} onChange={event => setNewTemplateDesc(event.target.value)} placeholder="Describe brevemente el objetivo del control..." className="min-h-36 w-full resize-none rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" /></div>
               </div>
 
+              {editingTemplateId && (
+                <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:p-5">
+                  <label htmlFor="template-edit-reason" className="block text-xs font-black uppercase tracking-wider text-amber-900">Motivo obligatorio de la edición</label>
+                  <textarea id="template-edit-reason" value={templateEditReason} onChange={event => setTemplateEditReason(event.target.value)} maxLength={500} placeholder="Ej.: se actualizaron las tareas del control" className="mt-2 min-h-24 w-full resize-none rounded-xl border border-amber-300 bg-white px-4 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" />
+                  <div className="mt-2 flex flex-col gap-1 text-xs text-amber-800 sm:flex-row sm:items-center sm:justify-between"><span>La edición guardará un historial completo antes y después.</span><span className="font-bold">Versión actual: {editingTemplateContentVersion}</span></div>
+                </div>
+              )}
+
               <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:p-5">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="font-black text-slate-900">Tareas</h3><p className="text-xs text-slate-500">Agregá al menos una tarea.</p></div><button type="button" onClick={() => setNewTemplateTasks(previous => [...previous, ''])} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 py-2 text-xs font-bold text-indigo-700 shadow-sm ring-1 ring-slate-200"><Plus size={16} /> Agregar tarea</button></div>
                 <div className="mt-4 space-y-3">
@@ -1177,7 +1200,7 @@ export default function ChecklistModule() {
             </div>
             <div className="grid gap-3 border-t border-slate-200 bg-slate-50 p-4 sm:grid-cols-2 sm:p-5">
               <button type="button" onClick={resetTemplateForm} disabled={savingTemplate} className="min-h-12 rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50">Cancelar</button>
-              <button type="button" onClick={handleCreateTemplate} disabled={!newTemplateName.trim() || newTemplateTasks.every(task => !task.trim()) || savingTemplate} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50">{savingTemplate && <Loader2 size={17} className="animate-spin" />}{savingTemplate ? 'Guardando...' : editingTemplateId ? 'Actualizar plantilla' : 'Guardar plantilla'}</button>
+              <button type="button" onClick={handleCreateTemplate} disabled={!newTemplateName.trim() || newTemplateTasks.every(task => !task.trim()) || Boolean(editingTemplateId && templateEditReason.trim().length < 3) || savingTemplate} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50">{savingTemplate && <Loader2 size={17} className="animate-spin" />}{savingTemplate ? 'Guardando...' : editingTemplateId ? 'Actualizar plantilla' : 'Guardar plantilla'}</button>
             </div>
           </motion.div>
         </div>
