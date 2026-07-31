@@ -34,10 +34,14 @@ export interface Product {
   deactivated_at?: string | null;
   deactivated_by?: string | null;
   deactivation_reason?: string | null;
+  content_version?: number;
+  content_changed_at?: string | null;
+  content_changed_by?: string | null;
+  content_change_reason?: string | null;
   created_at: string;
 }
 
-export type ProductFormData = Omit<Product, 'id' | 'active' | 'eliminado' | 'codigo_unico' | 'created_at' | 'family_name' | 'category_name'>;
+export type ProductFormData = Omit<Product, 'id' | 'active' | 'eliminado' | 'codigo_unico' | 'created_at' | 'family_name' | 'category_name' | 'content_version' | 'content_changed_at' | 'content_changed_by' | 'content_change_reason'>;
 
 export interface PurchaseInvoice {
   id: number;

@@ -8,6 +8,7 @@ import { sendSuccess, sendError, AppError } from "../utils/response.js";
 import { getPostgresPool, isPostgresConfigured } from "../utils/postgres.js";
 import { productLifecycleService } from "../services/productLifecycleService.js";
 import { inventoryMovementCancellationService } from "../services/inventoryMovementCancellationService.js";
+import { productContentLifecycleService } from "../services/productContentLifecycleService.js";
 
 const router = express.Router();
 
@@ -24,6 +25,13 @@ const productSchema = z.object({
     family_id: z.number().nullable(),
     category_id: z.number().nullable(),
     estado: z.enum(["activo", "inactivo"]).optional(),
+  }),
+});
+
+const productContentSchema = z.object({
+  body: productSchema.shape.body.extend({
+    motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
+    expectedContentVersion: z.number().int().min(0, "Versión de contenido inválida"),
   }),
 });
 
@@ -144,25 +152,24 @@ router.post(
   }
 );
 
-router.put("/:id", requireAuth, requirePermission('products', 'edit'), validate(productSchema), async (req, res) => {
+router.put("/:id", requireAuth, requirePermission('products', 'edit'), validate(productContentSchema), async (req, res) => {
   try {
-    const productId = Number(req.params.id);
-    const currentProduct = await ProductRepository.findById(productId);
-
-    if (!currentProduct) {
-      return sendError(res, "Producto no encontrado", 404);
-    }
-
-    if (req.body.estado && req.body.estado !== currentProduct.estado) {
-      return sendError(
-        res,
-        "El estado del producto debe cambiarse desde Dar de baja o Reactivar para conservar la auditoría.",
-        409
-      );
-    }
-
-    const updatedProduct = await ProductRepository.update(productId, req.body);
-    return sendSuccess(res, updatedProduct, "Producto actualizado exitosamente");
+    const updatedProduct = await productContentLifecycleService.update({
+      productId: Number(req.params.id),
+      code: req.body.code,
+      name: req.body.name,
+      description: req.body.description,
+      cost: req.body.cost,
+      salePrice: req.body.sale_price,
+      stockMinimum: req.body.stock_minimo,
+      company: req.body.company,
+      familyId: req.body.family_id,
+      categoryId: req.body.category_id,
+      motivo: req.body.motivo,
+      usuario: (req as any).user?.userName || "Sistema",
+      expectedContentVersion: req.body.expectedContentVersion,
+    });
+    return sendSuccess(res, updatedProduct, "Producto actualizado con trazabilidad");
   } catch (error: any) {
     return sendError(res, error.message || "Error al actualizar el producto", error.statusCode || 400, error.errors || []);
   }

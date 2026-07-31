@@ -7,11 +7,11 @@ import {
   productLifecycleService,
   type ProductLifecycleAction,
 } from "../../server/services/productLifecycleService.js";
-import { ProductRepository } from "../../server/repositories/productRepository.js";
 import { UserRepository } from "../../server/repositories/userRepository.js";
 import { sendError, sendSuccess } from "../../server/utils/response.js";
 import { requireBearerUser, type CurrentUserAuth } from "../../server/services/currentUserAuthService.js";
 import { inventoryMovementCancellationService } from "../../server/services/inventoryMovementCancellationService.js";
+import { productContentLifecycleService } from "../../server/services/productContentLifecycleService.js";
 
 const productSchema = z.object({
   code: z.string().min(1, "El codigo es requerido"),
@@ -25,6 +25,11 @@ const productSchema = z.object({
   family_id: z.number().nullable(),
   category_id: z.number().nullable(),
   estado: z.enum(["activo", "inactivo"]).optional(),
+});
+
+const productContentSchema = productSchema.extend({
+  motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
+  expectedContentVersion: z.number().int().min(0, "Versión de contenido inválida"),
 });
 
 const lifecycleSchema = z.object({
@@ -188,7 +193,7 @@ export default async function handler(req: any, res: any) {
     const user = await requireProductPermission(req, res, "edit");
     if (!user) return;
 
-    const parsed = productSchema.safeParse(getBody(req));
+    const parsed = productContentSchema.safeParse(getBody(req));
     if (!parsed.success) {
       return sendError(
         res,
@@ -199,19 +204,22 @@ export default async function handler(req: any, res: any) {
     }
 
     try {
-      const currentProduct = await ProductRepository.findById(id);
-      if (!currentProduct) return sendError(res, "Producto no encontrado", 404);
-
-      if (parsed.data.estado && parsed.data.estado !== currentProduct.estado) {
-        return sendError(
-          res,
-          "El estado del producto debe cambiarse desde Dar de baja o Reactivar para conservar la auditoría.",
-          409
-        );
-      }
-
-      const updatedProduct = await ProductRepository.update(id, parsed.data);
-      return sendSuccess(res, updatedProduct, "Producto actualizado exitosamente");
+      const updatedProduct = await productContentLifecycleService.update({
+        productId: id,
+        code: parsed.data.code,
+        name: parsed.data.name,
+        description: parsed.data.description,
+        cost: parsed.data.cost,
+        salePrice: parsed.data.sale_price,
+        stockMinimum: parsed.data.stock_minimo,
+        company: parsed.data.company,
+        familyId: parsed.data.family_id,
+        categoryId: parsed.data.category_id,
+        motivo: parsed.data.motivo,
+        usuario: user.userName || "Sistema",
+        expectedContentVersion: parsed.data.expectedContentVersion,
+      });
+      return sendSuccess(res, updatedProduct, "Producto actualizado con trazabilidad");
     } catch (error: any) {
       return sendError(
         res,

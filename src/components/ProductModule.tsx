@@ -37,6 +37,7 @@ export default function ProductModule() {
   const [newFamilyName, setNewFamilyName] = useState('');
   const [newFamilyCategoryId, setNewFamilyCategoryId] = useState<number | null>(null);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [contentChangeReason, setContentChangeReason] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [showCriticalOnly, setShowCriticalOnly] = useState(false);
   const [formData, setFormData] = useState<ProductFormData>({
@@ -176,13 +177,26 @@ export default function ProductModule() {
       return;
     }
 
+    const reason = contentChangeReason.trim();
+    if (editingProduct && reason.length < 3) {
+      alert('Ingresá un motivo de al menos 3 caracteres para guardar la edición.');
+      return;
+    }
+
     const url = editingProduct ? `/api/products/${editingProduct.id}` : '/api/products';
     const method = editingProduct ? 'PUT' : 'POST';
+    const payload = editingProduct
+      ? {
+          ...formData,
+          motivo: reason,
+          expectedContentVersion: Number(editingProduct.content_version || 0),
+        }
+      : formData;
 
     try {
       const res = await apiFetch(url, {
         method,
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload)
       });
 
       const body = await res.json();
@@ -190,6 +204,7 @@ export default function ProductModule() {
 
       setIsModalOpen(false);
       setEditingProduct(null);
+      setContentChangeReason('');
       setFormData({ code: '', name: '', description: '', cost: 0, sale_price: 0, stock: 0, stock_minimo: 0, company: 'Edu', family_id: null, category_id: null, estado: 'activo' });
       fetchProducts();
     } catch (error: any) {
@@ -258,7 +273,12 @@ export default function ProductModule() {
   };
 
   const handleEdit = (product: Product) => {
+    if (product.estado !== 'activo') {
+      alert('Reactivalo antes de editar su contenido.');
+      return;
+    }
     setEditingProduct(product);
+    setContentChangeReason('');
     setFormData({
       code: product.code || '',
       name: product.name,
@@ -436,6 +456,7 @@ export default function ProductModule() {
 
   const resetProductForm = () => {
     setEditingProduct(null);
+    setContentChangeReason('');
     setFormData({
       code: '',
       name: '',
@@ -499,10 +520,11 @@ export default function ProductModule() {
             </button>
             <button
               type="button"
-              onClick={() => handleEdit(product)}
-              className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2 py-2.5 text-xs font-black text-slate-700 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-100"
-              title={`Editar ${product.name}`}
-              aria-label={`Editar producto ${product.name}`}
+              onClick={() => !isInactive && handleEdit(product)}
+              disabled={isInactive}
+              className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2 py-2.5 text-xs font-black text-slate-700 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+              title={isInactive ? 'Reactivalo antes de editarlo' : `Editar ${product.name}`}
+              aria-label={isInactive ? `Producto ${product.name} inactivo; no se puede editar` : `Editar producto ${product.name}`}
             >
               <Edit2 size={16} aria-hidden="true" />
               <span>Editar</span>
@@ -992,7 +1014,7 @@ export default function ProductModule() {
               <h2 className="text-lg sm:text-xl font-bold text-slate-900">
                 {editingProduct ? 'Editar Producto' : 'Nuevo Producto'}
               </h2>
-              <button type="button" onClick={() => setIsModalOpen(false)} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" title="Cerrar formulario" aria-label="Cerrar formulario de producto">
+              <button type="button" onClick={() => { setIsModalOpen(false); resetProductForm(); }} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" title="Cerrar formulario" aria-label="Cerrar formulario de producto">
                 <X size={24} />
               </button>
             </div>
@@ -1142,6 +1164,32 @@ export default function ProductModule() {
                   </div>
                 </div>
               </div>
+              {editingProduct && (
+                <div className="rounded-2xl border border-indigo-200 bg-indigo-50/60 p-4">
+                  <label className="block text-xs font-black uppercase tracking-wider text-indigo-700">
+                    Motivo de la edición
+                  </label>
+                  <textarea
+                    required
+                    minLength={3}
+                    maxLength={500}
+                    rows={3}
+                    value={contentChangeReason}
+                    onChange={(event) => setContentChangeReason(event.target.value)}
+                    className="mt-2 w-full rounded-xl border border-indigo-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-transparent focus:ring-2 focus:ring-indigo-500"
+                    placeholder="Ej.: corrección del costo informado por el proveedor"
+                  />
+                  <div className="mt-2 flex flex-col gap-1 text-[11px] leading-5 text-indigo-700 sm:flex-row sm:items-center sm:justify-between">
+                    <span>Se guardarán usuario, fecha, versión y snapshots antes/después.</span>
+                    <span className="font-black">Versión actual: {Number(editingProduct.content_version || 0)}</span>
+                  </div>
+                  {editingProduct.content_changed_at && (
+                    <p className="mt-1 text-[11px] text-indigo-600">
+                      Última edición: {editingProduct.content_changed_by || 'Usuario no informado'} · {new Date(editingProduct.content_changed_at).toLocaleString('es-AR')}
+                    </p>
+                  )}
+                </div>
+              )}
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <p className="text-xs font-black uppercase tracking-wider text-slate-500">Estado del producto</p>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -1160,7 +1208,7 @@ export default function ProductModule() {
               <div className="sticky bottom-0 -mx-4 flex flex-col-reverse gap-2 border-t border-slate-200 bg-white/95 px-4 pb-1 pt-4 backdrop-blur sm:-mx-6 sm:flex-row sm:px-6">
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={() => { setIsModalOpen(false); resetProductForm(); }}
                   className="min-h-11 flex-1 rounded-xl border border-slate-200 px-4 py-3 text-slate-600 hover:bg-slate-50 transition-colors font-bold text-sm"
                 >
                   Cancelar

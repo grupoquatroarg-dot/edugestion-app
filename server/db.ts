@@ -172,10 +172,30 @@ export function initDb() {
       deactivated_at DATETIME,
       deactivated_by TEXT,
       deactivation_reason TEXT,
+      content_version INTEGER NOT NULL DEFAULT 0 CHECK(content_version >= 0),
+      content_changed_at DATETIME,
+      content_changed_by TEXT,
+      content_change_reason TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (family_id) REFERENCES product_families(id),
       FOREIGN KEY (category_id) REFERENCES product_categories(id)
     );
+
+    CREATE TABLE IF NOT EXISTS product_content_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL,
+      version INTEGER NOT NULL CHECK(version > 0),
+      reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 3 AND 500),
+      changed_by TEXT NOT NULL,
+      changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      before_snapshot TEXT NOT NULL DEFAULT '{}',
+      after_snapshot TEXT NOT NULL DEFAULT '{}',
+      UNIQUE (product_id, version),
+      FOREIGN KEY (product_id) REFERENCES products(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_product_content_history_product
+      ON product_content_history (product_id, changed_at DESC);
 
     CREATE TABLE IF NOT EXISTS product_status_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1083,6 +1103,30 @@ export function initDb() {
   try { db.exec("ALTER TABLE products ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE products ADD COLUMN deactivated_by TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE products ADD COLUMN deactivation_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE products ADD COLUMN content_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE products ADD COLUMN content_changed_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE products ADD COLUMN content_changed_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE products ADD COLUMN content_change_reason TEXT"); } catch (e) {}
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS product_content_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        version INTEGER NOT NULL CHECK(version > 0),
+        reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 3 AND 500),
+        changed_by TEXT NOT NULL,
+        changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        before_snapshot TEXT NOT NULL DEFAULT '{}',
+        after_snapshot TEXT NOT NULL DEFAULT '{}',
+        UNIQUE (product_id, version),
+        FOREIGN KEY (product_id) REFERENCES products(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_product_content_history_product
+        ON product_content_history (product_id, changed_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_products_content_changed_at
+        ON products (content_changed_at DESC);
+    `);
+  } catch (e) {}
 
   try { db.exec("ALTER TABLE purchase_invoices ADD COLUMN estado_pago TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE purchase_invoices ADD COLUMN monto_pagado REAL DEFAULT 0"); } catch (e) {}
