@@ -10,6 +10,10 @@ import {
   type ConfigurationItemType,
   type ConfigurationLifecycleAction,
 } from '../services/configurationItemLifecycleService.js';
+import {
+  configurationItemContentLifecycleService,
+  type ConfigurationContentItemType,
+} from '../services/configurationItemContentLifecycleService.js';
 
 const router = Router();
 const PROTECTED_PAYMENT_NAMES = new Set(['Cta Cte', 'Cheque']);
@@ -20,6 +24,8 @@ const nameSchema = z.object({
     description: z.string().optional(),
     category_id: z.number().optional().nullable(),
     tipo: z.string().optional(),
+    motivo: z.string().optional(),
+    expectedContentVersion: z.number().int().min(0).optional(),
   }),
 });
 
@@ -38,6 +44,10 @@ const mapCategory = (row: any) => ({
   deactivated_at: row.deactivated_at ?? null,
   deactivated_by: row.deactivated_by ?? null,
   deactivation_reason: row.deactivation_reason ?? null,
+  content_version: Number(row.content_version || 0),
+  content_changed_at: row.content_changed_at ?? null,
+  content_changed_by: row.content_changed_by ?? null,
+  content_change_reason: row.content_change_reason ?? null,
 });
 
 const mapFamily = (row: any) => ({
@@ -49,6 +59,10 @@ const mapFamily = (row: any) => ({
   deactivated_at: row.deactivated_at ?? null,
   deactivated_by: row.deactivated_by ?? null,
   deactivation_reason: row.deactivation_reason ?? null,
+  content_version: Number(row.content_version || 0),
+  content_changed_at: row.content_changed_at ?? null,
+  content_changed_by: row.content_changed_by ?? null,
+  content_change_reason: row.content_change_reason ?? null,
 });
 
 const mapPaymentMethod = (row: any) => ({
@@ -59,6 +73,10 @@ const mapPaymentMethod = (row: any) => ({
   deactivated_at: row.deactivated_at ?? null,
   deactivated_by: row.deactivated_by ?? null,
   deactivation_reason: row.deactivation_reason ?? null,
+  content_version: Number(row.content_version || 0),
+  content_changed_at: row.content_changed_at ?? null,
+  content_changed_by: row.content_changed_by ?? null,
+  content_change_reason: row.content_change_reason ?? null,
 });
 
 const getActor = (req: any) => req.user?.userName || req.user?.email || 'Sistema';
@@ -79,6 +97,25 @@ const runLifecycle = (itemType: ConfigurationItemType) => async (req: any, res: 
     );
   } catch (error: any) {
     return sendError(res, error.message || 'No se pudo cambiar el estado', error.statusCode || 400, error.errors || []);
+  }
+};
+
+const runContentUpdate = (itemType: ConfigurationContentItemType) => async (req: any, res: any) => {
+  try {
+    const result = await configurationItemContentLifecycleService.update({
+      itemType,
+      itemId: Number(req.params.id),
+      name: req.body.name,
+      tipo: req.body.tipo,
+      description: req.body.description,
+      categoryId: req.body.category_id,
+      motivo: req.body.motivo,
+      usuario: getActor(req),
+      expectedContentVersion: Number(req.body.expectedContentVersion),
+    });
+    return sendSuccess(res, result, 'Elemento actualizado con trazabilidad');
+  } catch (error: any) {
+    return sendError(res, error.message || 'No se pudo actualizar la configuración', error.statusCode || 400, error.errors || []);
   }
 };
 
@@ -210,41 +247,7 @@ router.post('/product-families', requirePermission('settings', 'create'), valida
   }
 });
 
-router.put('/product-families/:id', requirePermission('settings', 'edit'), validate(nameSchema), async (req, res) => {
-  const id = Number(req.params.id);
-  const categoryId = req.body.category_id || null;
-
-  try {
-    if (!isPostgresConfigured()) {
-      const current = db.prepare('SELECT id, category_id, estado FROM product_families WHERE id = ? LIMIT 1').get(id) as any;
-      if (!current) return sendError(res, 'Familia no encontrada', 404);
-      if (categoryId) {
-        const category = db.prepare('SELECT id, estado FROM product_categories WHERE id = ? LIMIT 1').get(categoryId) as any;
-        const unchangedInactiveAssociation = Number(current.category_id || 0) === Number(categoryId) && String(current.estado || 'activo') === 'inactivo';
-        if (!category || (String(category.estado || 'activo') !== 'activo' && !unchangedInactiveAssociation)) {
-          return sendError(res, 'La categoría seleccionada está inactiva o no existe', 409);
-        }
-      }
-      db.prepare('UPDATE product_families SET name = ?, category_id = ? WHERE id = ?').run(req.body.name, categoryId, id);
-      return sendSuccess(res, null, 'Familia actualizada');
-    }
-
-    const pool = getPostgresPool();
-    const current = await pool.query('SELECT id, category_id, estado FROM product_families WHERE id = $1 LIMIT 1', [id]);
-    if (!current.rowCount) return sendError(res, 'Familia no encontrada', 404);
-    if (categoryId) {
-      const category = await pool.query('SELECT id, estado FROM product_categories WHERE id = $1 LIMIT 1', [categoryId]);
-      const unchangedInactiveAssociation = Number(current.rows[0]?.category_id || 0) === Number(categoryId) && String(current.rows[0]?.estado || 'activo') === 'inactivo';
-      if (!category.rowCount || (String(category.rows[0]?.estado || 'activo') !== 'activo' && !unchangedInactiveAssociation)) {
-        return sendError(res, 'La categoría seleccionada está inactiva o no existe', 409);
-      }
-    }
-    await pool.query('UPDATE product_families SET name = $1, category_id = $2 WHERE id = $3', [req.body.name, categoryId, id]);
-    return sendSuccess(res, null, 'Familia actualizada');
-  } catch (error: any) {
-    return sendError(res, error.message || 'Error al actualizar familia', 400);
-  }
-});
+router.put('/product-families/:id', requirePermission('settings', 'edit'), validate(nameSchema), runContentUpdate('product_family'));
 
 router.post('/product-families/:id', requirePermission('settings', 'delete'), validate(lifecycleSchema), runLifecycle('product_family'));
 router.delete('/product-families/:id', requirePermission('settings', 'delete'), physicalDeleteDisabled);
@@ -285,23 +288,7 @@ router.post('/product-categories', requirePermission('settings', 'create'), vali
   }
 });
 
-router.put('/product-categories/:id', requirePermission('settings', 'edit'), validate(nameSchema), async (req, res) => {
-  try {
-    if (!isPostgresConfigured()) {
-      const result = db.prepare('UPDATE product_categories SET name = ?, description = ? WHERE id = ?').run(req.body.name, req.body.description || null, req.params.id);
-      if (!result.changes) return sendError(res, 'Categoría no encontrada', 404);
-      return sendSuccess(res, null, 'Categoría actualizada');
-    }
-    const result = await getPostgresPool().query(
-      'UPDATE product_categories SET name = $1, description = $2 WHERE id = $3 RETURNING id',
-      [req.body.name, req.body.description || null, Number(req.params.id)]
-    );
-    if (!result.rowCount) return sendError(res, 'Categoría no encontrada', 404);
-    return sendSuccess(res, null, 'Categoría actualizada');
-  } catch (error: any) {
-    return sendError(res, error.message || 'Error al actualizar categoría', 400);
-  }
-});
+router.put('/product-categories/:id', requirePermission('settings', 'edit'), validate(nameSchema), runContentUpdate('product_category'));
 
 router.post('/product-categories/:id', requirePermission('settings', 'delete'), validate(lifecycleSchema), runLifecycle('product_category'));
 router.delete('/product-categories/:id', requirePermission('settings', 'delete'), physicalDeleteDisabled);
@@ -342,32 +329,7 @@ router.post('/payment-methods', requirePermission('settings', 'create'), validat
   }
 });
 
-router.put('/payment-methods/:id', requirePermission('settings', 'edit'), validate(nameSchema), async (req, res) => {
-  const id = Number(req.params.id);
-  try {
-    if (!isPostgresConfigured()) {
-      const current = db.prepare('SELECT id, name FROM payment_methods WHERE id = ? LIMIT 1').get(id) as any;
-      if (!current) return sendError(res, 'Forma de pago no encontrada', 404);
-      if (PROTECTED_PAYMENT_NAMES.has(String(current.name)) && req.body.name !== current.name) {
-        return sendError(res, `La forma de pago ${current.name} es utilizada por reglas internas y no puede cambiar de nombre.`, 409);
-      }
-      db.prepare('UPDATE payment_methods SET name = ?, tipo = ? WHERE id = ?').run(req.body.name, req.body.tipo || 'Efectivo', id);
-      return sendSuccess(res, null, 'Método de pago actualizado');
-    }
-
-    const pool = getPostgresPool();
-    const current = await pool.query('SELECT id, name FROM payment_methods WHERE id = $1 LIMIT 1', [id]);
-    if (!current.rowCount) return sendError(res, 'Forma de pago no encontrada', 404);
-    const currentName = String(current.rows[0]?.name || '');
-    if (PROTECTED_PAYMENT_NAMES.has(currentName) && req.body.name !== currentName) {
-      return sendError(res, `La forma de pago ${currentName} es utilizada por reglas internas y no puede cambiar de nombre.`, 409);
-    }
-    await pool.query('UPDATE payment_methods SET name = $1, tipo = $2 WHERE id = $3', [req.body.name, req.body.tipo || 'Efectivo', id]);
-    return sendSuccess(res, null, 'Método de pago actualizado');
-  } catch (error: any) {
-    return sendError(res, error.message || 'Error al actualizar método de pago', 400);
-  }
-});
+router.put('/payment-methods/:id', requirePermission('settings', 'edit'), validate(nameSchema), runContentUpdate('payment_method'));
 
 router.post('/payment-methods/:id', requirePermission('settings', 'delete'), validate(lifecycleSchema), runLifecycle('payment_method'));
 router.delete('/payment-methods/:id', requirePermission('settings', 'delete'), physicalDeleteDisabled);

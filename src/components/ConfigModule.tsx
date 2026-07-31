@@ -43,6 +43,10 @@ interface ConfigItem {
   deactivated_at?: string | null;
   deactivated_by?: string | null;
   deactivation_reason?: string | null;
+  content_version?: number;
+  content_changed_at?: string | null;
+  content_changed_by?: string | null;
+  content_change_reason?: string | null;
 }
 
 interface LifecycleTarget {
@@ -134,6 +138,7 @@ export default function ConfigModule() {
     name: '',
     category_id: null as number | null,
   });
+  const [contentChangeReason, setContentChangeReason] = useState('');
 
   const [lifecycleTarget, setLifecycleTarget] = useState<LifecycleTarget | null>(null);
   const [lifecycleReason, setLifecycleReason] = useState('');
@@ -166,6 +171,7 @@ export default function ConfigModule() {
     setPaymentForm({ name: '', tipo: 'Efectivo' });
     setCategoryForm({ name: '', description: '' });
     setFamilyForm({ name: '', category_id: null });
+    setContentChangeReason('');
   };
 
   const fetchData = async (isRefresh = false) => {
@@ -244,13 +250,25 @@ export default function ConfigModule() {
   const savePaymentMethod = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!paymentForm.name.trim()) return;
+    if (editingItem && contentChangeReason.trim().length < 3) {
+      showStatus('El motivo debe tener al menos 3 caracteres', 'error');
+      return;
+    }
     setSaving(true);
     try {
       const response = await apiFetch(
         editingItem ? `/api/config/payment-methods/${editingItem.id}` : '/api/config/payment-methods',
         {
           method: editingItem ? 'PUT' : 'POST',
-          body: JSON.stringify(paymentForm),
+          body: JSON.stringify(
+            editingItem
+              ? {
+                  ...paymentForm,
+                  motivo: contentChangeReason,
+                  expectedContentVersion: Number(editingItem.content_version || 0),
+                }
+              : paymentForm,
+          ),
         },
       );
       const body = await response.json().catch(() => ({}));
@@ -268,6 +286,10 @@ export default function ConfigModule() {
   const saveCategory = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!categoryForm.name.trim()) return;
+    if (editingItem && contentChangeReason.trim().length < 3) {
+      showStatus('El motivo debe tener al menos 3 caracteres', 'error');
+      return;
+    }
     setSaving(true);
     try {
       const response = await apiFetch(
@@ -276,7 +298,15 @@ export default function ConfigModule() {
           : '/api/config/product-categories',
         {
           method: editingItem ? 'PUT' : 'POST',
-          body: JSON.stringify(categoryForm),
+          body: JSON.stringify(
+            editingItem
+              ? {
+                  ...categoryForm,
+                  motivo: contentChangeReason,
+                  expectedContentVersion: Number(editingItem.content_version || 0),
+                }
+              : categoryForm,
+          ),
         },
       );
       const body = await response.json().catch(() => ({}));
@@ -294,13 +324,25 @@ export default function ConfigModule() {
   const saveFamily = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!familyForm.name.trim()) return;
+    if (editingItem && contentChangeReason.trim().length < 3) {
+      showStatus('El motivo debe tener al menos 3 caracteres', 'error');
+      return;
+    }
     setSaving(true);
     try {
       const response = await apiFetch(
         editingItem ? `/api/config/product-families/${editingItem.id}` : '/api/config/product-families',
         {
           method: editingItem ? 'PUT' : 'POST',
-          body: JSON.stringify(familyForm),
+          body: JSON.stringify(
+            editingItem
+              ? {
+                  ...familyForm,
+                  motivo: contentChangeReason,
+                  expectedContentVersion: Number(editingItem.content_version || 0),
+                }
+              : familyForm,
+          ),
         },
       );
       const body = await response.json().catch(() => ({}));
@@ -714,6 +756,26 @@ export default function ConfigModule() {
           <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-xs font-semibold leading-relaxed text-indigo-800">
             El estado se administra desde Dar de baja o Reactivar para conservar la auditoría.
           </div>
+          {editingItem && (
+            <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+              <label className="space-y-2">
+                <span className={labelClass}>Motivo del cambio</span>
+                <textarea
+                  className={`${inputClass} min-h-24 resize-y`}
+                  value={contentChangeReason}
+                  onChange={(event) => setContentChangeReason(event.target.value)}
+                  placeholder="Explicá por qué se modifica esta configuración"
+                  maxLength={500}
+                />
+              </label>
+              <div className="text-xs leading-relaxed text-amber-900">
+                <p><span className="font-black">Versión actual:</span> {Number(editingItem.content_version || 0)}</p>
+                {editingItem.content_changed_by && <p><span className="font-black">Último cambio:</span> {editingItem.content_changed_by}</p>}
+                {editingItem.content_changed_at && <p><span className="font-black">Fecha:</span> {new Date(editingItem.content_changed_at).toLocaleString('es-AR')}</p>}
+                {editingItem.content_change_reason && <p><span className="font-black">Motivo anterior:</span> {editingItem.content_change_reason}</p>}
+              </div>
+            </div>
+          )}
         </div>
         <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
           {editingItem && (
@@ -721,7 +783,7 @@ export default function ConfigModule() {
           )}
           {((editingItem && hasPermission('settings', 'edit')) ||
             (!editingItem && hasPermission('settings', 'create'))) && (
-            <button type="submit" disabled={saving || !paymentForm.name.trim()} className={primaryButtonClass}>
+            <button type="submit" disabled={saving || !paymentForm.name.trim() || Boolean(editingItem && contentChangeReason.trim().length < 3)} className={primaryButtonClass}>
               {editingItem ? <Save size={16} /> : <Plus size={16} />}
               {saving ? 'Guardando...' : editingItem ? 'Actualizar' : 'Agregar'}
             </button>
@@ -762,11 +824,12 @@ export default function ConfigModule() {
                   </div>
                 )}
                 <div className="mt-4 grid grid-cols-2 gap-2">
-                  {hasPermission('settings', 'edit') && (
+                  {hasPermission('settings', 'edit') && active && (
                     <button
                       type="button"
                       onClick={() => {
                         setEditingItem(item);
+                        setContentChangeReason('');
                         setPaymentForm({
                           name: item.name,
                           tipo: item.tipo || 'Efectivo',
@@ -837,11 +900,31 @@ export default function ConfigModule() {
           <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-xs font-semibold leading-relaxed text-indigo-800">
             El estado se administra desde Dar de baja o Reactivar para conservar la auditoría.
           </div>
+          {editingItem && (
+            <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+              <label className="space-y-2">
+                <span className={labelClass}>Motivo del cambio</span>
+                <textarea
+                  className={`${inputClass} min-h-24 resize-y`}
+                  value={contentChangeReason}
+                  onChange={(event) => setContentChangeReason(event.target.value)}
+                  placeholder="Explicá por qué se modifica esta configuración"
+                  maxLength={500}
+                />
+              </label>
+              <div className="text-xs leading-relaxed text-amber-900">
+                <p><span className="font-black">Versión actual:</span> {Number(editingItem.content_version || 0)}</p>
+                {editingItem.content_changed_by && <p><span className="font-black">Último cambio:</span> {editingItem.content_changed_by}</p>}
+                {editingItem.content_changed_at && <p><span className="font-black">Fecha:</span> {new Date(editingItem.content_changed_at).toLocaleString('es-AR')}</p>}
+                {editingItem.content_change_reason && <p><span className="font-black">Motivo anterior:</span> {editingItem.content_change_reason}</p>}
+              </div>
+            </div>
+          )}
         </div>
         <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
           {editingItem && <button type="button" onClick={resetEditor} className={secondaryButtonClass}>Cancelar</button>}
           {((editingItem && hasPermission('settings', 'edit')) || (!editingItem && hasPermission('settings', 'create'))) && (
-            <button type="submit" disabled={saving || !categoryForm.name.trim()} className={primaryButtonClass}>
+            <button type="submit" disabled={saving || !categoryForm.name.trim() || Boolean(editingItem && contentChangeReason.trim().length < 3)} className={primaryButtonClass}>
               {editingItem ? <Save size={16} /> : <Plus size={16} />}
               {saving ? 'Guardando...' : editingItem ? 'Actualizar' : 'Agregar'}
             </button>
@@ -873,9 +956,10 @@ export default function ConfigModule() {
                   </div>
                 )}
                 <div className="mt-4 grid grid-cols-2 gap-2">
-                  {hasPermission('settings', 'edit') && (
+                  {hasPermission('settings', 'edit') && active && (
                     <button type="button" onClick={() => {
                       setEditingItem(item);
+                      setContentChangeReason('');
                       setCategoryForm({ name: item.name, description: item.description || '' });
                       window.scrollTo({ top: 0, behavior: 'smooth' });
                     }} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700">
@@ -937,11 +1021,31 @@ export default function ConfigModule() {
           <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-xs font-semibold leading-relaxed text-indigo-800">
             El estado se administra desde Dar de baja o Reactivar para conservar la auditoría.
           </div>
+          {editingItem && (
+            <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+              <label className="space-y-2">
+                <span className={labelClass}>Motivo del cambio</span>
+                <textarea
+                  className={`${inputClass} min-h-24 resize-y`}
+                  value={contentChangeReason}
+                  onChange={(event) => setContentChangeReason(event.target.value)}
+                  placeholder="Explicá por qué se modifica esta configuración"
+                  maxLength={500}
+                />
+              </label>
+              <div className="text-xs leading-relaxed text-amber-900">
+                <p><span className="font-black">Versión actual:</span> {Number(editingItem.content_version || 0)}</p>
+                {editingItem.content_changed_by && <p><span className="font-black">Último cambio:</span> {editingItem.content_changed_by}</p>}
+                {editingItem.content_changed_at && <p><span className="font-black">Fecha:</span> {new Date(editingItem.content_changed_at).toLocaleString('es-AR')}</p>}
+                {editingItem.content_change_reason && <p><span className="font-black">Motivo anterior:</span> {editingItem.content_change_reason}</p>}
+              </div>
+            </div>
+          )}
         </div>
         <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
           {editingItem && <button type="button" onClick={resetEditor} className={secondaryButtonClass}>Cancelar</button>}
           {((editingItem && hasPermission('settings', 'edit')) || (!editingItem && hasPermission('settings', 'create'))) && (
-            <button type="submit" disabled={saving || !familyForm.name.trim()} className={primaryButtonClass}>
+            <button type="submit" disabled={saving || !familyForm.name.trim() || Boolean(editingItem && contentChangeReason.trim().length < 3)} className={primaryButtonClass}>
               {editingItem ? <Save size={16} /> : <Plus size={16} />}
               {saving ? 'Guardando...' : editingItem ? 'Actualizar' : 'Agregar'}
             </button>
@@ -973,9 +1077,10 @@ export default function ConfigModule() {
                   </div>
                 )}
                 <div className="mt-4 grid grid-cols-2 gap-2">
-                  {hasPermission('settings', 'edit') && (
+                  {hasPermission('settings', 'edit') && active && (
                     <button type="button" onClick={() => {
                       setEditingItem(item);
+                      setContentChangeReason('');
                       setFamilyForm({ name: item.name, category_id: item.category_id || null });
                       window.scrollTo({ top: 0, behavior: 'smooth' });
                     }} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700">

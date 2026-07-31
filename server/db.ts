@@ -77,7 +77,11 @@ export function initDb() {
       estado TEXT DEFAULT 'activo',
       deactivated_at DATETIME,
       deactivated_by TEXT,
-      deactivation_reason TEXT
+      deactivation_reason TEXT,
+      content_version INTEGER NOT NULL DEFAULT 0 CHECK(content_version >= 0),
+      content_changed_at DATETIME,
+      content_changed_by TEXT,
+      content_change_reason TEXT
     );
 
     CREATE TABLE IF NOT EXISTS product_families (
@@ -88,6 +92,10 @@ export function initDb() {
       deactivated_at DATETIME,
       deactivated_by TEXT,
       deactivation_reason TEXT,
+      content_version INTEGER NOT NULL DEFAULT 0 CHECK(content_version >= 0),
+      content_changed_at DATETIME,
+      content_changed_by TEXT,
+      content_change_reason TEXT,
       FOREIGN KEY (category_id) REFERENCES product_categories(id)
     );
 
@@ -98,7 +106,11 @@ export function initDb() {
       activo INTEGER DEFAULT 1,
       deactivated_at DATETIME,
       deactivated_by TEXT,
-      deactivation_reason TEXT
+      deactivation_reason TEXT,
+      content_version INTEGER NOT NULL DEFAULT 0 CHECK(content_version >= 0),
+      content_changed_at DATETIME,
+      content_changed_by TEXT,
+      content_change_reason TEXT
     );
 
     CREATE TABLE IF NOT EXISTS configuration_item_status_history (
@@ -113,6 +125,22 @@ export function initDb() {
       new_status TEXT NOT NULL,
       snapshot TEXT NOT NULL DEFAULT '{}'
     );
+
+    CREATE TABLE IF NOT EXISTS configuration_item_content_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_type TEXT NOT NULL CHECK(item_type IN ('payment_method', 'product_category', 'product_family')),
+      item_id INTEGER NOT NULL,
+      version INTEGER NOT NULL CHECK(version > 0),
+      reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 3 AND 500),
+      changed_by TEXT NOT NULL,
+      changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      before_snapshot TEXT NOT NULL DEFAULT '{}',
+      after_snapshot TEXT NOT NULL DEFAULT '{}',
+      UNIQUE (item_type, item_id, version)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_configuration_item_content_history_item
+      ON configuration_item_content_history (item_type, item_id, changed_at DESC);
 
     INSERT OR IGNORE INTO payment_methods (name, tipo) VALUES ('Efectivo', 'Efectivo');
     INSERT OR IGNORE INTO payment_methods (name, tipo) VALUES ('Transferencia', 'Transferencia');
@@ -1005,6 +1033,42 @@ export function initDb() {
   try { db.exec("ALTER TABLE payment_methods ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE payment_methods ADD COLUMN deactivated_by TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE payment_methods ADD COLUMN deactivation_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE payment_methods ADD COLUMN content_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE payment_methods ADD COLUMN content_changed_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE payment_methods ADD COLUMN content_changed_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE payment_methods ADD COLUMN content_change_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE product_categories ADD COLUMN content_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE product_categories ADD COLUMN content_changed_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE product_categories ADD COLUMN content_changed_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE product_categories ADD COLUMN content_change_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE product_families ADD COLUMN content_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE product_families ADD COLUMN content_changed_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE product_families ADD COLUMN content_changed_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE product_families ADD COLUMN content_change_reason TEXT"); } catch (e) {}
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS configuration_item_content_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_type TEXT NOT NULL CHECK(item_type IN ('payment_method', 'product_category', 'product_family')),
+        item_id INTEGER NOT NULL,
+        version INTEGER NOT NULL CHECK(version > 0),
+        reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 3 AND 500),
+        changed_by TEXT NOT NULL,
+        changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        before_snapshot TEXT NOT NULL DEFAULT '{}',
+        after_snapshot TEXT NOT NULL DEFAULT '{}',
+        UNIQUE (item_type, item_id, version)
+      );
+      CREATE INDEX IF NOT EXISTS idx_configuration_item_content_history_item
+        ON configuration_item_content_history (item_type, item_id, changed_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_payment_methods_content_changed_at
+        ON payment_methods (content_changed_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_product_categories_content_changed_at
+        ON product_categories (content_changed_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_product_families_content_changed_at
+        ON product_families (content_changed_at DESC);
+    `);
+  } catch (e) {}
   try { db.exec("ALTER TABLE product_categories ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE product_categories ADD COLUMN deactivated_by TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE product_categories ADD COLUMN deactivation_reason TEXT"); } catch (e) {}
