@@ -449,7 +449,7 @@ export default function ConfigModule() {
     const now = new Date();
     const date = now.toISOString().split('T')[0];
     const time = now.toTimeString().slice(0, 5).replace(':', '-');
-    return `edugestion_backup_${date}_${time}.json`;
+    return `edugestion_backup_integro_v2_${date}_${time}.json`;
   };
 
   const openBackupModal = () => {
@@ -492,7 +492,7 @@ export default function ConfigModule() {
       setBackupAdminPassword('');
       setBackupReason('');
       setBackupConfirmation('');
-      showStatus('Copia de seguridad descargada y auditada correctamente', 'success');
+      showStatus('Copia íntegra verificada y auditada correctamente', 'success');
     } catch (error: any) {
       showStatus(error?.message || 'Error al descargar la copia de seguridad', 'error');
     } finally {
@@ -531,6 +531,15 @@ export default function ConfigModule() {
     try {
       const text = await restoreFile.text();
       const backup = JSON.parse(text);
+      if (
+        backup?.app !== 'edugestion' ||
+        backup?.type !== 'verified-operational-backup' ||
+        backup?.version !== 2 ||
+        backup?.schema_version !== 2 ||
+        !backup?.manifest?.checksum_sha256
+      ) {
+        throw new Error('La copia no pertenece al formato íntegro compatible de EduGestión');
+      }
       const response = await apiFetch('/api/config/restore-app-data', {
         method: 'POST',
         body: JSON.stringify({
@@ -548,7 +557,7 @@ export default function ConfigModule() {
       setRestoreReason('');
       setRestoreConfirmation('');
       await fetchData(true);
-      showStatus('Copia de seguridad restaurada correctamente', 'success');
+      showStatus('Copia íntegra verificada y restaurada correctamente', 'success');
     } catch (error: any) {
       showStatus(error?.message || 'Error al restaurar la copia de seguridad', 'error');
     } finally {
@@ -789,7 +798,7 @@ export default function ConfigModule() {
           <SectionTitle
             icon={Database}
             title="Copias y recuperación"
-            description="Descargá una copia completa o restaurá la aplicación desde un archivo JSON válido."
+            description="Generá una copia operativa íntegra con 64 tablas, manifiesto de esquema y checksum SHA-256."
           />
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
             <button type="button" onClick={openBackupModal} disabled={backupLoading} className={secondaryButtonClass}>
@@ -1476,7 +1485,7 @@ export default function ConfigModule() {
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/15"><Download size={22} /></div>
                 <div>
                   <h3 className="text-xl font-black">Descargar copia de seguridad</h3>
-                  <p className="mt-1 text-sm font-medium text-indigo-100">La descarga quedará registrada con tu usuario y motivo.</p>
+                  <p className="mt-1 text-sm font-medium text-indigo-100">Incluye 64 tablas operativas, manifiesto de esquema y checksum SHA-256. Excluye credenciales y seguridad de usuarios.</p>
                 </div>
               </div>
               <button type="button" onClick={closeBackupModal} disabled={backupLoading} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white hover:bg-white/15" aria-label="Cerrar descarga de respaldo"><X size={20} /></button>

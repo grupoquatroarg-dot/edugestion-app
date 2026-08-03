@@ -1,6 +1,7 @@
 import { sendError, sendSuccess } from "../../server/utils/response.js";
 import { generalSettingsContentLifecycleService } from "../../server/services/generalSettingsContentLifecycleService.js";
 import { maintenanceOperationSecurityService } from "../../server/services/maintenanceOperationSecurityService.js";
+import { backupRestoreIntegrityService, BACKUP_SCHEMA_VERSION } from "../../server/services/backupRestoreIntegrityService.js";
 import {
   getEndpoint,
   getPoolOrFail,
@@ -91,49 +92,10 @@ export default async function handler(req: any, res: any) {
       const motivo = String(body?.motivo || "");
       const backup = body?.backup;
 
-      if (!backup || typeof backup !== "object" || !backup.tables || typeof backup.tables !== "object") {
-        return sendError(res, "Archivo de copia de seguridad inválido", 400);
-      }
-
-      const restoreTables = [
-        "settings",
-        "payment_methods",
-        "product_categories",
-        "product_families",
-        "configuration_item_status_history",
-          "configuration_item_content_history",
-          "general_settings_content_state",
-          "general_settings_content_history",
-          "user_status_history",
-        "clientes",
-        "proveedores",
-        "products",
-        "sales",
-        "sale_items",
-        "purchase_invoices",
-        "purchase_invoice_items",
-        "movimientos_financieros",
-        "cheques",
-        "stock_movimientos",
-        "price_update_history",
-        "routes",
-        "route_items",
-        "checklist_templates",
-        "checklist_template_items",
-        "checklists",
-        "checklist_items",
-        "supplier_orders",
-        "supplier_order_items",
-          "customer_orders",
-          "customer_order_items"
-      ];
-
-      const quoteIdentifier = (value: string) => `"${value.replace(/"/g, '""')}"`;
-
       const client = await pool.connect();
 
       try {
-        await client.query("BEGIN");
+        await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
 
         const authorization = await maintenanceOperationSecurityService.authorize(
           {
@@ -147,94 +109,20 @@ export default async function handler(req: any, res: any) {
           client
         );
 
-        const existingTablesResult = await client.query(
-          `
-            SELECT table_name
-            FROM information_schema.tables
-            WHERE table_schema = 'public'
-              AND table_name = ANY($1::text[])
-          `,
-          [restoreTables]
-        );
-
-        const existingTables = existingTablesResult.rows
-          .map((row: any) => String(row.table_name))
-          .filter((tableName: string) => restoreTables.includes(tableName));
-
-        if (existingTables.length > 0) {
-          const truncateOrder = [...existingTables].sort(
-            (a: string, b: string) => restoreTables.indexOf(b) - restoreTables.indexOf(a)
-          );
-
-          await client.query(
-            `TRUNCATE TABLE ${truncateOrder.map(quoteIdentifier).join(", ")} RESTART IDENTITY CASCADE`
-          );
-        }
-
-        let restoredRows = 0;
-
-        for (const tableName of restoreTables) {
-          if (!existingTables.includes(tableName)) continue;
-
-          const rows = Array.isArray(backup.tables?.[tableName]) ? backup.tables[tableName] : [];
-
-          for (const row of rows) {
-            if (!row || typeof row !== "object") continue;
-
-            const columns = Object.keys(row);
-            if (columns.length === 0) continue;
-
-            const values = columns.map((column) => row[column]);
-            const placeholders = columns.map((_, index) => `$${index + 1}`).join(", ");
-            const columnSql = columns.map(quoteIdentifier).join(", ");
-
-            await client.query(
-              `INSERT INTO ${quoteIdentifier(tableName)} (${columnSql}) VALUES (${placeholders})`,
-              values
-            );
-            restoredRows += 1;
-          }
-        }
-
-        for (const tableName of existingTables) {
-          const idColumnResult = await client.query(
-            `
-              SELECT 1
-              FROM information_schema.columns
-              WHERE table_schema = 'public'
-                AND table_name = $1
-                AND column_name = 'id'
-              LIMIT 1
-            `,
-            [tableName]
-          );
-
-          if (!idColumnResult.rowCount) continue;
-
-          const sequenceResult = await client.query(
-            "SELECT pg_get_serial_sequence($1, 'id') AS sequence_name",
-            [`public.${tableName}`]
-          );
-
-          const sequenceName = sequenceResult.rows[0]?.sequence_name;
-
-          if (sequenceName) {
-            await client.query(
-              `SELECT setval($1, COALESCE((SELECT MAX(id) FROM ${quoteIdentifier(tableName)}), 1), COALESCE((SELECT COUNT(*) FROM ${quoteIdentifier(tableName)}), 0) > 0)`,
-              [sequenceName]
-            );
-          }
-        }
+        const restored = await backupRestoreIntegrityService.restore(client, backup);
 
         await maintenanceOperationSecurityService.record(
           {
             ...authorization,
-            affectedTables: existingTables.length,
-            affectedRows: restoredRows,
+            affectedTables: restored.restoredTables,
+            affectedRows: restored.restoredRows,
+            artifactSchemaVersion: restored.schemaVersion,
+            artifactChecksumSha256: restored.checksum,
             details: {
-              backup_type: String(backup.type || ""),
-              backup_version: Number(backup.version || 0),
-              backup_created_at: String(backup.created_at || ""),
+              backup_type: "verified-operational-backup",
+              backup_version: 2,
+              backup_created_at: String(backup?.created_at || ""),
+              scope: String(backup?.scope || ""),
             },
           },
           client
@@ -246,10 +134,12 @@ export default async function handler(req: any, res: any) {
           res,
           {
             restored: true,
-            tablas_restauradas: existingTables.length,
-            filas_restauradas: restoredRows
+            tablas_restauradas: restored.restoredTables,
+            filas_restauradas: restored.restoredRows,
+            schema_version: restored.schemaVersion,
+            checksum_sha256: restored.checksum,
           },
-          "Copia de seguridad restaurada correctamente"
+          "Copia íntegra verificada y restaurada correctamente"
         );
       } catch (error) {
         await client.query("ROLLBACK");
@@ -495,44 +385,10 @@ export default async function handler(req: any, res: any) {
           return sendError(res, "Solo el usuario administrador puede descargar copias de seguridad", 403);
         }
 
-        const backupTables = [
-          "settings",
-          "payment_methods",
-          "product_categories",
-          "product_families",
-          "configuration_item_status_history",
-          "configuration_item_content_history",
-          "general_settings_content_state",
-          "general_settings_content_history",
-          "user_status_history",
-          "clientes",
-          "proveedores",
-          "products",
-          "sales",
-          "sale_items",
-          "purchase_invoices",
-          "purchase_invoice_items",
-          "movimientos_financieros",
-          "cheques",
-          "stock_movimientos",
-          "price_update_history",
-          "routes",
-          "route_items",
-          "checklist_templates",
-          "checklist_template_items",
-          "checklists",
-          "checklist_items",
-          "supplier_orders",
-          "supplier_order_items",
-          "customer_orders",
-          "customer_order_items"
-        ];
-
-        const quoteIdentifier = (value: string) => `"${value.replace(/"/g, '""')}"`;
         const client = await pool.connect();
 
         try {
-          await client.query("BEGIN");
+          await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
 
           const authorization = await maintenanceOperationSecurityService.authorize(
             {
@@ -546,44 +402,25 @@ export default async function handler(req: any, res: any) {
             client
           );
 
-          const existingTablesResult = await client.query(
-            `
-              SELECT table_name
-              FROM information_schema.tables
-              WHERE table_schema = 'public'
-                AND table_name = ANY($1::text[])
-            `,
-            [backupTables]
+          const backup = await backupRestoreIntegrityService.create(client);
+          const affectedRows = backup.manifest.tables.reduce(
+            (total, table) => total + table.row_count,
+            0
           );
 
-          const existingTables = existingTablesResult.rows
-            .map((row: any) => String(row.table_name))
-            .filter((tableName: string) => backupTables.includes(tableName));
-
-          const tables: Record<string, any[]> = {};
-          let affectedRows = 0;
-
-          for (const tableName of backupTables) {
-            if (!existingTables.includes(tableName)) {
-              tables[tableName] = [];
-              continue;
-            }
-
-            const result = await client.query(`SELECT * FROM ${quoteIdentifier(tableName)}`);
-            tables[tableName] = result.rows;
-            affectedRows += result.rows.length;
-          }
-
-          const createdAt = new Date().toISOString();
           await maintenanceOperationSecurityService.record(
             {
               ...authorization,
-              affectedTables: existingTables.length,
+              affectedTables: backup.manifest.tables.length,
               affectedRows,
+              artifactSchemaVersion: BACKUP_SCHEMA_VERSION,
+              artifactChecksumSha256: backup.manifest.checksum_sha256,
               details: {
-                backup_type: "manual-json-backup",
-                backup_version: 1,
-                created_at: createdAt,
+                backup_type: backup.type,
+                backup_version: backup.version,
+                scope: backup.scope,
+                created_at: backup.created_at,
+                excluded_security_tables: backup.manifest.excluded_security_tables,
               },
             },
             client
@@ -593,14 +430,8 @@ export default async function handler(req: any, res: any) {
 
           return sendSuccess(
             res,
-            {
-              app: "edugestion",
-              type: "manual-json-backup",
-              version: 1,
-              created_at: createdAt,
-              tables
-            },
-            "Copia de seguridad generada"
+            backup,
+            "Copia íntegra verificada generada correctamente"
           );
         } catch (error) {
           await client.query("ROLLBACK");

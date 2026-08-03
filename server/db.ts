@@ -212,6 +212,8 @@ export function initDb() {
       affected_tables INTEGER NOT NULL DEFAULT 0 CHECK(affected_tables >= 0),
       affected_rows INTEGER NOT NULL DEFAULT 0 CHECK(affected_rows >= 0),
       details TEXT NOT NULL DEFAULT '{}',
+      artifact_schema_version INTEGER CHECK(artifact_schema_version IS NULL OR artifact_schema_version > 0),
+      artifact_checksum_sha256 TEXT CHECK(artifact_checksum_sha256 IS NULL OR length(artifact_checksum_sha256) = 64),
       FOREIGN KEY (performed_by_user_id) REFERENCES users(id)
     );
 
@@ -1242,6 +1244,9 @@ export function initDb() {
         ON maintenance_operation_history (operation, performed_at DESC);
     `);
   } catch (e) {}
+
+  try { db.exec("ALTER TABLE maintenance_operation_history ADD COLUMN artifact_schema_version INTEGER"); } catch (e) {}
+  try { db.exec("ALTER TABLE maintenance_operation_history ADD COLUMN artifact_checksum_sha256 TEXT"); } catch (e) {}
 
   try { db.exec("ALTER TABLE payment_methods ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE payment_methods ADD COLUMN deactivated_by TEXT"); } catch (e) {}

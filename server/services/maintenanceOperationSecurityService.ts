@@ -20,6 +20,8 @@ export type MaintenanceRecordInput = {
   affectedTables?: number;
   affectedRows?: number;
   details?: Record<string, unknown>;
+  artifactSchemaVersion?: number | null;
+  artifactChecksumSha256?: string | null;
 };
 
 type TransactionClient = {
@@ -144,9 +146,11 @@ export const maintenanceOperationSecurityService = {
          performed_by,
          affected_tables,
          affected_rows,
-         details
+         details,
+         artifact_schema_version,
+         artifact_checksum_sha256
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
        RETURNING id, performed_at`,
       [
         input.operation,
@@ -156,6 +160,10 @@ export const maintenanceOperationSecurityService = {
         toSafeInteger(input.affectedTables),
         toSafeInteger(input.affectedRows),
         JSON.stringify(details),
+        input.artifactSchemaVersion ?? null,
+        input.artifactChecksumSha256
+          ? String(input.artifactChecksumSha256).toLowerCase()
+          : null,
       ]
     );
 
