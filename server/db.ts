@@ -246,7 +246,11 @@ export function initDb() {
       permissions_change_reason TEXT,
       deactivated_at DATETIME,
       deactivated_by TEXT,
-      deactivation_reason TEXT
+      deactivation_reason TEXT,
+      content_version INTEGER NOT NULL DEFAULT 0 CHECK(content_version >= 0),
+      content_changed_at DATETIME,
+      content_changed_by TEXT,
+      content_change_reason TEXT CHECK(content_change_reason IS NULL OR length(trim(content_change_reason)) BETWEEN 3 AND 500)
     );
 
     CREATE TABLE IF NOT EXISTS user_status_history (
@@ -290,6 +294,24 @@ export function initDb() {
       FOREIGN KEY (user_id) REFERENCES users(id),
       FOREIGN KEY (changed_by_user_id) REFERENCES users(id)
     );
+
+    CREATE TABLE IF NOT EXISTS user_content_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      version INTEGER NOT NULL CHECK(version > 0),
+      reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 3 AND 500),
+      changed_by_user_id INTEGER,
+      changed_by TEXT NOT NULL,
+      changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      before_snapshot TEXT NOT NULL DEFAULT '{}',
+      after_snapshot TEXT NOT NULL DEFAULT '{}',
+      UNIQUE (user_id, version),
+      FOREIGN KEY (user_id) REFERENCES users(id),
+      FOREIGN KEY (changed_by_user_id) REFERENCES users(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_content_history_user
+      ON user_content_history (user_id, changed_at DESC);
 
     CREATE TABLE IF NOT EXISTS clientes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1091,7 +1113,33 @@ export function initDb() {
   try { db.exec("ALTER TABLE users ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE users ADD COLUMN deactivated_by TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE users ADD COLUMN deactivation_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN content_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN content_changed_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN content_changed_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN content_change_reason TEXT"); } catch (e) {}
   try { db.exec("UPDATE users SET session_version = 1 WHERE session_version IS NULL OR session_version < 1"); } catch (e) {}
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS user_content_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        version INTEGER NOT NULL CHECK(version > 0),
+        reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 3 AND 500),
+        changed_by_user_id INTEGER,
+        changed_by TEXT NOT NULL,
+        changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        before_snapshot TEXT NOT NULL DEFAULT '{}',
+        after_snapshot TEXT NOT NULL DEFAULT '{}',
+        UNIQUE (user_id, version),
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (changed_by_user_id) REFERENCES users(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_user_content_history_user
+        ON user_content_history (user_id, changed_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_users_content_changed_at
+        ON users (content_changed_at DESC);
+    `);
+  } catch (e) {}
 
   try { db.exec("ALTER TABLE payment_methods ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE payment_methods ADD COLUMN deactivated_by TEXT"); } catch (e) {}

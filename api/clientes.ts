@@ -11,6 +11,7 @@ import { customerLifecycleService, type CustomerLifecycleAction } from "../serve
 import { customerContentLifecycleService } from "../server/services/customerContentLifecycleService.js";
 import { userLifecycleService, type UserLifecycleAction } from "../server/services/userLifecycleService.js";
 import { userPermissionLifecycleService } from "../server/services/userPermissionLifecycleService.js";
+import { userContentLifecycleService } from "../server/services/userContentLifecycleService.js";
 import { requireBearerUser } from "../server/services/currentUserAuthService.js";
 import { checklistTemplateLifecycleService, type ChecklistTemplateLifecycleAction } from "../server/services/checklistTemplateLifecycleService.js";
 import { checklistTemplateContentLifecycleService } from "../server/services/checklistTemplateContentLifecycleService.js";
@@ -69,6 +70,8 @@ const updateUserSchema = baseUserSchema.extend({
       (value) => value === undefined || value === "" || value.length >= 6,
       "La contraseña debe tener al menos 6 caracteres"
     ),
+  motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
+  expectedContentVersion: z.number().int().min(0),
 });
 
 const userLifecycleSchema = z.object({
@@ -265,13 +268,14 @@ const handleUsers = async (req: any, res: any) => {
     }
 
     try {
-      const updatedUser = await UserRepository.update(id, parsed.data, Number(admin.userId));
-      return sendSuccess(res, updatedUser, "Usuario actualizado exitosamente");
+      const updatedUser = await userContentLifecycleService.update({
+        userId: id,
+        ...parsed.data,
+        changedByUserId: Number(admin.userId),
+        changedByName: admin.userName || "Sistema",
+      });
+      return sendSuccess(res, updatedUser, "Usuario actualizado. Sus sesiones anteriores fueron invalidadas.");
     } catch (error: any) {
-      if (error?.code === "SQLITE_CONSTRAINT" || error?.code === "23505") {
-        return sendError(res, "El email ya está registrado", 400);
-      }
-
       return sendError(res, error?.message || "Error al actualizar usuario", error?.statusCode || 400, error?.errors || []);
     }
   }

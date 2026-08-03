@@ -207,10 +207,12 @@ const runStaticAudit = () => {
   );
 
   const repository = read("server/repositories/userRepository.ts");
-  assert(repository.includes("session_version = COALESCE(session_version, 1) + 1"), "Cambiar rol o contraseña no invalida sesiones.");
-  assert(repository.includes("No podés cambiar tu propio rol"), "No se bloquea el cambio del rol propio.");
-  assert(repository.includes("Debe quedar al menos un administrador activo"), "No se protege al último administrador.");
-  assert(repository.includes("LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE"), "La protección del último administrador no está serializada.");
+  const contentService = read("server/services/userContentLifecycleService.ts");
+  assert(contentService.includes("session_version = COALESCE(session_version, 1) + 1"), "Editar un usuario no invalida sesiones.");
+  assert(contentService.includes("No podés cambiar tu propio rol"), "No se bloquea el cambio del rol propio.");
+  assert(contentService.includes("Debe quedar al menos un administrador activo"), "No se protege al último administrador.");
+  assert(contentService.includes("LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE"), "La protección del último administrador no está serializada.");
+  assert(repository.includes("La actualización directa de usuarios está deshabilitada"), "El repositorio todavía permite editar usuarios directamente.");
   assert(!repository.includes("DELETE FROM users"), "El repositorio todavía elimina usuarios físicamente.");
   assert(!repository.includes("finalActive"), "Editar usuario todavía permite modificar el estado directamente.");
 

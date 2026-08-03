@@ -152,6 +152,7 @@ export default function UserManagement() {
   const [permissionsLoadError, setPermissionsLoadError] = useState('');
   const [permissionsError, setPermissionsError] = useState('');
   const [formError, setFormError] = useState('');
+  const [contentReason, setContentReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const userNameInputRef = useRef<HTMLInputElement | null>(null);
   const lifecycleReasonRef = useRef<HTMLTextAreaElement | null>(null);
@@ -276,6 +277,7 @@ export default function UserManagement() {
     }
 
     setFormError('');
+    setContentReason('');
     setIsModalOpen(true);
   };
 
@@ -283,6 +285,7 @@ export default function UserManagement() {
     if (isSubmitting) return;
     setIsModalOpen(false);
     setFormError('');
+    setContentReason('');
     restoreModalTrigger();
   };
 
@@ -423,6 +426,10 @@ export default function UserManagement() {
     if (isSubmitting) return;
 
     setFormError('');
+    if (editingUser && contentReason.trim().length < 3) {
+      setFormError('Ingresá un motivo de edición de al menos 3 caracteres.');
+      return;
+    }
     setIsSubmitting(true);
 
     try {
@@ -430,11 +437,19 @@ export default function UserManagement() {
         ? `/api/clientes?endpoint=users&id=${editingUser.id}`
         : '/api/clientes?endpoint=users';
       const method = editingUser ? 'PUT' : 'POST';
-      const payload = {
-        ...formData,
-        name: formData.name.trim(),
-        email: formData.email.trim().toLowerCase(),
-      };
+      const payload = editingUser
+        ? {
+            ...formData,
+            name: formData.name.trim(),
+            email: formData.email.trim().toLowerCase(),
+            motivo: contentReason.trim(),
+            expectedContentVersion: Number(editingUser.content_version || 0),
+          }
+        : {
+            ...formData,
+            name: formData.name.trim(),
+            email: formData.email.trim().toLowerCase(),
+          };
 
       const res = await apiFetch(url, {
         method,
@@ -444,9 +459,7 @@ export default function UserManagement() {
       unwrapResponse(body);
 
       const invalidatesCurrentSession = Boolean(
-        editingUser &&
-        Number(editingUser.id) === Number(currentUser?.id) &&
-        formData.password.trim()
+        editingUser && Number(editingUser.id) === Number(currentUser?.id)
       );
 
       setIsModalOpen(false);
@@ -457,7 +470,7 @@ export default function UserManagement() {
       }
 
       await fetchUsers(false);
-      setSuccessMessage(editingUser ? 'Usuario actualizado correctamente.' : 'Usuario creado correctamente.');
+      setSuccessMessage(editingUser ? 'Usuario actualizado. Sus sesiones anteriores fueron invalidadas.' : 'Usuario creado correctamente.');
       restoreModalTrigger();
     } catch (err: any) {
       setFormError(err?.message || 'Error al guardar usuario.');
@@ -813,7 +826,7 @@ export default function UserManagement() {
                   {editingUser ? 'Editar usuario' : 'Nuevo usuario'}
                 </h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  {editingUser ? 'Actualizá sus datos, rol o contraseña.' : 'Creá una nueva cuenta para acceder a Edugestión.'}
+                  {editingUser ? 'Actualizá sus datos con motivo, trazabilidad y control de concurrencia.' : 'Creá una nueva cuenta para acceder a Edugestión.'}
                 </p>
               </div>
               <button
@@ -925,6 +938,44 @@ export default function UserManagement() {
                     </p>
                   </div>
                 </section>
+
+                {editingUser && (
+                  <section className="rounded-3xl border border-amber-200 bg-amber-50/70 p-4 sm:p-5">
+                    <div className="mb-4 flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-100 text-amber-700">
+                        <PencilLine size={20} />
+                      </div>
+                      <div>
+                        <h3 className="font-black text-slate-900">Trazabilidad del cambio</h3>
+                        <p className="text-xs text-slate-500">La edición invalidará las sesiones anteriores del usuario.</p>
+                      </div>
+                    </div>
+                    <label className="block">
+                      <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Motivo obligatorio</span>
+                      <textarea
+                        required
+                        minLength={3}
+                        maxLength={500}
+                        rows={4}
+                        value={contentReason}
+                        onChange={(event) => setContentReason(event.target.value)}
+                        placeholder="Ej.: Actualización de datos y responsabilidades del usuario."
+                        className="w-full resize-none rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-amber-400 focus:ring-4 focus:ring-amber-100"
+                      />
+                      <span className="mt-2 flex flex-wrap justify-between gap-2 text-xs text-slate-500">
+                        <span>Versión actual: {Number(editingUser.content_version || 0)}</span>
+                        <span className="font-bold">{contentReason.length}/500</span>
+                      </span>
+                    </label>
+                    {(editingUser.content_changed_at || editingUser.content_change_reason) && (
+                      <div className="mt-4 rounded-2xl border border-amber-200 bg-white p-3 text-xs leading-5 text-slate-600">
+                        <p><span className="font-black text-slate-800">Última edición:</span> {formatDateTime(editingUser.content_changed_at)}</p>
+                        <p><span className="font-black text-slate-800">Responsable:</span> {editingUser.content_changed_by || 'Sin dato'}</p>
+                        <p className="break-words"><span className="font-black text-slate-800">Motivo:</span> {editingUser.content_change_reason || 'Sin dato'}</p>
+                      </div>
+                    )}
+                  </section>
+                )}
               </div>
 
               <div className="grid shrink-0 grid-cols-1 gap-2 border-t border-slate-200 bg-white px-4 py-4 sm:grid-cols-2 sm:px-6">
@@ -938,7 +989,7 @@ export default function UserManagement() {
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || Boolean(editingUser && contentReason.trim().length < 3)}
                   className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}

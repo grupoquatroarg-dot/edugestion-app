@@ -4,6 +4,7 @@ import { requireAdmin } from "../middleware/authMiddleware.js";
 import { validate } from "../middleware/validate.js";
 import { userLifecycleService, type UserLifecycleAction } from "../services/userLifecycleService.js";
 import { userPermissionLifecycleService } from "../services/userPermissionLifecycleService.js";
+import { userContentLifecycleService } from "../services/userContentLifecycleService.js";
 import { z } from "zod";
 import { sendSuccess, sendError } from "../utils/response.js";
 
@@ -31,6 +32,8 @@ const updateUserSchema = z.object({
         (value) => value === undefined || value === "" || value.length >= 6,
         "La contraseña debe tener al menos 6 caracteres"
       ),
+    motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
+    expectedContentVersion: z.number().int().min(0),
   }),
 });
 
@@ -77,13 +80,15 @@ router.post("/", requireAdmin, validate(createUserSchema), async (req, res) => {
 router.put("/:id", requireAdmin, validate(updateUserSchema), async (req, res) => {
   try {
     const actor = (req as any).user;
-    const updatedUser = await UserRepository.update(Number(req.params.id), req.body, Number(actor.userId));
-    return sendSuccess(res, updatedUser, "Usuario actualizado");
+    const updatedUser = await userContentLifecycleService.update({
+      userId: Number(req.params.id),
+      ...req.body,
+      changedByUserId: Number(actor.userId),
+      changedByName: actor.userName || "Sistema",
+    });
+    return sendSuccess(res, updatedUser, "Usuario actualizado. Sus sesiones anteriores fueron invalidadas.");
   } catch (error: any) {
-    if (error.code === 'SQLITE_CONSTRAINT' || error.code === '23505') {
-      return sendError(res, "El email ya está registrado", 400);
-    }
-    throw error;
+    return sendError(res, error?.message || "Error al actualizar usuario", error?.statusCode || 400);
   }
 });
 

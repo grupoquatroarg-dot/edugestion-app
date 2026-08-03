@@ -35,6 +35,10 @@ const mapUser = (row: any) => {
     deactivated_at: row.deactivated_at ?? null,
     deactivated_by: row.deactivated_by ?? null,
     deactivation_reason: row.deactivation_reason ?? null,
+    content_version: Number(row.content_version ?? 0),
+    content_changed_at: row.content_changed_at ?? null,
+    content_changed_by: row.content_changed_by ?? null,
+    content_change_reason: row.content_change_reason ?? null,
   };
 };
 
@@ -120,7 +124,8 @@ export const UserRepository = {
       return mapUserWithoutPassword(db.prepare(`
         SELECT id, name, email, role, avatar, active, created_at, session_version, permissions_version,
                permissions_changed_at, permissions_changed_by, permissions_change_reason,
-               deactivated_at, deactivated_by, deactivation_reason
+               deactivated_at, deactivated_by, deactivation_reason,
+               content_version, content_changed_at, content_changed_by, content_change_reason
         FROM users WHERE id = ? LIMIT 1
       `).get(id));
     }
@@ -129,7 +134,8 @@ export const UserRepository = {
     const result = await pool.query(
       `SELECT id, name, email, role, avatar, active, created_at, session_version, permissions_version,
               permissions_changed_at, permissions_changed_by, permissions_change_reason,
-              deactivated_at, deactivated_by, deactivation_reason
+              deactivated_at, deactivated_by, deactivation_reason,
+              content_version, content_changed_at, content_changed_by, content_change_reason
        FROM users WHERE id = $1 LIMIT 1`,
       [id]
     );
@@ -142,7 +148,8 @@ export const UserRepository = {
       return db.prepare(`
         SELECT id, name, email, role, avatar, active, created_at, session_version, permissions_version,
                permissions_changed_at, permissions_changed_by, permissions_change_reason,
-               deactivated_at, deactivated_by, deactivation_reason
+               deactivated_at, deactivated_by, deactivation_reason,
+               content_version, content_changed_at, content_changed_by, content_change_reason
         FROM users ORDER BY name ASC
       `).all().map(mapUserWithoutPassword);
     }
@@ -151,7 +158,8 @@ export const UserRepository = {
     const result = await pool.query(`
       SELECT id, name, email, role, avatar, active, created_at, session_version, permissions_version,
              permissions_changed_at, permissions_changed_by, permissions_change_reason,
-             deactivated_at, deactivated_by, deactivation_reason
+             deactivated_at, deactivated_by, deactivation_reason,
+             content_version, content_changed_at, content_changed_by, content_change_reason
       FROM users ORDER BY name ASC
     `);
 
@@ -183,119 +191,19 @@ export const UserRepository = {
        VALUES ($1, $2, $3, $4, $5, 1, 1)
        RETURNING id, name, email, role, avatar, active, created_at, session_version, permissions_version,
                  permissions_changed_at, permissions_changed_by, permissions_change_reason,
-                 deactivated_at, deactivated_by, deactivation_reason`,
+                 deactivated_at, deactivated_by, deactivation_reason,
+                 content_version, content_changed_at, content_changed_by, content_change_reason`,
       [name, email, hashedPassword, role, finalAvatar]
     );
 
     return mapUserWithoutPassword(result.rows[0]);
   },
 
-  async update(id: number, userData: any, actorUserId?: number) {
-    const normalizedPassword = normalizePassword(userData.password);
-
-    if (!isPostgresConfigured()) {
-      return db.transaction(() => {
-        const existingUser = db.prepare("SELECT * FROM users WHERE id = ? LIMIT 1").get(id) as any;
-        if (!existingUser) throw new AppError("Usuario no encontrado", 404);
-
-        const finalName = userData.name ?? existingUser.name;
-        const finalEmail = userData.email ?? existingUser.email;
-        const finalRole = userData.role ?? existingUser.role;
-        const finalAvatar = userData.avatar ?? existingUser.avatar ?? buildAvatar(finalName);
-        const roleChanged = finalRole !== existingUser.role;
-
-        assertRoleChangeAllowedSqlite(existingUser, finalRole, actorUserId);
-
-        if (normalizedPassword) {
-          const hashedPassword = bcrypt.hashSync(normalizedPassword, 10);
-          db.prepare(`
-            UPDATE users
-            SET name = ?, email = ?, role = ?, avatar = ?, password = ?,
-                session_version = COALESCE(session_version, 1) + 1
-            WHERE id = ?
-          `).run(finalName, finalEmail, finalRole, finalAvatar, hashedPassword, id);
-        } else if (roleChanged) {
-          db.prepare(`
-            UPDATE users
-            SET name = ?, email = ?, role = ?, avatar = ?,
-                session_version = COALESCE(session_version, 1) + 1
-            WHERE id = ?
-          `).run(finalName, finalEmail, finalRole, finalAvatar, id);
-        } else {
-          db.prepare("UPDATE users SET name = ?, email = ?, avatar = ? WHERE id = ?")
-            .run(finalName, finalEmail, finalAvatar, id);
-        }
-
-        return mapUserWithoutPassword(db.prepare(`
-          SELECT id, name, email, role, avatar, active, created_at, session_version, permissions_version,
-                 permissions_changed_at, permissions_changed_by, permissions_change_reason,
-                 deactivated_at, deactivated_by, deactivation_reason
-          FROM users WHERE id = ? LIMIT 1
-        `).get(id));
-      })();
-    }
-
-    const pool = getPostgresPool();
-    const client = await pool.connect();
-
-    try {
-      await client.query("BEGIN");
-      const existingResult = await client.query("SELECT * FROM users WHERE id = $1 FOR UPDATE", [id]);
-      const existingUser = existingResult.rows[0];
-      if (!existingUser) throw new AppError("Usuario no encontrado", 404);
-
-      const finalName = userData.name ?? existingUser.name;
-      const finalEmail = userData.email ?? existingUser.email;
-      const finalRole = userData.role ?? existingUser.role;
-      const finalAvatar = userData.avatar ?? existingUser.avatar ?? buildAvatar(finalName);
-      const roleChanged = finalRole !== existingUser.role;
-
-      await assertRoleChangeAllowedPostgres(client, existingUser, finalRole, actorUserId);
-
-      let result;
-      if (normalizedPassword) {
-        const hashedPassword = bcrypt.hashSync(normalizedPassword, 10);
-        result = await client.query(
-          `UPDATE users
-           SET name = $1, email = $2, role = $3, avatar = $4, password = $5,
-               session_version = COALESCE(session_version, 1) + 1
-           WHERE id = $6
-           RETURNING id, name, email, role, avatar, active, created_at, session_version, permissions_version,
-                     permissions_changed_at, permissions_changed_by, permissions_change_reason,
-                     deactivated_at, deactivated_by, deactivation_reason`,
-          [finalName, finalEmail, finalRole, finalAvatar, hashedPassword, id]
-        );
-      } else if (roleChanged) {
-        result = await client.query(
-          `UPDATE users
-           SET name = $1, email = $2, role = $3, avatar = $4,
-               session_version = COALESCE(session_version, 1) + 1
-           WHERE id = $5
-           RETURNING id, name, email, role, avatar, active, created_at, session_version, permissions_version,
-                     permissions_changed_at, permissions_changed_by, permissions_change_reason,
-                     deactivated_at, deactivated_by, deactivation_reason`,
-          [finalName, finalEmail, finalRole, finalAvatar, id]
-        );
-      } else {
-        result = await client.query(
-          `UPDATE users
-           SET name = $1, email = $2, avatar = $3
-           WHERE id = $4
-           RETURNING id, name, email, role, avatar, active, created_at, session_version, permissions_version,
-                     permissions_changed_at, permissions_changed_by, permissions_change_reason,
-                     deactivated_at, deactivated_by, deactivation_reason`,
-          [finalName, finalEmail, finalAvatar, id]
-        );
-      }
-
-      await client.query("COMMIT");
-      return mapUserWithoutPassword(result.rows[0]);
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+  async update(_id: number, _userData: any, _actorUserId?: number) {
+    throw new AppError(
+      "La actualización directa de usuarios está deshabilitada. Usá el servicio auditado de contenido.",
+      405
+    );
   },
 
   async getPermissions(userId: number) {

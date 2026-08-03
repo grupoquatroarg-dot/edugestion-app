@@ -114,6 +114,10 @@ export interface User {
   deactivated_at?: string | null;
   deactivated_by?: string | null;
   deactivation_reason?: string | null;
+  content_version?: number;
+  content_changed_at?: string | null;
+  content_changed_by?: string | null;
+  content_change_reason?: string | null;
   created_at?: string;
   email: string;
   avatar?: string;
