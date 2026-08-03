@@ -15,7 +15,13 @@ export const supplierOrderRepository = {
   },
 
   create: (orderData: any) => {
-    const { cliente, cliente_id, items, notes } = orderData;
+    const { cliente_id, items, notes } = orderData;
+    const cliente = String(orderData?.cliente || '').trim() || 'Pedido a proveedor';
+
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error('Debe incluir al menos un producto');
+    }
+
     return db.transaction(() => {
       const nextOrderNum = parseInt(db.prepare("SELECT value FROM settings WHERE key = 'next_order_number'").get()?.value || '1');
       db.prepare("UPDATE settings SET value = ? WHERE key = 'next_order_number'").run((nextOrderNum + 1).toString());

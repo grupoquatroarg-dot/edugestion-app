@@ -14,9 +14,13 @@ const router = Router();
 
 const supplierOrderSchema = z.object({
   body: z.object({
-    proveedor_id: z.number(),
+    // Un pedido a proveedor puede ser general y no necesita un cliente real.
+    cliente: z.string().trim().min(1).max(250).optional().nullable(),
+    cliente_id: z.number().int().positive().optional().nullable(),
+    proveedor_id: z.number().int().positive().optional().nullable(),
+    notes: z.string().max(2000).optional().nullable(),
     items: z.array(z.object({
-      product_id: z.number(),
+      product_id: z.number().int().positive(),
       cantidad: z.number().positive(),
     })).min(1, "Debe incluir al menos un producto"),
   }),

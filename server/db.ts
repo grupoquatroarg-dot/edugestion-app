@@ -471,7 +471,11 @@ export function initDb() {
       product_id INTEGER NOT NULL,
       cantidad INTEGER NOT NULL,
       precio_venta REAL NOT NULL,
-      costo_total_peps REAL NOT NULL,
+      costo_total_peps REAL NOT NULL DEFAULT 0,
+      precio_unitario_original REAL NOT NULL DEFAULT 0,
+      bonificacion_tipo TEXT NOT NULL DEFAULT 'none' CHECK(bonificacion_tipo IN ('none', 'percentage', 'fixed')),
+      bonificacion_valor REAL NOT NULL DEFAULT 0 CHECK(bonificacion_valor >= 0),
+      precio_unitario_bonificado REAL NOT NULL DEFAULT 0,
       FOREIGN KEY (sale_id) REFERENCES sales(id),
       FOREIGN KEY (product_id) REFERENCES products(id)
     );
@@ -495,7 +499,7 @@ export function initDb() {
     CREATE TABLE IF NOT EXISTS supplier_orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       numero_pedido INTEGER,
-      cliente TEXT NOT NULL,
+      cliente TEXT NOT NULL DEFAULT 'Pedido a proveedor',
       cliente_id INTEGER,
       sale_id INTEGER,
       fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1667,6 +1671,75 @@ export function initDb() {
 
   try { db.exec("ALTER TABLE sales ADD COLUMN notes TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE sales ADD COLUMN usuario TEXT"); } catch (e) {}
+
+  // Compatibilidad para bases SQLite creadas antes de las columnas de bonificación.
+  try { db.exec("ALTER TABLE sale_items ADD COLUMN costo_total_peps REAL NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE sale_items ADD COLUMN precio_unitario_original REAL NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE sale_items ADD COLUMN bonificacion_tipo TEXT NOT NULL DEFAULT 'none'"); } catch (e) {}
+  try { db.exec("ALTER TABLE sale_items ADD COLUMN bonificacion_valor REAL NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE sale_items ADD COLUMN precio_unitario_bonificado REAL NOT NULL DEFAULT 0"); } catch (e) {}
+  try {
+    db.exec(`
+      UPDATE sale_items
+      SET costo_total_peps = COALESCE(costo_total_peps, 0),
+          precio_unitario_original = CASE
+            WHEN COALESCE(precio_unitario_original, 0) = 0 THEN COALESCE(precio_venta, 0)
+            ELSE precio_unitario_original
+          END,
+          bonificacion_tipo = CASE
+            WHEN bonificacion_tipo IN ('none', 'percentage', 'fixed') THEN bonificacion_tipo
+            ELSE 'none'
+          END,
+          bonificacion_valor = MAX(COALESCE(bonificacion_valor, 0), 0),
+          precio_unitario_bonificado = CASE
+            WHEN COALESCE(precio_unitario_bonificado, 0) = 0 THEN COALESCE(precio_venta, 0)
+            ELSE precio_unitario_bonificado
+          END;
+    `);
+  } catch (e) {}
+
+  // Las bases locales antiguas pueden no tener las tablas de historial de estado.
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS product_status_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        action TEXT NOT NULL CHECK(action IN ('deactivate', 'reactivate')),
+        reason TEXT NOT NULL,
+        performed_by TEXT NOT NULL,
+        performed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        previous_status TEXT NOT NULL,
+        new_status TEXT NOT NULL,
+        snapshot TEXT NOT NULL DEFAULT '{}',
+        FOREIGN KEY (product_id) REFERENCES products(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_product_status_history_product_id
+        ON product_status_history (product_id, performed_at DESC);
+
+      CREATE TABLE IF NOT EXISTS customer_status_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        customer_id INTEGER NOT NULL,
+        action TEXT NOT NULL CHECK(action IN ('deactivate', 'reactivate')),
+        reason TEXT NOT NULL,
+        performed_by TEXT NOT NULL,
+        performed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        previous_status TEXT NOT NULL,
+        new_status TEXT NOT NULL,
+        snapshot TEXT NOT NULL DEFAULT '{}',
+        FOREIGN KEY (customer_id) REFERENCES clientes(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_customer_status_history_customer_id
+        ON customer_status_history (customer_id, performed_at DESC);
+    `);
+  } catch (e) {}
+
+  try {
+    db.exec(`
+      UPDATE supplier_orders
+      SET cliente = 'Pedido a proveedor'
+      WHERE cliente IS NULL OR trim(cliente) = '';
+    `);
+  } catch (e) {}
 
   return db;
 }

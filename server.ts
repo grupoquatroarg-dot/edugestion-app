@@ -20,6 +20,7 @@ import { initSocket } from "./server/socket.js";
 
 // Middlewares
 import { errorHandler } from "./server/middleware/errorHandler.js";
+import { consolidatedApiCompatibility } from "./server/middleware/consolidatedApiCompatibility.js";
 import { getSessionConfig } from "./server/utils/sessionConfig.js";
 import { getSessionSecret } from "./server/utils/securityConfig.js";
 import { validate } from "./server/middleware/validate.js";
@@ -102,7 +103,7 @@ app.use(
   cors({
     origin: process.env.CORS_ORIGIN === "*" ? true : process.env.CORS_ORIGIN || true,
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
   })
 );
@@ -118,6 +119,10 @@ app.use((req, res, next) => {
   console.log(`[Session] ${req.method} ${req.url} - SessionID: ${req.sessionID}, UserId: ${(req.session as any).userId}`);
   next();
 });
+
+// Debe ejecutarse antes de los routers locales: alinea las URLs consolidadas
+// del frontend con los mismos handlers utilizados por Vercel.
+app.use(consolidatedApiCompatibility);
 
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
