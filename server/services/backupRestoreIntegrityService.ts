@@ -78,6 +78,16 @@ export const BACKUP_EXCLUDED_SECURITY_TABLES = [
   "user_permission_history",
   "user_content_history",
   "maintenance_operation_history",
+  "auth_failed_login_attempts",
+] as const;
+
+const LEGACY_BACKUP_EXCLUDED_SECURITY_TABLES_V2 = [
+  "users",
+  "user_permissions",
+  "user_status_history",
+  "user_permission_history",
+  "user_content_history",
+  "maintenance_operation_history",
 ] as const;
 
 type TransactionClient = {
@@ -213,11 +223,27 @@ const validateBackupEnvelope = async (client: TransactionClient, input: unknown)
   }
 
   assertStringArrayEqual(backup.manifest.table_order, BACKUP_TABLE_ORDER, "El orden de tablas");
-  assertStringArrayEqual(
-    backup.manifest.excluded_security_tables,
-    BACKUP_EXCLUDED_SECURITY_TABLES,
-    "La exclusión de seguridad"
-  );
+  const excludedSecurityTables = backup.manifest.excluded_security_tables;
+  const matchesCurrentSecurityExclusions = (() => {
+    try {
+      assertStringArrayEqual(
+        excludedSecurityTables,
+        BACKUP_EXCLUDED_SECURITY_TABLES,
+        "La exclusión de seguridad"
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!matchesCurrentSecurityExclusions) {
+    assertStringArrayEqual(
+      excludedSecurityTables,
+      LEGACY_BACKUP_EXCLUDED_SECURITY_TABLES_V2,
+      "La exclusión de seguridad"
+    );
+  }
 
   const tableNames = Object.keys(backup.tables);
   assertStringSetEqual(tableNames, BACKUP_TABLE_ORDER, "El conjunto de tablas");

@@ -227,6 +227,24 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_maintenance_operation_history_operation
       ON maintenance_operation_history (operation, performed_at DESC);
 
+
+    CREATE TABLE IF NOT EXISTS auth_failed_login_attempts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope TEXT NOT NULL CHECK(scope IN ('staff', 'customer_portal')),
+      identifier_hash TEXT NOT NULL CHECK(length(identifier_hash) = 64),
+      address_hash TEXT NOT NULL CHECK(length(address_hash) = 64),
+      attempted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_auth_failed_login_attempts_identifier
+      ON auth_failed_login_attempts (scope, identifier_hash, attempted_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_auth_failed_login_attempts_address
+      ON auth_failed_login_attempts (scope, address_hash, attempted_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_auth_failed_login_attempts_cleanup
+      ON auth_failed_login_attempts (attempted_at);
+
     CREATE TABLE IF NOT EXISTS products (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       code TEXT,
@@ -1255,6 +1273,24 @@ export function initDb() {
         ON maintenance_operation_history (performed_by_user_id, performed_at DESC);
       CREATE INDEX IF NOT EXISTS idx_maintenance_operation_history_operation
         ON maintenance_operation_history (operation, performed_at DESC);
+    `);
+  } catch (e) {}
+
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS auth_failed_login_attempts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scope TEXT NOT NULL CHECK(scope IN ('staff', 'customer_portal')),
+        identifier_hash TEXT NOT NULL CHECK(length(identifier_hash) = 64),
+        address_hash TEXT NOT NULL CHECK(length(address_hash) = 64),
+        attempted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_auth_failed_login_attempts_identifier
+        ON auth_failed_login_attempts (scope, identifier_hash, attempted_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_auth_failed_login_attempts_address
+        ON auth_failed_login_attempts (scope, address_hash, attempted_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_auth_failed_login_attempts_cleanup
+        ON auth_failed_login_attempts (attempted_at);
     `);
   } catch (e) {}
 

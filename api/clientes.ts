@@ -19,6 +19,12 @@ import { routeLifecycleService, type RouteLifecycleAction } from "../server/serv
 import { routeItemLifecycleService, type RouteItemLifecycleAction } from "../server/services/routeItemLifecycleService.js";
 import { routeOperationalLifecycleService, type RouteOperationalAction } from "../server/services/routeOperationalLifecycleService.js";
 import { checklistLifecycleService, type ChecklistLifecycleAction } from "../server/services/checklistLifecycleService.js";
+import {
+  authAttemptSecurityService,
+  getLockoutMessage,
+  getRequestClientAddress,
+  setRetryAfterHeader,
+} from "../server/services/authAttemptSecurityService.js";
 
 const clientSchema = z.object({
   nombre_apellido: z.string().min(2, "El nombre es requerido"),
@@ -1947,6 +1953,18 @@ const handleCustomerPortal = async (req: any, res: any) => {
       return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })));
     }
 
+    const attemptInput = {
+      scope: "customer_portal" as const,
+      identifier: parsed.data.username,
+      clientAddress: getRequestClientAddress(req),
+    };
+
+    const gate = await authAttemptSecurityService.check(attemptInput);
+    if (!gate.allowed) {
+      setRetryAfterHeader(res, gate);
+      return sendError(res, getLockoutMessage(gate), 429);
+    }
+
     const result = await pool.query(
       `
         SELECT id, nombre_apellido, razon_social, portal_username, portal_password_hash, portal_enabled, saldo_cta_cte
@@ -1961,8 +1979,15 @@ const handleCustomerPortal = async (req: any, res: any) => {
 
     const cliente = result.rows[0];
     if (!cliente?.portal_password_hash || !bcrypt.compareSync(parsed.data.password, cliente.portal_password_hash)) {
+      const failure = await authAttemptSecurityService.recordFailure(attemptInput);
+      if (!failure.allowed) {
+        setRetryAfterHeader(res, failure);
+        return sendError(res, getLockoutMessage(failure), 429);
+      }
       return sendError(res, "Usuario o contraseña inválidos", 401);
     }
+
+    await authAttemptSecurityService.clearFailures(attemptInput);
 
     const token = generateToken({
       userId: toNumber(cliente.id),

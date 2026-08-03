@@ -7,6 +7,12 @@ import { generateToken } from "../utils/jwt.js";
 import { getAuthUser } from "../middleware/authMiddleware.js";
 import { z } from "zod";
 import { sendSuccess, sendError } from "../utils/response.js";
+import {
+  authAttemptSecurityService,
+  getLockoutMessage,
+  getRequestClientAddress,
+  setRetryAfterHeader,
+} from "../services/authAttemptSecurityService.js";
 
 const router = express.Router();
 
@@ -19,11 +25,30 @@ const loginSchema = z.object({
 
 router.post("/login", validate(loginSchema), async (req, res) => {
   const { email, password } = req.body;
+  const attemptInput = {
+    scope: "staff" as const,
+    identifier: email,
+    clientAddress: getRequestClientAddress(req),
+  };
+
+  const gate = await authAttemptSecurityService.check(attemptInput);
+  if (!gate.allowed) {
+    setRetryAfterHeader(res, gate);
+    return sendError(res, getLockoutMessage(gate), 429);
+  }
+
   const user = await UserRepository.findByEmail(email) as any;
 
   if (!user || !bcrypt.compareSync(password, user.password)) {
+    const failure = await authAttemptSecurityService.recordFailure(attemptInput);
+    if (!failure.allowed) {
+      setRetryAfterHeader(res, failure);
+      return sendError(res, getLockoutMessage(failure), 429);
+    }
     return sendError(res, "Credenciales inválidas", 401);
   }
+
+  await authAttemptSecurityService.clearFailures(attemptInput);
 
   const sessionVersion = Number(user.session_version ?? 1);
   const token = generateToken({
