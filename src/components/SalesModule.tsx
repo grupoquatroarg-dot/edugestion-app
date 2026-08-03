@@ -23,13 +23,18 @@ import {
   XCircle,
   MessageCircle,
   Loader2,
-  Printer
+  Printer,
+  BarChart3,
+  RefreshCw
 } from 'lucide-react';
 import { Product } from '../types';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { getSocket } from '../utils/socket';
 import { generateSaleReceipt, printSaleReceipt } from '../utils/pdfGenerator';
 import CustomerDetail from './CustomerDetail';
 import CustomerOrdersAdmin from './CustomerOrdersAdmin';
+import { outputPdfDocument, type PdfOutputMode } from '../utils/pdfOutput';
 import { useAuth } from '../contexts/AuthContext';
 import { unwrapResponse, apiFetch } from '../utils/api';
 import {
@@ -92,9 +97,35 @@ const openWhatsAppPlaceholder = () => {
   return popup;
 };
 
+interface PetiSalesReportRow {
+  cliente: string;
+  pedidos: number;
+  unidades: number;
+  total: number;
+  efectivo: number;
+  cobrado: number;
+  cuenta_corriente: number;
+}
+
+interface PetiSalesReport {
+  empresa: 'Peti';
+  desde: string | null;
+  hasta: string | null;
+  ventas_incluidas: number;
+  clientes: PetiSalesReportRow[];
+  totales: {
+    pedidos: number;
+    unidades: number;
+    total: number;
+    efectivo: number;
+    cobrado: number;
+    cuenta_corriente: number;
+  };
+}
+
 export default function SalesModule() {
   const { hasPermission } = useAuth();
-  const [activeTab, setActiveTab] = useState<'nueva' | 'historial' | 'saldos' | 'pedidos-clientes'>('nueva');
+  const [activeTab, setActiveTab] = useState<'nueva' | 'historial' | 'saldos' | 'pedidos-clientes' | 'reporte-peti'>('nueva');
   const [products, setProducts] = useState<Product[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedClienteId, setSelectedClienteId] = useState<number>(1);
@@ -147,6 +178,13 @@ export default function SalesModule() {
   const [historySearchTerm, setHistorySearchTerm] = useState('');
   const [historyDateFrom, setHistoryDateFrom] = useState('');
   const [historyDateTo, setHistoryDateTo] = useState('');
+
+  // Reporte de ventas Peti por cliente
+  const [petiReportDateFrom, setPetiReportDateFrom] = useState('');
+  const [petiReportDateTo, setPetiReportDateTo] = useState('');
+  const [petiReport, setPetiReport] = useState<PetiSalesReport | null>(null);
+  const [petiReportLoading, setPetiReportLoading] = useState(false);
+  const [petiReportError, setPetiReportError] = useState('');
 
   const filteredSalesHistory = useMemo(() => {
     return salesHistory.filter(sale => {
@@ -340,6 +378,138 @@ export default function SalesModule() {
       console.error("Error fetching payment methods:", error);
       return false;
     }
+  };
+
+  const formatPetiCurrency = (value: number | string | null | undefined) =>
+    new Intl.NumberFormat('es-AR', {
+      style: 'currency',
+      currency: 'ARS',
+      maximumFractionDigits: 2,
+    }).format(Number(value || 0));
+
+  const formatPetiUnits = (value: number | string | null | undefined) => {
+    const numeric = Number(value || 0);
+    return Number.isInteger(numeric)
+      ? numeric.toString()
+      : numeric.toLocaleString('es-AR', { maximumFractionDigits: 3 });
+  };
+
+  const fetchPetiSalesReport = async () => {
+    setPetiReportLoading(true);
+    setPetiReportError('');
+
+    try {
+      if (petiReportDateFrom && petiReportDateTo && petiReportDateFrom > petiReportDateTo) {
+        throw new Error('La fecha Desde no puede ser posterior a Hasta.');
+      }
+
+      const params = new URLSearchParams({ endpoint: 'peti-customer-report' });
+      if (petiReportDateFrom) params.set('from', petiReportDateFrom);
+      if (petiReportDateTo) params.set('to', petiReportDateTo);
+
+      const response = await apiFetch(`/api/sales?${params.toString()}`);
+      const body = await response.json();
+
+      if (!response.ok) {
+        throw new Error(body?.message || 'No se pudo generar el reporte de ventas Peti.');
+      }
+
+      const data = unwrapResponse(body);
+      setPetiReport(data as PetiSalesReport);
+    } catch (error: any) {
+      console.error('Error fetching Peti sales report:', error);
+      setPetiReport(null);
+      setPetiReportError(error?.message || 'No se pudo generar el reporte de ventas Peti.');
+    } finally {
+      setPetiReportLoading(false);
+    }
+  };
+
+  const generatePetiSalesReportPDF = (mode: PdfOutputMode = 'download') => {
+    if (!petiReport) return;
+
+    const isPrint = mode === 'print';
+    const doc = new jsPDF({
+      orientation: isPrint ? 'landscape' : 'portrait',
+      unit: 'mm',
+      format: 'a4',
+    });
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    doc.setFontSize(isPrint ? 20 : 16);
+    doc.setFont('helvetica', 'bold');
+    doc.text('REPORTE VENTAS PETI POR CLIENTE', pageWidth / 2, 18, { align: 'center' });
+
+    doc.setFontSize(isPrint ? 11 : 9);
+    doc.setFont('helvetica', 'normal');
+    doc.text(
+      `Desde: ${petiReport.desde || 'Inicio'}  Hasta: ${petiReport.hasta || 'Hoy'}`,
+      14,
+      30,
+    );
+    doc.text(`Ventas incluidas: ${petiReport.ventas_incluidas}`, 14, 36);
+
+    autoTable(doc, {
+      startY: 45,
+      head: [[
+        'Cliente',
+        'Pedidos',
+        'Unidades',
+        'Total',
+        'Efectivo',
+        'Cobrado',
+        'Cuenta Corriente',
+      ]],
+      body: petiReport.clientes.map(row => [
+        row.cliente,
+        row.pedidos.toString(),
+        formatPetiUnits(row.unidades),
+        `$${row.total.toFixed(2)}`,
+        `$${row.efectivo.toFixed(2)}`,
+        `$${row.cobrado.toFixed(2)}`,
+        `$${row.cuenta_corriente.toFixed(2)}`,
+      ]),
+      theme: 'grid',
+      headStyles: isPrint
+        ? {
+            fillColor: [255, 255, 255],
+            textColor: [0, 0, 0],
+            fontStyle: 'bold',
+            lineColor: [70, 70, 70],
+            lineWidth: 0.35,
+          }
+        : {
+            fillColor: [20, 20, 20],
+            textColor: [255, 255, 255],
+          },
+      styles: {
+        fontSize: isPrint ? 9 : 7,
+        cellPadding: isPrint ? 3 : 2,
+        fillColor: [255, 255, 255],
+        textColor: [0, 0, 0],
+        lineColor: isPrint ? [110, 110, 110] : [200, 200, 200],
+        lineWidth: isPrint ? 0.25 : 0.1,
+      },
+      alternateRowStyles: { fillColor: [255, 255, 255] },
+      columnStyles: {
+        1: { halign: 'center' },
+        2: { halign: 'center' },
+        3: { halign: 'right' },
+        4: { halign: 'right' },
+        5: { halign: 'right' },
+        6: { halign: 'right' },
+      },
+    });
+
+    const finalY = (doc as any).lastAutoTable?.finalY || 80;
+    doc.setFontSize(isPrint ? 13 : 11);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`TOTAL GENERAL: $${petiReport.totales.total.toFixed(2)}`, 14, finalY + 12);
+    doc.text(`EFECTIVO: $${petiReport.totales.efectivo.toFixed(2)}`, 14, finalY + 19);
+    doc.text(`COBRADO: $${petiReport.totales.cobrado.toFixed(2)}`, 14, finalY + 26);
+    doc.text(`CTA CTE: $${petiReport.totales.cuenta_corriente.toFixed(2)}`, 14, finalY + 33);
+
+    outputPdfDocument(doc, 'Reporte_Ventas_Peti_Por_Cliente.pdf', mode);
   };
 
   const loadInitialData = async () => {
@@ -840,8 +1010,8 @@ export default function SalesModule() {
         aria-live="polite"
       >
         <div className="mx-auto w-full max-w-[1600px] animate-pulse space-y-5">
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-            {[0, 1, 2, 3].map(item => (
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+            {[0, 1, 2, 3, 4].map(item => (
               <div key={item} className="h-12 rounded-xl border border-slate-200 bg-white" />
             ))}
           </div>
@@ -936,6 +1106,19 @@ export default function SalesModule() {
           >
             <ShoppingCart size={18} />
             Pedidos de Clientes
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('reporte-peti');
+              if (!petiReport && !petiReportLoading) void fetchPetiSalesReport();
+            }}
+            className={`min-h-11 min-w-0 rounded-xl border px-3 py-2.5 text-xs font-black transition-all flex items-center justify-center gap-2 sm:text-sm ${
+              activeTab === 'reporte-peti' ? 'border-orange-200 bg-orange-50 text-orange-700 shadow-sm' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-800'
+            }`}
+          >
+            <BarChart3 size={18} />
+            Reporte Peti
           </button>
         </div>
       </div>
@@ -1620,6 +1803,213 @@ export default function SalesModule() {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        ) : activeTab === 'reporte-peti' ? (
+          <div className="h-full overflow-y-auto p-4 custom-scrollbar sm:p-8">
+            <div className="mx-auto max-w-7xl space-y-6">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-orange-100 text-orange-700">
+                      <BarChart3 size={24} />
+                    </div>
+                    <div className="min-w-0">
+                      <h1 className="break-words text-2xl font-black tracking-tight text-zinc-900 sm:text-3xl">
+                        Reporte de ventas Peti por cliente
+                      </h1>
+                      <p className="mt-1 text-sm leading-relaxed text-zinc-500">
+                        Incluye solamente los productos cuya empresa actual es Peti, aun cuando la venta también tenga productos de otras empresas.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid w-full grid-cols-1 gap-2 min-[460px]:grid-cols-2 lg:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => generatePetiSalesReportPDF('download')}
+                    disabled={!petiReport || petiReportLoading}
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-950 px-5 py-3 text-xs font-black uppercase tracking-[0.12em] text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Download size={16} />
+                    Descargar PDF
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => generatePetiSalesReportPDF('print')}
+                    disabled={!petiReport || petiReportLoading}
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-5 py-3 text-xs font-black uppercase tracking-[0.12em] text-slate-800 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Printer size={16} />
+                    Imprimir económico
+                  </button>
+                </div>
+              </div>
+
+              <section className="rounded-3xl border border-orange-200 bg-orange-50/70 p-4 text-sm leading-relaxed text-orange-900 sm:p-5">
+                <p className="font-black">Criterio del reporte</p>
+                <p className="mt-1">
+                  Las unidades y el total se calculan solo con productos Peti. En ventas mixtas, Efectivo, Cobrado y Cuenta Corriente se asignan proporcionalmente al valor Peti dentro de la venta. El cálculo incluye la venta completa, sin depender de si había stock o si se generó un pedido a proveedor.
+                </p>
+              </section>
+
+              <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
+                  <label className="space-y-2">
+                    <span className="block text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Desde</span>
+                    <div className="relative">
+                      <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                      <input
+                        type="date"
+                        value={petiReportDateFrom}
+                        onChange={event => setPetiReportDateFrom(event.target.value)}
+                        className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-sm font-semibold outline-none transition focus:border-orange-400 focus:bg-white focus:ring-4 focus:ring-orange-100"
+                      />
+                    </div>
+                  </label>
+
+                  <label className="space-y-2">
+                    <span className="block text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Hasta</span>
+                    <div className="relative">
+                      <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                      <input
+                        type="date"
+                        value={petiReportDateTo}
+                        onChange={event => setPetiReportDateTo(event.target.value)}
+                        className="min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-sm font-semibold outline-none transition focus:border-orange-400 focus:bg-white focus:ring-4 focus:ring-orange-100"
+                      />
+                    </div>
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() => void fetchPetiSalesReport()}
+                    disabled={petiReportLoading}
+                    className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-orange-600 px-5 py-3 text-xs font-black uppercase tracking-[0.12em] text-white transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50 md:w-auto"
+                  >
+                    <RefreshCw size={16} className={petiReportLoading ? 'animate-spin' : ''} />
+                    {petiReportLoading ? 'Generando...' : 'Generar reporte'}
+                  </button>
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4 text-xs font-semibold text-slate-500">
+                  <span>
+                    Período aplicado: {petiReport?.desde || 'Inicio'} al {petiReport?.hasta || 'Hoy'}
+                  </span>
+                  {(petiReportDateFrom || petiReportDateTo) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPetiReportDateFrom('');
+                        setPetiReportDateTo('');
+                      }}
+                      className="rounded-lg px-3 py-2 font-black text-slate-600 hover:bg-slate-100"
+                    >
+                      Limpiar fechas
+                    </button>
+                  )}
+                </div>
+              </section>
+
+              {petiReportError && (
+                <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700" role="alert">
+                  <AlertCircle size={19} className="mt-0.5 shrink-0" />
+                  <span>{petiReportError}</span>
+                </div>
+              )}
+
+              {petiReportLoading && !petiReport ? (
+                <div className="flex min-h-64 items-center justify-center rounded-3xl border border-slate-200 bg-white">
+                  <div className="text-center">
+                    <Loader2 size={34} className="mx-auto animate-spin text-orange-600" />
+                    <p className="mt-3 text-sm font-black text-slate-600">Calculando ventas Peti...</p>
+                  </div>
+                </div>
+              ) : petiReport ? (
+                <>
+                  <section className="grid grid-cols-1 gap-3 min-[430px]:grid-cols-2 lg:grid-cols-5">
+                    {[
+                      { label: 'Ventas incluidas', value: petiReport.ventas_incluidas.toString() },
+                      { label: 'Unidades Peti', value: formatPetiUnits(petiReport.totales.unidades) },
+                      { label: 'Total Peti', value: formatPetiCurrency(petiReport.totales.total) },
+                      { label: 'Cobrado', value: formatPetiCurrency(petiReport.totales.cobrado) },
+                      { label: 'Cuenta corriente', value: formatPetiCurrency(petiReport.totales.cuenta_corriente) },
+                    ].map(card => (
+                      <div key={card.label} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                        <p className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">{card.label}</p>
+                        <p className="mt-2 break-words text-xl font-black text-slate-950">{card.value}</p>
+                      </div>
+                    ))}
+                  </section>
+
+                  <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+                    <div className="flex flex-col gap-2 border-b border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+                      <div>
+                        <h2 className="text-lg font-black text-slate-950">Totales por cliente</h2>
+                        <p className="mt-1 text-xs text-slate-500">
+                          “Pedidos” representa la cantidad de ventas distintas que contienen al menos un producto Peti.
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-orange-50 px-3 py-1.5 text-xs font-black text-orange-700">
+                        {petiReport.clientes.length} clientes
+                      </span>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="min-w-[900px] w-full border-collapse text-sm">
+                        <thead>
+                          <tr className="bg-slate-950 text-left text-[10px] font-black uppercase tracking-[0.12em] text-white">
+                            <th className="px-4 py-3">Cliente</th>
+                            <th className="px-4 py-3 text-center">Pedidos</th>
+                            <th className="px-4 py-3 text-center">Unidades</th>
+                            <th className="px-4 py-3 text-right">Total</th>
+                            <th className="px-4 py-3 text-right">Efectivo</th>
+                            <th className="px-4 py-3 text-right">Cobrado</th>
+                            <th className="px-4 py-3 text-right">Cuenta Corriente</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {petiReport.clientes.map(row => (
+                            <tr key={row.cliente} className="border-b border-slate-100 last:border-b-0 hover:bg-orange-50/40">
+                              <td className="px-4 py-3 font-black text-slate-900">{row.cliente}</td>
+                              <td className="px-4 py-3 text-center font-bold text-slate-700">{row.pedidos}</td>
+                              <td className="px-4 py-3 text-center font-bold text-slate-700">{formatPetiUnits(row.unidades)}</td>
+                              <td className="px-4 py-3 text-right font-black text-slate-900">{formatPetiCurrency(row.total)}</td>
+                              <td className="px-4 py-3 text-right font-bold text-slate-700">{formatPetiCurrency(row.efectivo)}</td>
+                              <td className="px-4 py-3 text-right font-bold text-emerald-700">{formatPetiCurrency(row.cobrado)}</td>
+                              <td className="px-4 py-3 text-right font-bold text-amber-700">{formatPetiCurrency(row.cuenta_corriente)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="bg-slate-100 font-black text-slate-950">
+                            <td className="px-4 py-4">TOTAL GENERAL</td>
+                            <td className="px-4 py-4 text-center">{petiReport.totales.pedidos}</td>
+                            <td className="px-4 py-4 text-center">{formatPetiUnits(petiReport.totales.unidades)}</td>
+                            <td className="px-4 py-4 text-right">{formatPetiCurrency(petiReport.totales.total)}</td>
+                            <td className="px-4 py-4 text-right">{formatPetiCurrency(petiReport.totales.efectivo)}</td>
+                            <td className="px-4 py-4 text-right text-emerald-700">{formatPetiCurrency(petiReport.totales.cobrado)}</td>
+                            <td className="px-4 py-4 text-right text-amber-700">{formatPetiCurrency(petiReport.totales.cuenta_corriente)}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+
+                    {petiReport.clientes.length === 0 && (
+                      <div className="p-10 text-center text-slate-400 sm:p-14">
+                        <BarChart3 size={48} className="mx-auto mb-3 opacity-20" />
+                        <p className="font-black">No hay ventas con productos Peti en el período seleccionado.</p>
+                      </div>
+                    )}
+                  </section>
+                </>
+              ) : (
+                <div className="rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center text-slate-500">
+                  <BarChart3 size={48} className="mx-auto mb-3 opacity-20" />
+                  <p className="font-black">Elegí un período y generá el reporte.</p>
+                </div>
+              )}
             </div>
           </div>
         ) : activeTab === 'pedidos-clientes' ? (

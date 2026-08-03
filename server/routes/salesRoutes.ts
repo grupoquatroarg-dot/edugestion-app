@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { salesRepository } from '../repositories/salesRepository.js';
 import { salesService } from '../services/salesService.js';
 import { saleCancellationService } from '../services/saleCancellationService.js';
+import { petiSalesReportService } from '../services/petiSalesReportService.js';
 import { requireAuth, requirePermission } from '../middleware/authMiddleware.js';
 import { validate } from '../middleware/validate.js';
 import { z } from 'zod';
@@ -35,10 +36,27 @@ const saleSchema = z.object({
 
 router.get('/', requireAuth, requirePermission('sales', 'view'), async (req, res) => {
   try {
+    if (String(req.query?.endpoint || '') === 'peti-customer-report') {
+      const report = await petiSalesReportService.getReport({
+        from: typeof req.query?.from === 'string' ? req.query.from : null,
+        to: typeof req.query?.to === 'string' ? req.query.to : null,
+      });
+      return sendSuccess(res, report);
+    }
+
     const sales = await salesRepository.getAll();
     return sendSuccess(res, sales);
   } catch (error: any) {
-    return sendError(res, error.message || 'Error al obtener ventas', error.statusCode || 400, error.errors || []);
+    return sendError(
+      res,
+      error.message || (
+        String(req.query?.endpoint || '') === 'peti-customer-report'
+          ? 'No se pudo generar el reporte de ventas Peti'
+          : 'Error al obtener ventas'
+      ),
+      error.statusCode || 400,
+      error.errors || []
+    );
   }
 });
 

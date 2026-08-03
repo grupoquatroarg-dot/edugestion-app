@@ -20,6 +20,7 @@ import { customerOrderRejectionLifecycleService } from "../server/services/custo
 import { customerOrderApprovalService } from "../server/services/customerOrderApprovalService.js";
 import { customerOrderContentLifecycleService } from "../server/services/customerOrderContentLifecycleService.js";
 import { assertPaymentMethodActive } from "../server/services/paymentMethodAvailabilityService.js";
+import { petiSalesReportService } from "../server/services/petiSalesReportService.js";
 
 const saleSchema = z.object({
   cliente_id: z.number(),
@@ -1695,6 +1696,29 @@ export default async function handler(req: any, res: any) {
       return sendError(
         res,
         error?.message || "No se pudo anular la venta",
+        error?.statusCode || 400,
+        error?.errors || []
+      );
+    }
+  }
+
+  if (req.method === "GET" && endpoint === "peti-customer-report") {
+    const user = await requirePermission(req, res, "sales", "view");
+    if (!user) return;
+
+    const from = Array.isArray(req.query?.from) ? req.query.from[0] : req.query?.from;
+    const to = Array.isArray(req.query?.to) ? req.query.to[0] : req.query?.to;
+
+    try {
+      const report = await petiSalesReportService.getReport({
+        from: typeof from === "string" ? from : null,
+        to: typeof to === "string" ? to : null,
+      });
+      return sendSuccess(res, report);
+    } catch (error: any) {
+      return sendError(
+        res,
+        error?.message || "No se pudo generar el reporte de ventas Peti",
         error?.statusCode || 400,
         error?.errors || []
       );
