@@ -201,6 +201,29 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_general_settings_content_state_changed_at
       ON general_settings_content_state (content_changed_at DESC);
 
+
+    CREATE TABLE IF NOT EXISTS maintenance_operation_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      operation TEXT NOT NULL CHECK(operation IN ('backup', 'restore', 'reset')),
+      reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 3 AND 500),
+      performed_by_user_id INTEGER NOT NULL,
+      performed_by TEXT NOT NULL CHECK(length(trim(performed_by)) BETWEEN 1 AND 250),
+      performed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      affected_tables INTEGER NOT NULL DEFAULT 0 CHECK(affected_tables >= 0),
+      affected_rows INTEGER NOT NULL DEFAULT 0 CHECK(affected_rows >= 0),
+      details TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (performed_by_user_id) REFERENCES users(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_maintenance_operation_history_performed_at
+      ON maintenance_operation_history (performed_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_maintenance_operation_history_actor
+      ON maintenance_operation_history (performed_by_user_id, performed_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_maintenance_operation_history_operation
+      ON maintenance_operation_history (operation, performed_at DESC);
+
     CREATE TABLE IF NOT EXISTS products (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       code TEXT,
@@ -1194,6 +1217,29 @@ export function initDb() {
         ON general_settings_content_history (changed_at DESC);
       CREATE INDEX IF NOT EXISTS idx_general_settings_content_state_changed_at
         ON general_settings_content_state (content_changed_at DESC);
+    `);
+  } catch (e) {}
+
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS maintenance_operation_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operation TEXT NOT NULL CHECK(operation IN ('backup', 'restore', 'reset')),
+        reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 3 AND 500),
+        performed_by_user_id INTEGER NOT NULL,
+        performed_by TEXT NOT NULL CHECK(length(trim(performed_by)) BETWEEN 1 AND 250),
+        performed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        affected_tables INTEGER NOT NULL DEFAULT 0 CHECK(affected_tables >= 0),
+        affected_rows INTEGER NOT NULL DEFAULT 0 CHECK(affected_rows >= 0),
+        details TEXT NOT NULL DEFAULT '{}',
+        FOREIGN KEY (performed_by_user_id) REFERENCES users(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_maintenance_operation_history_performed_at
+        ON maintenance_operation_history (performed_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_maintenance_operation_history_actor
+        ON maintenance_operation_history (performed_by_user_id, performed_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_maintenance_operation_history_operation
+        ON maintenance_operation_history (operation, performed_at DESC);
     `);
   } catch (e) {}
 

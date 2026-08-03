@@ -150,14 +150,21 @@ export default function ConfigModule() {
   const [lifecycleLoading, setLifecycleLoading] = useState(false);
 
   const [backupLoading, setBackupLoading] = useState(false);
+  const [showBackupModal, setShowBackupModal] = useState(false);
+  const [backupAdminPassword, setBackupAdminPassword] = useState('');
+  const [backupReason, setBackupReason] = useState('');
+  const [backupConfirmation, setBackupConfirmation] = useState('');
+
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const [showRestoreModal, setShowRestoreModal] = useState(false);
   const [restoreAdminPassword, setRestoreAdminPassword] = useState('');
+  const [restoreReason, setRestoreReason] = useState('');
   const [restoreConfirmation, setRestoreConfirmation] = useState('');
 
   const [showResetModal, setShowResetModal] = useState(false);
   const [resetAdminPassword, setResetAdminPassword] = useState('');
+  const [resetReason, setResetReason] = useState('');
   const [resetConfirmation, setResetConfirmation] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
 
@@ -445,14 +452,47 @@ export default function ConfigModule() {
     return `edugestion_backup_${date}_${time}.json`;
   };
 
-  const downloadBackup = async () => {
+  const openBackupModal = () => {
+    setBackupAdminPassword('');
+    setBackupReason('');
+    setBackupConfirmation('');
+    setShowBackupModal(true);
+  };
+
+  const closeBackupModal = () => {
+    if (backupLoading) return;
+    setShowBackupModal(false);
+    setBackupAdminPassword('');
+    setBackupReason('');
+    setBackupConfirmation('');
+  };
+
+  const downloadBackup = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (
+      !backupAdminPassword ||
+      backupReason.trim().length < 3 ||
+      backupConfirmation.trim() !== 'RESPALDAR'
+    ) return;
+
     setBackupLoading(true);
     try {
-      const response = await apiFetch('/api/config/backup-data');
+      const response = await apiFetch('/api/config/backup-data', {
+        method: 'POST',
+        body: JSON.stringify({
+          adminPassword: backupAdminPassword,
+          motivo: backupReason,
+          confirmation: backupConfirmation.trim(),
+        }),
+      });
       const body = await response.json();
       if (!response.ok) throw new Error(body?.message || 'No se pudo generar la copia de seguridad');
       downloadJsonFile(unwrapResponse(body), buildBackupFileName());
-      showStatus('Copia de seguridad descargada correctamente', 'success');
+      setShowBackupModal(false);
+      setBackupAdminPassword('');
+      setBackupReason('');
+      setBackupConfirmation('');
+      showStatus('Copia de seguridad descargada y auditada correctamente', 'success');
     } catch (error: any) {
       showStatus(error?.message || 'Error al descargar la copia de seguridad', 'error');
     } finally {
@@ -464,6 +504,7 @@ export default function ConfigModule() {
     if (!file) return;
     setRestoreFile(file);
     setRestoreAdminPassword('');
+    setRestoreReason('');
     setRestoreConfirmation('');
     setShowRestoreModal(true);
   };
@@ -473,12 +514,18 @@ export default function ConfigModule() {
     setShowRestoreModal(false);
     setRestoreFile(null);
     setRestoreAdminPassword('');
+    setRestoreReason('');
     setRestoreConfirmation('');
   };
 
   const restoreBackup = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!restoreFile || !restoreAdminPassword.trim() || restoreConfirmation.trim() !== 'RESTAURAR') return;
+    if (
+      !restoreFile ||
+      !restoreAdminPassword ||
+      restoreReason.trim().length < 3 ||
+      restoreConfirmation.trim() !== 'RESTAURAR'
+    ) return;
 
     setRestoreLoading(true);
     try {
@@ -488,6 +535,7 @@ export default function ConfigModule() {
         method: 'POST',
         body: JSON.stringify({
           adminPassword: restoreAdminPassword,
+          motivo: restoreReason,
           confirmation: 'RESTAURAR',
           backup,
         }),
@@ -497,6 +545,7 @@ export default function ConfigModule() {
       setShowRestoreModal(false);
       setRestoreFile(null);
       setRestoreAdminPassword('');
+      setRestoreReason('');
       setRestoreConfirmation('');
       await fetchData(true);
       showStatus('Copia de seguridad restaurada correctamente', 'success');
@@ -509,7 +558,11 @@ export default function ConfigModule() {
 
   const resetAppData = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!resetAdminPassword.trim() || resetConfirmation.trim() !== 'REESTABLECER') return;
+    if (
+      !resetAdminPassword ||
+      resetReason.trim().length < 3 ||
+      resetConfirmation.trim() !== 'REESTABLECER'
+    ) return;
 
     setResetLoading(true);
     try {
@@ -517,6 +570,7 @@ export default function ConfigModule() {
         method: 'POST',
         body: JSON.stringify({
           adminPassword: resetAdminPassword,
+          motivo: resetReason,
           confirmation: resetConfirmation.trim(),
         }),
       });
@@ -525,6 +579,7 @@ export default function ConfigModule() {
 
       setShowResetModal(false);
       setResetAdminPassword('');
+      setResetReason('');
       setResetConfirmation('');
       setSettings({});
       setPaymentMethods([]);
@@ -737,7 +792,7 @@ export default function ConfigModule() {
             description="Descargá una copia completa o restaurá la aplicación desde un archivo JSON válido."
           />
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            <button type="button" onClick={downloadBackup} disabled={backupLoading} className={secondaryButtonClass}>
+            <button type="button" onClick={openBackupModal} disabled={backupLoading} className={secondaryButtonClass}>
               <Download size={17} /> {backupLoading ? 'Generando copia...' : 'Descargar copia JSON'}
             </button>
             <label className={`${secondaryButtonClass} cursor-pointer`}>
@@ -1412,6 +1467,44 @@ export default function ConfigModule() {
         </div>
       )}
 
+
+      {showBackupModal && (
+        <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/65 p-0 backdrop-blur-sm sm:items-center sm:p-5">
+          <form onSubmit={downloadBackup} className="max-h-[100dvh] w-full overflow-y-auto rounded-t-[28px] bg-white shadow-2xl sm:max-w-lg sm:rounded-[28px]">
+            <div className="flex items-start justify-between gap-4 bg-indigo-600 p-5 text-white sm:p-6">
+              <div className="flex items-start gap-3">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/15"><Download size={22} /></div>
+                <div>
+                  <h3 className="text-xl font-black">Descargar copia de seguridad</h3>
+                  <p className="mt-1 text-sm font-medium text-indigo-100">La descarga quedará registrada con tu usuario y motivo.</p>
+                </div>
+              </div>
+              <button type="button" onClick={closeBackupModal} disabled={backupLoading} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white hover:bg-white/15" aria-label="Cerrar descarga de respaldo"><X size={20} /></button>
+            </div>
+            <div className="space-y-4 p-5 sm:p-6">
+              <label className="space-y-2">
+                <span className={labelClass}>Motivo obligatorio</span>
+                <textarea className={`${inputClass} min-h-24 resize-y`} value={backupReason} onChange={(event) => setBackupReason(event.target.value.slice(0, 500))} placeholder="Ej.: Respaldo previo al cierre mensual" autoFocus />
+                <span className="block text-xs text-slate-500">{backupReason.trim().length}/500 caracteres</span>
+              </label>
+              <label className="space-y-2">
+                <span className={labelClass}>Contraseña actual del administrador</span>
+                <input type="password" className={inputClass} value={backupAdminPassword} onChange={(event) => setBackupAdminPassword(event.target.value)} autoComplete="current-password" placeholder="Ingrese su contraseña actual" />
+              </label>
+              <label className="space-y-2">
+                <span className={labelClass}>Confirmación escrita</span>
+                <input className={inputClass} value={backupConfirmation} onChange={(event) => setBackupConfirmation(event.target.value)} placeholder="Escriba RESPALDAR" />
+                <span className="block text-xs text-slate-500">Escribí exactamente RESPALDAR para habilitar la descarga.</span>
+              </label>
+            </div>
+            <div className="grid gap-3 border-t border-slate-200 bg-slate-50 p-5 sm:grid-cols-2 sm:p-6">
+              <button type="button" onClick={closeBackupModal} disabled={backupLoading} className={secondaryButtonClass}>Cancelar</button>
+              <button type="submit" disabled={backupLoading || !backupAdminPassword || backupReason.trim().length < 3 || backupConfirmation.trim() !== 'RESPALDAR'} className={primaryButtonClass}><Download size={16} /> {backupLoading ? 'Generando...' : 'Generar y descargar'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {showRestoreModal && restoreFile && (
         <div className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-5">
           <form onSubmit={restoreBackup} className="max-h-[100dvh] w-full overflow-y-auto rounded-t-[28px] bg-white shadow-2xl sm:max-w-lg sm:rounded-[28px]">
@@ -1421,10 +1514,11 @@ export default function ConfigModule() {
             </div>
             <div className="space-y-4 p-5 sm:p-6">
               <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><p className="text-xs font-black uppercase tracking-widest text-amber-700">Archivo seleccionado</p><p className="mt-1 break-all text-sm font-bold text-amber-900">{restoreFile.name}</p></div>
-              <label className="space-y-2"><span className={labelClass}>Contraseña del administrador</span><input type="password" className={inputClass} value={restoreAdminPassword} onChange={(event) => setRestoreAdminPassword(event.target.value)} autoComplete="current-password" placeholder="Ingrese la contraseña" /></label>
+              <label className="space-y-2"><span className={labelClass}>Motivo obligatorio</span><textarea className={`${inputClass} min-h-24 resize-y`} value={restoreReason} onChange={(event) => setRestoreReason(event.target.value.slice(0, 500))} placeholder="Ej.: Recuperación por error operativo" /><span className="block text-xs text-slate-500">{restoreReason.trim().length}/500 caracteres</span></label>
+              <label className="space-y-2"><span className={labelClass}>Contraseña actual del administrador</span><input type="password" className={inputClass} value={restoreAdminPassword} onChange={(event) => setRestoreAdminPassword(event.target.value)} autoComplete="current-password" placeholder="Ingrese su contraseña actual" /></label>
               <label className="space-y-2"><span className={labelClass}>Confirmación escrita</span><input className={inputClass} value={restoreConfirmation} onChange={(event) => setRestoreConfirmation(event.target.value)} placeholder="Escriba RESTAURAR" /><span className="block text-xs text-slate-500">Escribí exactamente RESTAURAR para habilitar la acción.</span></label>
             </div>
-            <div className="grid gap-3 border-t border-slate-200 bg-slate-50 p-5 sm:grid-cols-2 sm:p-6"><button type="button" onClick={closeRestoreModal} disabled={restoreLoading} className={secondaryButtonClass}>Cancelar</button><button type="submit" disabled={restoreLoading || !restoreAdminPassword.trim() || restoreConfirmation.trim() !== 'RESTAURAR'} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-amber-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-amber-700 disabled:opacity-50"><Upload size={16} /> {restoreLoading ? 'Restaurando...' : 'Restaurar datos'}</button></div>
+            <div className="grid gap-3 border-t border-slate-200 bg-slate-50 p-5 sm:grid-cols-2 sm:p-6"><button type="button" onClick={closeRestoreModal} disabled={restoreLoading} className={secondaryButtonClass}>Cancelar</button><button type="submit" disabled={restoreLoading || !restoreAdminPassword || restoreReason.trim().length < 3 || restoreConfirmation.trim() !== 'RESTAURAR'} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-amber-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-amber-700 disabled:opacity-50"><Upload size={16} /> {restoreLoading ? 'Restaurando...' : 'Restaurar datos'}</button></div>
           </form>
         </div>
       )}
@@ -1434,15 +1528,16 @@ export default function ConfigModule() {
           <form onSubmit={resetAppData} className="max-h-[100dvh] w-full overflow-y-auto rounded-t-[28px] bg-white shadow-2xl sm:max-w-lg sm:rounded-[28px]">
             <div className="flex items-start justify-between gap-4 bg-red-600 p-5 text-white sm:p-6">
               <div className="flex items-start gap-3"><div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/15"><ShieldAlert size={22} /></div><div><h3 className="text-xl font-black">Restablecer datos</h3><p className="mt-1 text-sm font-medium text-red-100">Esta acción no se puede deshacer sin una copia JSON.</p></div></div>
-              <button type="button" onClick={() => !resetLoading && setShowResetModal(false)} disabled={resetLoading} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white hover:bg-white/15" aria-label="Cerrar reinicio de datos"><X size={20} /></button>
+              <button type="button" onClick={() => { if (!resetLoading) { setShowResetModal(false); setResetAdminPassword(''); setResetReason(''); setResetConfirmation(''); } }} disabled={resetLoading} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white hover:bg-white/15" aria-label="Cerrar reinicio de datos"><X size={20} /></button>
             </div>
             <div className="space-y-4 p-5 sm:p-6">
               <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-medium leading-relaxed text-red-800">Se eliminarán los datos operativos. Usuarios, permisos, datos del negocio y formas de pago se conservarán.</div>
-              <button type="button" onClick={downloadBackup} disabled={backupLoading} className={secondaryButtonClass}><Download size={16} /> {backupLoading ? 'Generando copia...' : 'Descargar copia antes'}</button>
-              <label className="space-y-2"><span className={labelClass}>Contraseña del administrador</span><input type="password" className={inputClass} value={resetAdminPassword} onChange={(event) => setResetAdminPassword(event.target.value)} autoComplete="current-password" placeholder="Ingrese la contraseña" /></label>
+              <button type="button" onClick={openBackupModal} disabled={backupLoading} className={secondaryButtonClass}><Download size={16} /> {backupLoading ? 'Generando copia...' : 'Descargar copia antes'}</button>
+              <label className="space-y-2"><span className={labelClass}>Motivo obligatorio</span><textarea className={`${inputClass} min-h-24 resize-y`} value={resetReason} onChange={(event) => setResetReason(event.target.value.slice(0, 500))} placeholder="Ej.: Reinicio controlado del entorno de pruebas" /><span className="block text-xs text-slate-500">{resetReason.trim().length}/500 caracteres</span></label>
+              <label className="space-y-2"><span className={labelClass}>Contraseña actual del administrador</span><input type="password" className={inputClass} value={resetAdminPassword} onChange={(event) => setResetAdminPassword(event.target.value)} autoComplete="current-password" placeholder="Ingrese su contraseña actual" /></label>
               <label className="space-y-2"><span className={labelClass}>Confirmación escrita</span><input className={inputClass} value={resetConfirmation} onChange={(event) => setResetConfirmation(event.target.value)} placeholder="Escriba REESTABLECER" /><span className="block text-xs text-slate-500">Escribí exactamente REESTABLECER para habilitar la acción.</span></label>
             </div>
-            <div className="grid gap-3 border-t border-slate-200 bg-slate-50 p-5 sm:grid-cols-2 sm:p-6"><button type="button" onClick={() => { setShowResetModal(false); setResetAdminPassword(''); setResetConfirmation(''); }} disabled={resetLoading} className={secondaryButtonClass}>Cancelar</button><button type="submit" disabled={resetLoading || !resetAdminPassword.trim() || resetConfirmation.trim() !== 'REESTABLECER'} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-red-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-red-700 disabled:opacity-50"><RotateCcw size={16} /> {resetLoading ? 'Restableciendo...' : 'Confirmar restablecimiento'}</button></div>
+            <div className="grid gap-3 border-t border-slate-200 bg-slate-50 p-5 sm:grid-cols-2 sm:p-6"><button type="button" onClick={() => { setShowResetModal(false); setResetAdminPassword(''); setResetReason(''); setResetConfirmation(''); }} disabled={resetLoading} className={secondaryButtonClass}>Cancelar</button><button type="submit" disabled={resetLoading || !resetAdminPassword || resetReason.trim().length < 3 || resetConfirmation.trim() !== 'REESTABLECER'} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-red-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-red-700 disabled:opacity-50"><RotateCcw size={16} /> {resetLoading ? 'Restableciendo...' : 'Confirmar restablecimiento'}</button></div>
           </form>
         </div>
       )}

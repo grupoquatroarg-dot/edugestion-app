@@ -1,5 +1,6 @@
 import { sendError, sendSuccess } from "../../server/utils/response.js";
 import { generalSettingsContentLifecycleService } from "../../server/services/generalSettingsContentLifecycleService.js";
+import { maintenanceOperationSecurityService } from "../../server/services/maintenanceOperationSecurityService.js";
 import {
   getEndpoint,
   getPoolOrFail,
@@ -57,81 +58,10 @@ export default async function handler(req: any, res: any) {
 
 
       if (endpoint === "backup-data") {
-        if (user.role !== "administrador") {
-          return sendError(res, "Solo el usuario administrador puede descargar copias de seguridad", 403);
-        }
-
-        const backupTables = [
-          "settings",
-          "payment_methods",
-          "product_categories",
-          "product_families",
-          "configuration_item_status_history",
-          "configuration_item_content_history",
-          "general_settings_content_state",
-          "general_settings_content_history",
-          "user_status_history",
-          "clientes",
-          "proveedores",
-          "products",
-          "sales",
-          "sale_items",
-          "purchase_invoices",
-          "purchase_invoice_items",
-          "movimientos_financieros",
-          "cheques",
-          "stock_movimientos",
-          "price_update_history",
-          "routes",
-          "route_items",
-          "checklist_templates",
-          "checklist_template_items",
-          "checklists",
-          "checklist_items",
-          "supplier_orders",
-          "supplier_order_items",
-          "customer_orders",
-          "customer_order_items"
-        ];
-
-        const quoteIdentifier = (value: string) => `"${value.replace(/"/g, '""')}"`;
-
-        const existingTablesResult = await pool.query(
-          `
-            SELECT table_name
-            FROM information_schema.tables
-            WHERE table_schema = 'public'
-              AND table_name = ANY($1::text[])
-          `,
-          [backupTables]
-        );
-
-        const existingTables = existingTablesResult.rows
-          .map((row: any) => String(row.table_name))
-          .filter((tableName: string) => backupTables.includes(tableName));
-
-        const tables: Record<string, any[]> = {};
-
-        for (const tableName of backupTables) {
-          if (!existingTables.includes(tableName)) {
-            tables[tableName] = [];
-            continue;
-          }
-
-          const result = await pool.query(`SELECT * FROM ${quoteIdentifier(tableName)}`);
-          tables[tableName] = result.rows;
-        }
-
-        return sendSuccess(
+        return sendError(
           res,
-          {
-            app: "edugestion",
-            type: "manual-json-backup",
-            version: 1,
-            created_at: new Date().toISOString(),
-            tables
-          },
-          "Copia de seguridad generada"
+          "La copia de seguridad requiere reautenticación y debe solicitarse mediante POST",
+          405
         );
       }
 
@@ -152,18 +82,14 @@ export default async function handler(req: any, res: any) {
       if (!pool) return;
 
       const body = getRequestBody(req);
-      const adminPassword = String(body?.adminPassword || body?.password || "").trim();
-      const confirmation = String(body?.confirmation || "").trim();
-      const expectedPassword = String(process.env.RESET_APP_PASSWORD || "admin123");
+      const adminPassword = typeof body?.adminPassword === "string"
+        ? body.adminPassword
+        : typeof body?.password === "string"
+          ? body.password
+          : "";
+      const confirmation = String(body?.confirmation || "");
+      const motivo = String(body?.motivo || "");
       const backup = body?.backup;
-
-      if (!adminPassword || adminPassword !== expectedPassword) {
-        return sendError(res, "Contraseña de administrador incorrecta", 403);
-      }
-
-      if (confirmation !== "RESTAURAR") {
-        return sendError(res, "Debe confirmar la restauración", 400);
-      }
 
       if (!backup || typeof backup !== "object" || !backup.tables || typeof backup.tables !== "object") {
         return sendError(res, "Archivo de copia de seguridad inválido", 400);
@@ -209,6 +135,18 @@ export default async function handler(req: any, res: any) {
       try {
         await client.query("BEGIN");
 
+        const authorization = await maintenanceOperationSecurityService.authorize(
+          {
+            operation: "restore",
+            actorUserId: Number(user.userId),
+            actorName: String(user.userName || "Administrador"),
+            password: adminPassword,
+            motivo,
+            confirmation,
+          },
+          client
+        );
+
         const existingTablesResult = await client.query(
           `
             SELECT table_name
@@ -233,6 +171,8 @@ export default async function handler(req: any, res: any) {
           );
         }
 
+        let restoredRows = 0;
+
         for (const tableName of restoreTables) {
           if (!existingTables.includes(tableName)) continue;
 
@@ -252,6 +192,7 @@ export default async function handler(req: any, res: any) {
               `INSERT INTO ${quoteIdentifier(tableName)} (${columnSql}) VALUES (${placeholders})`,
               values
             );
+            restoredRows += 1;
           }
         }
 
@@ -285,13 +226,28 @@ export default async function handler(req: any, res: any) {
           }
         }
 
+        await maintenanceOperationSecurityService.record(
+          {
+            ...authorization,
+            affectedTables: existingTables.length,
+            affectedRows: restoredRows,
+            details: {
+              backup_type: String(backup.type || ""),
+              backup_version: Number(backup.version || 0),
+              backup_created_at: String(backup.created_at || ""),
+            },
+          },
+          client
+        );
+
         await client.query("COMMIT");
 
         return sendSuccess(
           res,
           {
             restored: true,
-            tablas_restauradas: existingTables.length
+            tablas_restauradas: existingTables.length,
+            filas_restauradas: restoredRows
           },
           "Copia de seguridad restaurada correctamente"
         );
@@ -315,17 +271,13 @@ export default async function handler(req: any, res: any) {
       if (!pool) return;
 
       const body = getRequestBody(req);
-      const adminPassword = String(body?.adminPassword || body?.password || "").trim();
-      const confirmation = String(body?.confirmation || "").trim();
-      const expectedPassword = String(process.env.RESET_APP_PASSWORD || "admin123");
-
-      if (!adminPassword || adminPassword !== expectedPassword) {
-        return sendError(res, "Contraseña de administrador incorrecta", 403);
-      }
-
-      if (confirmation !== "REESTABLECER") {
-        return sendError(res, "Debe escribir REESTABLECER para confirmar", 400);
-      }
+      const adminPassword = typeof body?.adminPassword === "string"
+        ? body.adminPassword
+        : typeof body?.password === "string"
+          ? body.password
+          : "";
+      const confirmation = String(body?.confirmation || "");
+      const motivo = String(body?.motivo || "");
 
       const resetTables = [
         "checklist_items",
@@ -365,6 +317,18 @@ export default async function handler(req: any, res: any) {
       try {
         await client.query("BEGIN");
 
+        const authorization = await maintenanceOperationSecurityService.authorize(
+          {
+            operation: "reset",
+            actorUserId: Number(user.userId),
+            actorName: String(user.userName || "Administrador"),
+            password: adminPassword,
+            motivo,
+            confirmation,
+          },
+          client
+        );
+
         const existingTablesResult = await client.query(
           `
             SELECT table_name
@@ -378,6 +342,14 @@ export default async function handler(req: any, res: any) {
         const existingTables = existingTablesResult.rows
           .map((row: any) => String(row.table_name))
           .filter((tableName: string) => resetTables.includes(tableName));
+
+        let affectedRows = 0;
+        for (const tableName of existingTables) {
+          const countResult = await client.query(
+            `SELECT COUNT(*)::bigint AS total FROM ${quoteIdentifier(tableName)}`
+          );
+          affectedRows += Number(countResult.rows[0]?.total || 0);
+        }
 
         if (existingTables.length > 0) {
           await client.query(
@@ -419,6 +391,18 @@ export default async function handler(req: any, res: any) {
           );
         }
 
+        await maintenanceOperationSecurityService.record(
+          {
+            ...authorization,
+            affectedTables: existingTables.length,
+            affectedRows,
+            details: {
+              preserved: ["users", "user_permissions", "settings", "payment_methods"],
+            },
+          },
+          client
+        );
+
         await client.query("COMMIT");
 
         return sendSuccess(
@@ -426,6 +410,7 @@ export default async function handler(req: any, res: any) {
           {
             reset: true,
             tablas_limpiadas: existingTables.length,
+            filas_eliminadas: affectedRows,
             conservado: ["usuarios", "permisos", "settings", "formas de pago"]
           },
           "Datos restablecidos correctamente"
@@ -439,7 +424,7 @@ export default async function handler(req: any, res: any) {
     }
 
     if (req.method === "POST") {
-      const requestedAction = endpoint === "settings" ? "edit" : "create";
+      const requestedAction = endpoint === "settings" ? "edit" : endpoint === "backup-data" ? "delete" : "create";
       const user = await requireSettingsPermission(req, res, requestedAction);
       if (!user) return;
 
@@ -544,44 +529,85 @@ export default async function handler(req: any, res: any) {
         ];
 
         const quoteIdentifier = (value: string) => `"${value.replace(/"/g, '""')}"`;
+        const client = await pool.connect();
 
-        const existingTablesResult = await pool.query(
-          `
-            SELECT table_name
-            FROM information_schema.tables
-            WHERE table_schema = 'public'
-              AND table_name = ANY($1::text[])
-          `,
-          [backupTables]
-        );
+        try {
+          await client.query("BEGIN");
 
-        const existingTables = existingTablesResult.rows
-          .map((row: any) => String(row.table_name))
-          .filter((tableName: string) => backupTables.includes(tableName));
+          const authorization = await maintenanceOperationSecurityService.authorize(
+            {
+              operation: "backup",
+              actorUserId: Number(user.userId),
+              actorName: String(user.userName || "Administrador"),
+              password: typeof body.adminPassword === "string" ? body.adminPassword : "",
+              motivo: String(body.motivo || ""),
+              confirmation: String(body.confirmation || ""),
+            },
+            client
+          );
 
-        const tables: Record<string, any[]> = {};
+          const existingTablesResult = await client.query(
+            `
+              SELECT table_name
+              FROM information_schema.tables
+              WHERE table_schema = 'public'
+                AND table_name = ANY($1::text[])
+            `,
+            [backupTables]
+          );
 
-        for (const tableName of backupTables) {
-          if (!existingTables.includes(tableName)) {
-            tables[tableName] = [];
-            continue;
+          const existingTables = existingTablesResult.rows
+            .map((row: any) => String(row.table_name))
+            .filter((tableName: string) => backupTables.includes(tableName));
+
+          const tables: Record<string, any[]> = {};
+          let affectedRows = 0;
+
+          for (const tableName of backupTables) {
+            if (!existingTables.includes(tableName)) {
+              tables[tableName] = [];
+              continue;
+            }
+
+            const result = await client.query(`SELECT * FROM ${quoteIdentifier(tableName)}`);
+            tables[tableName] = result.rows;
+            affectedRows += result.rows.length;
           }
 
-          const result = await pool.query(`SELECT * FROM ${quoteIdentifier(tableName)}`);
-          tables[tableName] = result.rows;
-        }
+          const createdAt = new Date().toISOString();
+          await maintenanceOperationSecurityService.record(
+            {
+              ...authorization,
+              affectedTables: existingTables.length,
+              affectedRows,
+              details: {
+                backup_type: "manual-json-backup",
+                backup_version: 1,
+                created_at: createdAt,
+              },
+            },
+            client
+          );
 
-        return sendSuccess(
-          res,
-          {
-            app: "edugestion",
-            type: "manual-json-backup",
-            version: 1,
-            created_at: new Date().toISOString(),
-            tables
-          },
-          "Copia de seguridad generada"
-        );
+          await client.query("COMMIT");
+
+          return sendSuccess(
+            res,
+            {
+              app: "edugestion",
+              type: "manual-json-backup",
+              version: 1,
+              created_at: createdAt,
+              tables
+            },
+            "Copia de seguridad generada"
+          );
+        } catch (error) {
+          await client.query("ROLLBACK");
+          throw error;
+        } finally {
+          client.release();
+        }
       }
 
       return sendError(res, "Endpoint de configuración no encontrado", 404);
