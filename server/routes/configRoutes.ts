@@ -14,6 +14,7 @@ import {
   configurationItemContentLifecycleService,
   type ConfigurationContentItemType,
 } from '../services/configurationItemContentLifecycleService.js';
+import { generalSettingsContentLifecycleService } from '../services/generalSettingsContentLifecycleService.js';
 
 const router = Router();
 const PROTECTED_PAYMENT_NAMES = new Set(['Cta Cte', 'Cheque']);
@@ -127,56 +128,30 @@ const physicalDeleteDisabled = (_req: any, res: any) => sendError(
 
 // Settings
 router.get('/settings', requirePermission('settings', 'view'), async (_req, res) => {
-  if (!isPostgresConfigured()) {
-    const settings = db.prepare('SELECT * FROM settings').all();
-    const settingsMap = settings.reduce((acc: any, curr: any) => {
-      acc[curr.key] = curr.value;
-      return acc;
-    }, {});
-    return sendSuccess(res, settingsMap);
-  }
-
   try {
-    const result = await getPostgresPool().query('SELECT key, value FROM settings');
-    const settingsMap = result.rows.reduce((acc: any, curr: any) => {
-      acc[curr.key] = curr.value;
-      return acc;
-    }, {});
-    return sendSuccess(res, settingsMap);
+    const result = await generalSettingsContentLifecycleService.get();
+    return sendSuccess(res, result.response);
   } catch (error: any) {
-    return sendError(res, error.message || 'Error al obtener configuración', 400);
+    return sendError(res, error.message || 'Error al obtener configuración', error.statusCode || 400);
   }
 });
 
-router.post('/settings', requirePermission('settings', 'create'), async (req, res) => {
-  const settings = req.body;
-
-  if (!isPostgresConfigured()) {
-    const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
-    db.transaction((data) => {
-      for (const [key, value] of Object.entries(data)) upsert.run(key, String(value));
-    })(settings);
-    return sendSuccess(res, null, 'Configuración guardada');
-  }
-
-  const client = await getPostgresPool().connect();
+router.post('/settings', requirePermission('settings', 'edit'), async (req: any, res) => {
   try {
-    await client.query('BEGIN');
-    for (const [key, value] of Object.entries(settings)) {
-      await client.query(
-        `INSERT INTO settings (key, value)
-         VALUES ($1, $2)
-         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-        [key, String(value)]
-      );
-    }
-    await client.query('COMMIT');
-    return sendSuccess(res, null, 'Configuración guardada');
+    const result = await generalSettingsContentLifecycleService.update({
+      settings: req.body?.settings,
+      motivo: req.body?.motivo,
+      usuario: getActor(req),
+      expectedContentVersion: Number(req.body?.expectedContentVersion),
+    });
+    return sendSuccess(res, result, 'Configuración general actualizada con trazabilidad');
   } catch (error: any) {
-    await client.query('ROLLBACK');
-    return sendError(res, error.message || 'Error al guardar configuración', 400);
-  } finally {
-    client.release();
+    return sendError(
+      res,
+      error.message || 'Error al guardar configuración',
+      error.statusCode || 400,
+      error.errors || []
+    );
   }
 });
 

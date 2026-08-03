@@ -1,4 +1,5 @@
 import { sendError, sendSuccess } from "../../server/utils/response.js";
+import { generalSettingsContentLifecycleService } from "../../server/services/generalSettingsContentLifecycleService.js";
 import {
   getEndpoint,
   getPoolOrFail,
@@ -22,12 +23,8 @@ export default async function handler(req: any, res: any) {
       if (!pool) return;
 
       if (endpoint === "settings") {
-        const result = await pool.query("SELECT key, value FROM settings");
-        const settingsMap = result.rows.reduce((acc: any, row: any) => {
-          acc[row.key] = row.value;
-          return acc;
-        }, {});
-        return sendSuccess(res, settingsMap);
+        const result = await generalSettingsContentLifecycleService.get(pool);
+        return sendSuccess(res, result.response);
       }
 
       if (endpoint === "payment-methods") {
@@ -71,6 +68,8 @@ export default async function handler(req: any, res: any) {
           "product_families",
           "configuration_item_status_history",
           "configuration_item_content_history",
+          "general_settings_content_state",
+          "general_settings_content_history",
           "user_status_history",
           "clientes",
           "proveedores",
@@ -177,6 +176,8 @@ export default async function handler(req: any, res: any) {
         "product_families",
         "configuration_item_status_history",
           "configuration_item_content_history",
+          "general_settings_content_state",
+          "general_settings_content_history",
           "user_status_history",
         "clientes",
         "proveedores",
@@ -350,6 +351,8 @@ export default async function handler(req: any, res: any) {
         "clientes",
         "configuration_item_status_history",
           "configuration_item_content_history",
+          "general_settings_content_state",
+          "general_settings_content_history",
         "user_status_history",
         "product_families",
         "product_categories"
@@ -436,7 +439,8 @@ export default async function handler(req: any, res: any) {
     }
 
     if (req.method === "POST") {
-      const user = await requireSettingsPermission(req, res, "create");
+      const requestedAction = endpoint === "settings" ? "edit" : "create";
+      const user = await requireSettingsPermission(req, res, requestedAction);
       if (!user) return;
 
       const pool = getPoolOrFail(res);
@@ -445,25 +449,13 @@ export default async function handler(req: any, res: any) {
       const body = getRequestBody(req);
 
       if (endpoint === "settings") {
-        const client = await pool.connect();
-        try {
-          await client.query("BEGIN");
-          for (const [key, value] of Object.entries(body)) {
-            await client.query(
-              `INSERT INTO settings (key, value)
-               VALUES ($1, $2)
-               ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-              [key, String(value)]
-            );
-          }
-          await client.query("COMMIT");
-          return sendSuccess(res, null, "Configuración guardada");
-        } catch (error) {
-          await client.query("ROLLBACK");
-          throw error;
-        } finally {
-          client.release();
-        }
+        const result = await generalSettingsContentLifecycleService.update({
+          settings: body.settings,
+          motivo: String(body.motivo || ""),
+          usuario: String(user.userName || "Sistema"),
+          expectedContentVersion: Number(body.expectedContentVersion),
+        });
+        return sendSuccess(res, result, "Configuración general actualizada con trazabilidad");
       }
 
       if (endpoint === "payment-methods") {
@@ -525,6 +517,8 @@ export default async function handler(req: any, res: any) {
           "product_families",
           "configuration_item_status_history",
           "configuration_item_content_history",
+          "general_settings_content_state",
+          "general_settings_content_history",
           "user_status_history",
           "clientes",
           "proveedores",

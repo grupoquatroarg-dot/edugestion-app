@@ -173,6 +173,34 @@ export function initDb() {
       value TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS general_settings_content_state (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      content_version INTEGER NOT NULL DEFAULT 0 CHECK(content_version >= 0),
+      content_changed_at DATETIME,
+      content_changed_by TEXT,
+      content_change_reason TEXT
+    );
+
+    INSERT OR IGNORE INTO general_settings_content_state (id, content_version)
+    VALUES (1, 0);
+
+    CREATE TABLE IF NOT EXISTS general_settings_content_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      version INTEGER NOT NULL CHECK(version > 0),
+      reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 3 AND 500),
+      changed_by TEXT NOT NULL,
+      changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      before_snapshot TEXT NOT NULL DEFAULT '{}',
+      after_snapshot TEXT NOT NULL DEFAULT '{}',
+      UNIQUE (version)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_general_settings_content_history_changed_at
+      ON general_settings_content_history (changed_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_general_settings_content_state_changed_at
+      ON general_settings_content_state (content_changed_at DESC);
+
     CREATE TABLE IF NOT EXISTS products (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       code TEXT,
@@ -1138,6 +1166,34 @@ export function initDb() {
         ON user_content_history (user_id, changed_at DESC);
       CREATE INDEX IF NOT EXISTS idx_users_content_changed_at
         ON users (content_changed_at DESC);
+    `);
+  } catch (e) {}
+
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS general_settings_content_state (
+        id INTEGER PRIMARY KEY CHECK(id = 1),
+        content_version INTEGER NOT NULL DEFAULT 0 CHECK(content_version >= 0),
+        content_changed_at DATETIME,
+        content_changed_by TEXT,
+        content_change_reason TEXT
+      );
+      INSERT OR IGNORE INTO general_settings_content_state (id, content_version)
+      VALUES (1, 0);
+      CREATE TABLE IF NOT EXISTS general_settings_content_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        version INTEGER NOT NULL CHECK(version > 0),
+        reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 3 AND 500),
+        changed_by TEXT NOT NULL,
+        changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        before_snapshot TEXT NOT NULL DEFAULT '{}',
+        after_snapshot TEXT NOT NULL DEFAULT '{}',
+        UNIQUE (version)
+      );
+      CREATE INDEX IF NOT EXISTS idx_general_settings_content_history_changed_at
+        ON general_settings_content_history (changed_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_general_settings_content_state_changed_at
+        ON general_settings_content_state (content_changed_at DESC);
     `);
   } catch (e) {}
 

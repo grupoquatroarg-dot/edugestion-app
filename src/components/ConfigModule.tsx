@@ -127,6 +127,11 @@ export default function ConfigModule() {
   const [loadError, setLoadError] = useState('');
 
   const [settings, setSettings] = useState<Record<string, string>>({});
+  const [settingsContentVersion, setSettingsContentVersion] = useState(0);
+  const [settingsChangeReason, setSettingsChangeReason] = useState('');
+  const [settingsChangedAt, setSettingsChangedAt] = useState('');
+  const [settingsChangedBy, setSettingsChangedBy] = useState('');
+  const [settingsLastReason, setSettingsLastReason] = useState('');
   const [paymentMethods, setPaymentMethods] = useState<ConfigItem[]>([]);
   const [categories, setCategories] = useState<ConfigItem[]>([]);
   const [families, setFamilies] = useState<ConfigItem[]>([]);
@@ -172,6 +177,7 @@ export default function ConfigModule() {
     setCategoryForm({ name: '', description: '' });
     setFamilyForm({ name: '', category_id: null });
     setContentChangeReason('');
+    setSettingsChangeReason('');
   };
 
   const fetchData = async (isRefresh = false) => {
@@ -184,7 +190,19 @@ export default function ConfigModule() {
         const response = await apiFetch('/api/config/settings');
         const body = await response.json();
         if (!response.ok) throw new Error(body?.message || 'No se pudo cargar la configuración');
-        setSettings(unwrapResponse(body) || {});
+        const loadedSettings = unwrapResponse(body) || {};
+        setSettingsContentVersion(Number(loadedSettings.settings_content_version || 0));
+        setSettingsChangedAt(String(loadedSettings.settings_content_changed_at || ''));
+        setSettingsChangedBy(String(loadedSettings.settings_content_changed_by || ''));
+        setSettingsLastReason(String(loadedSettings.settings_content_change_reason || ''));
+        const {
+          settings_content_version: _settingsContentVersion,
+          settings_content_changed_at: _settingsContentChangedAt,
+          settings_content_changed_by: _settingsContentChangedBy,
+          settings_content_change_reason: _settingsContentChangeReason,
+          ...editableSettings
+        } = loadedSettings;
+        setSettings(editableSettings);
       } else if (activeTab === 'pagos') {
         const response = await apiFetch('/api/config/payment-methods');
         const body = await response.json();
@@ -231,15 +249,27 @@ export default function ConfigModule() {
 
   const saveSettings = async (event: React.FormEvent) => {
     event.preventDefault();
+    const reason = settingsChangeReason.trim();
+    if (reason.length < 3) {
+      showStatus('El motivo debe tener al menos 3 caracteres', 'error');
+      return;
+    }
+
     setSaving(true);
     try {
       const response = await apiFetch('/api/config/settings', {
         method: 'POST',
-        body: JSON.stringify(settings),
+        body: JSON.stringify({
+          settings,
+          motivo: reason,
+          expectedContentVersion: settingsContentVersion,
+        }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.message || 'No se pudo guardar la configuración');
-      showStatus('Configuración guardada correctamente', 'success');
+      showStatus('Configuración general actualizada con trazabilidad', 'success');
+      setSettingsChangeReason('');
+      await fetchData(true);
     } catch (error: any) {
       showStatus(error?.message || 'Error al guardar la configuración', 'error');
     } finally {
@@ -546,6 +576,39 @@ export default function ConfigModule() {
     </div>
   );
 
+  const renderSettingsSave = (buttonLabel: string) => (
+    <div className="mt-6 rounded-3xl border border-indigo-100 bg-indigo-50/60 p-4 sm:p-5">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+        <label className="space-y-2">
+          <span className={labelClass}>Motivo del cambio</span>
+          <textarea
+            className={`${inputClass} min-h-24 resize-y`}
+            value={settingsChangeReason}
+            onChange={(event) => setSettingsChangeReason(event.target.value)}
+            placeholder="Explicá por qué se modifica esta configuración"
+            maxLength={500}
+            required
+          />
+          <span className="block text-xs text-slate-500">
+            Obligatorio. Se guardará junto con el usuario, la fecha y los valores anteriores.
+          </span>
+        </label>
+        <button type="submit" disabled={saving} className={`${primaryButtonClass} w-full lg:w-auto`}>
+          <Save size={16} /> {saving ? 'Guardando...' : buttonLabel}
+        </button>
+      </div>
+      {(settingsChangedAt || settingsChangedBy || settingsLastReason) && (
+        <div className="mt-4 rounded-2xl border border-indigo-100 bg-white px-4 py-3 text-xs leading-relaxed text-slate-600">
+          <span className="font-black text-slate-800">Última modificación:</span>{' '}
+          {settingsChangedAt ? new Date(settingsChangedAt).toLocaleString('es-AR') : 'Sin fecha'}
+          {settingsChangedBy ? ` · ${settingsChangedBy}` : ''}
+          {settingsLastReason ? ` · ${settingsLastReason}` : ''}
+          <span className="ml-1 font-bold text-indigo-700">Versión {settingsContentVersion}</span>
+        </div>
+      )}
+    </div>
+  );
+
   const renderBusiness = () => (
     <form onSubmit={saveSettings} className="space-y-5">
       <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6 lg:p-7">
@@ -663,13 +726,7 @@ export default function ConfigModule() {
           </div>
         </div>
 
-        {hasPermission('settings', 'edit') && (
-          <div className="mt-6 flex justify-end">
-            <button type="submit" disabled={saving} className={primaryButtonClass}>
-              <Save size={16} /> {saving ? 'Guardando...' : 'Guardar datos del negocio'}
-            </button>
-          </div>
-        )}
+        {hasPermission('settings', 'edit') && renderSettingsSave('Guardar datos del negocio')}
       </section>
 
       {hasPermission('settings', 'delete') && (
@@ -1159,9 +1216,7 @@ export default function ConfigModule() {
         </div>
         <input type="checkbox" checked={settings.allow_negative_stock === 'true'} onChange={(event) => setSettings({ ...settings, allow_negative_stock: event.target.checked ? 'true' : 'false' })} className="mt-1 h-5 w-5 shrink-0 rounded border-amber-300 text-indigo-600 focus:ring-indigo-500 sm:mt-0" />
       </label>
-      {hasPermission('settings', 'edit') && (
-        <div className="mt-6 flex justify-end"><button type="submit" disabled={saving} className={primaryButtonClass}><Save size={16} /> {saving ? 'Guardando...' : 'Guardar parámetros'}</button></div>
-      )}
+      {hasPermission('settings', 'edit') && renderSettingsSave('Guardar parámetros')}
     </form>
   );
 
@@ -1177,9 +1232,7 @@ export default function ConfigModule() {
       <div className="mt-5 rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-sm leading-relaxed text-indigo-800">
         Cambiar estos valores modifica el próximo número emitido. No altera comprobantes ya registrados.
       </div>
-      {hasPermission('settings', 'edit') && (
-        <div className="mt-6 flex justify-end"><button type="submit" disabled={saving} className={primaryButtonClass}><Save size={16} /> {saving ? 'Guardando...' : 'Guardar numeraciones'}</button></div>
-      )}
+      {hasPermission('settings', 'edit') && renderSettingsSave('Guardar numeraciones')}
     </form>
   );
 
