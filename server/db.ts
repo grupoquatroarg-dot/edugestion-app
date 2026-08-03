@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import path from "path";
 import bcrypt from "bcryptjs";
+import { getBootstrapAdminConfig } from "./utils/securityConfig.js";
 
 const isServerlessRuntime = Boolean(
   process.env.VERCEL ||
@@ -1124,15 +1125,27 @@ export function initDb() {
       ON price_update_history_items (price_update_history_id, product_id);
   `);
 
-  const adminExists = db.prepare("SELECT * FROM users WHERE email = 'admin@edugestion.com'").get();
-  if (!adminExists) {
-    const hashedPassword = bcrypt.hashSync("admin123", 10);
-    db.prepare("INSERT INTO users (name, email, password, role, avatar) VALUES (?, ?, ?, ?, ?)").run(
-      "Administrador",
-      "admin@edugestion.com",
+  const activeAdministrator = db.prepare(
+    "SELECT id FROM users WHERE role = 'administrador' AND active = 1 LIMIT 1"
+  ).get();
+  if (!activeAdministrator) {
+    const existingAdministrator = db.prepare(
+      "SELECT id FROM users WHERE role = 'administrador' LIMIT 1"
+    ).get();
+    if (existingAdministrator) {
+      throw new Error(
+        "SQLite no tiene un administrador activo. Reactivá una cuenta existente antes de iniciar la aplicación"
+      );
+    }
+
+    const bootstrapAdmin = getBootstrapAdminConfig();
+    const hashedPassword = bcrypt.hashSync(bootstrapAdmin.password, 12);
+    db.prepare("INSERT INTO users (name, email, password, role, avatar, active, session_version) VALUES (?, ?, ?, ?, ?, 1, 1)").run(
+      bootstrapAdmin.name,
+      bootstrapAdmin.email,
       hashedPassword,
       "administrador",
-      "AD"
+      bootstrapAdmin.avatar
     );
   }
 

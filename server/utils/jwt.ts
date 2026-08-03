@@ -1,6 +1,5 @@
-import jwt from 'jsonwebtoken';
-
-const JWT_SECRET = process.env.SESSION_SECRET || 'fallback-jwt-secret-key';
+import jwt from "jsonwebtoken";
+import { getSessionSecret } from "./securityConfig.js";
 
 export interface TokenPayload {
   userId: number;
@@ -10,12 +9,12 @@ export interface TokenPayload {
 }
 
 export const generateToken = (payload: TokenPayload): string => {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '24h' });
+  return jwt.sign(payload, getSessionSecret(), { expiresIn: "24h" });
 };
 
 export const verifyToken = (token: string): TokenPayload | null => {
   try {
-    return jwt.verify(token, JWT_SECRET) as TokenPayload;
+    return jwt.verify(token, getSessionSecret()) as TokenPayload;
   } catch {
     return null;
   }

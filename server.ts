@@ -21,6 +21,7 @@ import { initSocket } from "./server/socket.js";
 // Middlewares
 import { errorHandler } from "./server/middleware/errorHandler.js";
 import { getSessionConfig } from "./server/utils/sessionConfig.js";
+import { getSessionSecret } from "./server/utils/securityConfig.js";
 import { validate } from "./server/middleware/validate.js";
 
 // Routes
@@ -73,6 +74,7 @@ const mapFamily = (row: any) => ({
 
 const app = express();
 const { cookieOptions } = getSessionConfig();
+const sessionSecret = getSessionSecret();
 
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
@@ -80,7 +82,7 @@ app.set("trust proxy", 1);
 initDb();
 
 const sessionMiddleware = session({
-  secret: process.env.SESSION_SECRET || "fallback-insecure-key-replace-in-production",
+  secret: sessionSecret,
   resave: false,
   saveUninitialized: false,
   name: "sid",
@@ -88,9 +90,6 @@ const sessionMiddleware = session({
   cookie: cookieOptions,
 });
 
-if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
-  console.warn("WARNING: SESSION_SECRET is not set in production. Using insecure fallback.");
-}
 
 app.use(
   helmet({
