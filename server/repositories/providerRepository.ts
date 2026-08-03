@@ -13,6 +13,10 @@ export interface Provider {
   deactivated_at?: string | null;
   deactivated_by?: string | null;
   deactivation_reason?: string | null;
+  content_version?: number;
+  content_changed_at?: string | null;
+  content_changed_by?: string | null;
+  content_change_reason?: string | null;
 }
 
 type FindAllOptions = {
@@ -44,6 +48,10 @@ const mapProvider = (row: any): Provider | undefined => {
     deactivated_at: row.deactivated_at ?? null,
     deactivated_by: row.deactivated_by ?? null,
     deactivation_reason: row.deactivation_reason ?? null,
+    content_version: toNumber(row.content_version),
+    content_changed_at: row.content_changed_at ?? null,
+    content_changed_by: row.content_changed_by ?? null,
+    content_change_reason: row.content_change_reason ?? null,
   };
 };
 
@@ -121,45 +129,10 @@ export const providerRepository = {
     return toNumber(result.rows[0]?.id);
   },
 
-  async update(id: number | string, provider: Provider): Promise<void> {
-    const normalized = normalizeProvider(provider);
-    if (normalized.nombre.length < 2) {
-      throw new AppError("El nombre debe tener al menos 2 caracteres", 400);
-    }
-
-    if (!isPostgresConfigured()) {
-      db.prepare(`
-        UPDATE proveedores
-        SET nombre = ?, cuit = ?, telefono = ?, email = ?, direccion = ?
-        WHERE id = ?
-      `).run(
-        normalized.nombre,
-        normalized.cuit,
-        normalized.telefono,
-        normalized.email,
-        normalized.direccion,
-        id,
-      );
-      return;
-    }
-
-    const pool = getPostgresPool();
-    await pool.query(
-      `UPDATE proveedores
-       SET nombre = $1,
-           cuit = $2,
-           telefono = $3,
-           email = $4,
-           direccion = $5
-       WHERE id = $6`,
-      [
-        normalized.nombre,
-        normalized.cuit,
-        normalized.telefono,
-        normalized.email,
-        normalized.direccion,
-        Number(id),
-      ],
+  async update(_id: number | string, _provider: Provider): Promise<void> {
+    throw new AppError(
+      "La actualización directa de proveedores está deshabilitada. Usá el servicio auditado de edición.",
+      409
     );
   },
 

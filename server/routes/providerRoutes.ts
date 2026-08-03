@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { providerRepository } from "../repositories/providerRepository.js";
 import { providerLifecycleService } from "../services/providerLifecycleService.js";
+import { providerContentLifecycleService } from "../services/providerContentLifecycleService.js";
 import { requireAuth, requirePermission } from "../middleware/authMiddleware.js";
 import { validate } from "../middleware/validate.js";
 import { sendError, sendSuccess } from "../utils/response.js";
@@ -15,6 +16,13 @@ const providerSchema = z.object({
     telefono: z.string().optional(),
     email: z.string().email("Email inválido").optional().or(z.literal("")),
     direccion: z.string().optional(),
+  }),
+});
+
+const providerContentSchema = z.object({
+  body: providerSchema.shape.body.extend({
+    motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
+    expectedContentVersion: z.number().int().min(0, "Versión de contenido inválida"),
   }),
 });
 
@@ -35,9 +43,23 @@ router.post("/", requireAuth, requirePermission("suppliers", "create"), validate
   return sendSuccess(res, { id, ...req.body, estado: "activo" }, "Proveedor creado exitosamente", 201);
 });
 
-router.put("/:id", requireAuth, requirePermission("suppliers", "edit"), validate(providerSchema), async (req, res) => {
-  await providerRepository.update(req.params.id, req.body);
-  return sendSuccess(res, null, "Proveedor actualizado exitosamente");
+router.put("/:id", requireAuth, requirePermission("suppliers", "edit"), validate(providerContentSchema), async (req, res) => {
+  try {
+    const result = await providerContentLifecycleService.update({
+      providerId: Number(req.params.id),
+      nombre: req.body.nombre,
+      cuit: req.body.cuit,
+      telefono: req.body.telefono,
+      email: req.body.email,
+      direccion: req.body.direccion,
+      motivo: req.body.motivo,
+      usuario: (req as any).user?.userName || "Sistema",
+      expectedContentVersion: req.body.expectedContentVersion,
+    });
+    return sendSuccess(res, result, "Proveedor actualizado con trazabilidad");
+  } catch (error: any) {
+    return sendError(res, error.message || "Error al actualizar el proveedor", error.statusCode || 400, error.errors || []);
+  }
 });
 
 router.post(

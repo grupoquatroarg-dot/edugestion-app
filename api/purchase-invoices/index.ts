@@ -13,6 +13,7 @@ import { sendError, sendSuccess } from "../../server/utils/response.js";
 import { getRequestBody, requirePurchaseInvoicePermission } from "../../server/services/vercel/purchaseInvoiceApiHelpers.js";
 import { purchaseInvoiceCancellationService } from "../../server/services/purchaseInvoiceCancellationService.js";
 import { providerLifecycleService } from "../../server/services/providerLifecycleService.js";
+import { providerContentLifecycleService } from "../../server/services/providerContentLifecycleService.js";
 import { listActivePaymentMethods } from "../../server/services/paymentMethodAvailabilityService.js";
 import { supplierPaymentCancellationService } from "../../server/services/supplierPaymentCancellationService.js";
 
@@ -22,6 +23,11 @@ const providerSchema = z.object({
   telefono: z.string().optional(),
   email: z.string().email("Email inválido").optional().or(z.literal("")),
   direccion: z.string().optional(),
+});
+
+const providerContentSchema = providerSchema.extend({
+  motivo: z.string().trim().min(3, "El motivo debe tener al menos 3 caracteres").max(500),
+  expectedContentVersion: z.number().int().min(0, "Versión de contenido inválida"),
 });
 
 const providerLifecycleSchema = z.object({
@@ -93,6 +99,46 @@ export default async function handler(req: any, res: any) {
     }
   }
 
+
+  if (endpoint === "proveedores" && req.method === "PUT") {
+    const user = await requirePurchaseInvoicePermission(req, res, "edit");
+    if (!user) return;
+
+    const providerId = Number(req.query?.id);
+    if (!Number.isInteger(providerId) || providerId <= 0) {
+      return sendError(res, "ID de proveedor inválido", 400);
+    }
+
+    const parsed = providerContentSchema.safeParse(getRequestBody(req));
+    if (!parsed.success) {
+      return sendError(res, "Validation failed", 400, parsed.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+      })));
+    }
+
+    try {
+      const provider = await providerContentLifecycleService.update({
+        providerId,
+        nombre: parsed.data.nombre,
+        cuit: parsed.data.cuit,
+        telefono: parsed.data.telefono,
+        email: parsed.data.email,
+        direccion: parsed.data.direccion,
+        motivo: parsed.data.motivo,
+        usuario: user.userName || "Sistema",
+        expectedContentVersion: parsed.data.expectedContentVersion,
+      });
+      return sendSuccess(res, provider, "Proveedor actualizado con trazabilidad");
+    } catch (error: any) {
+      return sendError(
+        res,
+        error?.message || "Error al actualizar proveedor",
+        error?.statusCode || 400,
+        error?.errors || []
+      );
+    }
+  }
 
   if (endpoint === "provider-lifecycle" && req.method === "POST") {
     const user = await requirePurchaseInvoicePermission(req, res, "delete");

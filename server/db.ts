@@ -54,8 +54,28 @@ export function initDb() {
       estado TEXT DEFAULT 'activo',
       deactivated_at DATETIME,
       deactivated_by TEXT,
-      deactivation_reason TEXT
+      deactivation_reason TEXT,
+      content_version INTEGER NOT NULL DEFAULT 0 CHECK(content_version >= 0),
+      content_changed_at DATETIME,
+      content_changed_by TEXT,
+      content_change_reason TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS provider_content_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider_id INTEGER NOT NULL,
+      version INTEGER NOT NULL CHECK(version > 0),
+      reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 3 AND 500),
+      changed_by TEXT NOT NULL,
+      changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      before_snapshot TEXT NOT NULL DEFAULT '{}',
+      after_snapshot TEXT NOT NULL DEFAULT '{}',
+      UNIQUE (provider_id, version),
+      FOREIGN KEY (provider_id) REFERENCES proveedores(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_provider_content_history_provider
+      ON provider_content_history (provider_id, changed_at DESC);
 
     CREATE TABLE IF NOT EXISTS provider_status_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1122,6 +1142,30 @@ export function initDb() {
   try { db.exec("ALTER TABLE proveedores ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE proveedores ADD COLUMN deactivated_by TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE proveedores ADD COLUMN deactivation_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE proveedores ADD COLUMN content_version INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE proveedores ADD COLUMN content_changed_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE proveedores ADD COLUMN content_changed_by TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE proveedores ADD COLUMN content_change_reason TEXT"); } catch (e) {}
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS provider_content_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider_id INTEGER NOT NULL,
+        version INTEGER NOT NULL CHECK(version > 0),
+        reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 3 AND 500),
+        changed_by TEXT NOT NULL,
+        changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        before_snapshot TEXT NOT NULL DEFAULT '{}',
+        after_snapshot TEXT NOT NULL DEFAULT '{}',
+        UNIQUE (provider_id, version),
+        FOREIGN KEY (provider_id) REFERENCES proveedores(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_provider_content_history_provider
+        ON provider_content_history (provider_id, changed_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_proveedores_content_changed_at
+        ON proveedores (content_changed_at DESC);
+    `);
+  } catch (e) {}
 
   try { db.exec("ALTER TABLE products ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE products ADD COLUMN deactivated_by TEXT"); } catch (e) {}

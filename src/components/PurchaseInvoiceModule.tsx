@@ -13,6 +13,7 @@ import {
   Mail,
   MapPin,
   PackagePlus,
+  Pencil,
   Phone,
   Plus,
   Receipt,
@@ -48,6 +49,10 @@ type Provider = ProviderForm & {
   deactivated_at?: string | null;
   deactivated_by?: string | null;
   deactivation_reason?: string | null;
+  content_version?: number;
+  content_changed_at?: string | null;
+  content_changed_by?: string | null;
+  content_change_reason?: string | null;
 };
 
 type ConfigPaymentMethod = {
@@ -167,6 +172,7 @@ export default function PurchaseInvoiceModule() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isProviderModalOpen, setIsProviderModalOpen] = useState(false);
+  const [isProviderEditModalOpen, setIsProviderEditModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isPaymentCancellationModalOpen, setIsPaymentCancellationModalOpen] = useState(false);
   const [isCancellationModalOpen, setIsCancellationModalOpen] = useState(false);
@@ -176,6 +182,7 @@ export default function PurchaseInvoiceModule() {
   const [selectedInvoiceForPaymentCancellation, setSelectedInvoiceForPaymentCancellation] = useState<PurchaseInvoice | null>(null);
   const [selectedInvoiceForCancellation, setSelectedInvoiceForCancellation] = useState<PurchaseInvoice | null>(null);
   const [selectedProviderForLifecycle, setSelectedProviderForLifecycle] = useState<Provider | null>(null);
+  const [selectedProviderForEdit, setSelectedProviderForEdit] = useState<Provider | null>(null);
   const [providerLifecycleAction, setProviderLifecycleAction] = useState<'deactivate' | 'reactivate'>('deactivate');
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
@@ -183,8 +190,12 @@ export default function PurchaseInvoiceModule() {
   const [isCreatingNewProduct, setIsCreatingNewProduct] = useState(false);
   const [newProductName, setNewProductName] = useState('');
   const [providerForm, setProviderForm] = useState<ProviderForm>(emptyProviderForm);
+  const [providerEditForm, setProviderEditForm] = useState<ProviderForm>(emptyProviderForm);
   const [isCreatingProvider, setIsCreatingProvider] = useState(false);
+  const [isSavingProviderEdit, setIsSavingProviderEdit] = useState(false);
   const [providerSubmitError, setProviderSubmitError] = useState('');
+  const [providerEditReason, setProviderEditReason] = useState('');
+  const [providerEditError, setProviderEditError] = useState('');
   const [providerLifecycleReason, setProviderLifecycleReason] = useState('');
   const [providerLifecycleError, setProviderLifecycleError] = useState('');
   const [isChangingProviderStatus, setIsChangingProviderStatus] = useState(false);
@@ -396,6 +407,69 @@ export default function PurchaseInvoiceModule() {
       setProviderSubmitError(error?.message || 'No se pudo crear el proveedor.');
     } finally {
       setIsCreatingProvider(false);
+    }
+  };
+
+  const openProviderEditModal = (provider: Provider) => {
+    setSelectedProviderForEdit(provider);
+    setProviderEditForm({
+      nombre: provider.nombre || '',
+      cuit: provider.cuit || '',
+      telefono: provider.telefono || '',
+      email: provider.email || '',
+      direccion: provider.direccion || '',
+    });
+    setProviderEditReason('');
+    setProviderEditError('');
+    setIsProviderEditModalOpen(true);
+  };
+
+  const handleEditProvider = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedProviderForEdit || isSavingProviderEdit) return;
+
+    const reason = providerEditReason.trim();
+    if (reason.length < 3) {
+      setProviderEditError('Ingresá un motivo de al menos 3 caracteres.');
+      return;
+    }
+    if (!providerEditForm.nombre.trim()) {
+      setProviderEditError('Ingrese el nombre del proveedor.');
+      return;
+    }
+
+    setIsSavingProviderEdit(true);
+    setProviderEditError('');
+
+    try {
+      const res = await apiFetch(
+        `/api/purchase-invoices?endpoint=proveedores&id=${selectedProviderForEdit.id}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            nombre: providerEditForm.nombre.trim(),
+            cuit: providerEditForm.cuit.trim(),
+            telefono: providerEditForm.telefono.trim(),
+            email: providerEditForm.email.trim(),
+            direccion: providerEditForm.direccion.trim(),
+            motivo: reason,
+            expectedContentVersion: Number(selectedProviderForEdit.content_version || 0),
+          }),
+        },
+      );
+
+      const updatedProvider = await handleApiJson<Provider>(res);
+      await fetchProveedores();
+      setIsProviderEditModalOpen(false);
+      setSelectedProviderForEdit(null);
+      setProviderEditReason('');
+      setProviderEditForm(emptyProviderForm);
+      setSuccessMessage(`Proveedor ${updatedProvider?.nombre || providerEditForm.nombre} actualizado correctamente.`);
+    } catch (error: any) {
+      console.error('Error updating provider:', error);
+      setProviderEditError(error?.message || 'No se pudo actualizar el proveedor.');
+    } finally {
+      setIsSavingProviderEdit(false);
     }
   };
 
@@ -1351,6 +1425,16 @@ export default function PurchaseInvoiceModule() {
                       <Eye size={17} aria-hidden="true" />
                       Ver facturas
                     </button>
+                    {isProviderActive(provider) && hasPermission('suppliers', 'edit') && (
+                      <button
+                        type="button"
+                        onClick={() => openProviderEditModal(provider)}
+                        className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-black text-indigo-700 hover:bg-indigo-100"
+                      >
+                        <Pencil size={17} aria-hidden="true" />
+                        Editar proveedor
+                      </button>
+                    )}
                     {isProviderActive(provider) && hasPermission('suppliers', 'create') && (
                       <button
                         type="button"
@@ -1662,6 +1746,108 @@ export default function PurchaseInvoiceModule() {
                     )}
                   </div>
                 </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {isProviderEditModalOpen && selectedProviderForEdit && (
+        <div className="fixed inset-0 z-[92] flex items-end justify-center bg-slate-950/65 backdrop-blur-sm sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="provider-edit-title">
+          <div className="max-h-[100dvh] w-full overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-h-[92dvh] sm:max-w-xl sm:rounded-3xl">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-4 sm:px-6">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700"><Pencil size={20} /></div>
+                <div className="min-w-0">
+                  <h2 id="provider-edit-title" className="truncate text-lg font-black text-slate-950">Editar proveedor</h2>
+                  <p className="truncate text-xs text-slate-500">{selectedProviderForEdit.nombre} · versión {Number(selectedProviderForEdit.content_version || 0)}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (isSavingProviderEdit) return;
+                  setIsProviderEditModalOpen(false);
+                  setSelectedProviderForEdit(null);
+                  setProviderEditError('');
+                  setProviderEditReason('');
+                }}
+                disabled={isSavingProviderEdit}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 disabled:opacity-40"
+                aria-label="Cerrar edición de proveedor"
+              >
+                <X size={21} />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditProvider} className="max-h-[calc(100dvh-76px)] overflow-y-auto p-4 sm:p-6">
+              {providerEditError && (
+                <div role="alert" className="mb-4 flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-900">
+                  <AlertCircle size={20} className="mt-0.5 shrink-0" />
+                  <p className="text-sm font-bold">{providerEditError}</p>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <label className="sm:col-span-2">
+                  <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Nombre *</span>
+                  <input required type="text" value={providerEditForm.nombre} onChange={(event) => setProviderEditForm({ ...providerEditForm, nombre: event.target.value })} className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" />
+                </label>
+                <label>
+                  <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">CUIT</span>
+                  <input type="text" inputMode="numeric" value={providerEditForm.cuit} onChange={(event) => setProviderEditForm({ ...providerEditForm, cuit: event.target.value })} className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" />
+                </label>
+                <label>
+                  <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Teléfono</span>
+                  <input type="tel" value={providerEditForm.telefono} onChange={(event) => setProviderEditForm({ ...providerEditForm, telefono: event.target.value })} className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" />
+                </label>
+                <label className="sm:col-span-2">
+                  <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Email</span>
+                  <input type="email" value={providerEditForm.email} onChange={(event) => setProviderEditForm({ ...providerEditForm, email: event.target.value })} className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" />
+                </label>
+                <label className="sm:col-span-2">
+                  <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Dirección</span>
+                  <input type="text" value={providerEditForm.direccion} onChange={(event) => setProviderEditForm({ ...providerEditForm, direccion: event.target.value })} className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" />
+                </label>
+                <label className="sm:col-span-2">
+                  <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Motivo de la edición *</span>
+                  <textarea
+                    required
+                    minLength={3}
+                    maxLength={500}
+                    rows={3}
+                    value={providerEditReason}
+                    onChange={(event) => setProviderEditReason(event.target.value)}
+                    placeholder="Ejemplo: actualización de datos fiscales o de contacto"
+                    className="w-full resize-none rounded-2xl border border-slate-200 px-3 py-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+                  />
+                  <p className="mt-1 text-right text-xs font-bold text-slate-400">{providerEditReason.length}/500</p>
+                </label>
+              </div>
+
+              <div className="mt-6 grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isSavingProviderEdit) return;
+                    setIsProviderEditModalOpen(false);
+                    setSelectedProviderForEdit(null);
+                    setProviderEditError('');
+                    setProviderEditReason('');
+                  }}
+                  disabled={isSavingProviderEdit}
+                  className="min-h-11 rounded-xl border border-slate-200 px-5 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingProviderEdit || providerEditReason.trim().length < 3}
+                  className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 text-sm font-black text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isSavingProviderEdit ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+                  {isSavingProviderEdit ? 'Guardando…' : 'Guardar cambios'}
+                </button>
               </div>
             </form>
           </div>

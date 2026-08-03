@@ -2,16 +2,17 @@ import { UserRepository } from "../../repositories/userRepository.js";
 import { requireBearerUser } from "../currentUserAuthService.js";
 import { sendError } from "../../utils/response.js";
 
-const getPermissionKey = (action: "view" | "create" | "delete") => {
+const getPermissionKey = (action: "view" | "create" | "edit" | "delete") => {
   if (action === "view") return "can_view";
   if (action === "delete") return "can_delete";
+  if (action === "edit") return "can_edit";
   return "can_create";
 };
 
 export const requirePurchaseInvoicePermission = async (
   req: any,
   res: any,
-  action: "view" | "create" | "delete"
+  action: "view" | "create" | "edit" | "delete"
 ) => {
   const decoded = await requireBearerUser(req, res);
   if (!decoded) return null;
