@@ -139,6 +139,7 @@ const handleSqlite = async ({ customerId, action, motivo, usuario }: LifecycleIn
         UPDATE clientes
         SET activo = 0,
             portal_enabled = 0,
+            portal_session_version = COALESCE(portal_session_version, 1) + 1,
             deactivated_at = CURRENT_TIMESTAMP,
             deactivated_by = ?,
             deactivation_reason = ?
@@ -275,6 +276,7 @@ const handlePostgres = async (
           `UPDATE clientes
            SET activo = 0,
                portal_enabled = 0,
+               portal_session_version = COALESCE(portal_session_version, 1) + 1,
                deactivated_at = $1,
                deactivated_by = $2,
                deactivation_reason = $3

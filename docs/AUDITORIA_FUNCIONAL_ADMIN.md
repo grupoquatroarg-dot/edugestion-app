@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Validar la aplicación administrativa de punta a punta sin modificar datos reales del negocio. La cuenta principal de prueba debe ser **Administrador**. El Portal de Clientes queda fuera del alcance, salvo la verificación indirecta de datos compartidos.
+Validar la aplicación administrativa y el Portal de Clientes de punta a punta sin modificar datos reales del negocio. La cuenta principal de prueba debe ser **Administrador** y debe utilizarse un cliente de prueba para el portal.
 
 ## Preparación
 
@@ -155,6 +155,21 @@ Realizar también con teclado, sin usar el mouse después de abrir cada panel.
 - [ ] Checklist.
 - [ ] Usuarios y permisos.
 - [ ] Backup de Configuración.
+
+## 9. Revocación de sesiones del Portal de Clientes
+
+Usar un cliente de prueba, una ventana normal para Administración y una ventana privada para el Portal de Clientes.
+
+- [ ] Habilitar el portal con un usuario y una contraseña de prueba.
+- [ ] Ingresar al portal y confirmar que pedidos, productos y movimientos carguen correctamente.
+- [ ] Editar únicamente un dato comercial, como la dirección, y confirmar que la sesión siga activa.
+- [ ] Cambiar la contraseña del portal desde Administración.
+- [ ] Actualizar la ventana del portal y confirmar que solicite iniciar sesión nuevamente.
+- [ ] Confirmar que la contraseña anterior ya no funcione y que la nueva sí.
+- [ ] Cambiar el nombre de usuario y confirmar que vuelva a revocarse la sesión existente.
+- [ ] Deshabilitar el portal y confirmar que el acceso activo quede bloqueado inmediatamente.
+- [ ] Rehabilitarlo y confirmar que solo permita entrar mediante un login nuevo.
+- [ ] Verificar que varios intentos fallidos consecutivos activen el bloqueo temporal.
 
 ## Limpieza
 

@@ -1821,6 +1821,11 @@ const portalOrderSchema = z.object({
   })).min(1, "Debe incluir al menos un producto"),
 });
 
+const getPortalSessionVersion = (value: unknown) => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+};
+
 const requirePortalCustomer = async (req: any, res: any) => {
   const token = getBearerToken(req);
 
@@ -1838,7 +1843,7 @@ const requirePortalCustomer = async (req: any, res: any) => {
 
   const pool = getPostgresPool();
   const customerResult = await pool.query(
-    `SELECT id
+    `SELECT id, portal_session_version
      FROM clientes
      WHERE id = $1
        AND COALESCE(activo, 1) <> 0
@@ -1849,6 +1854,13 @@ const requirePortalCustomer = async (req: any, res: any) => {
 
   if (!customerResult.rowCount) {
     sendError(res, "El acceso al portal de este cliente está deshabilitado", 403);
+    return null;
+  }
+
+  const tokenSessionVersion = getPortalSessionVersion(decoded.sessionVersion);
+  const currentSessionVersion = getPortalSessionVersion(customerResult.rows[0]?.portal_session_version);
+  if (!tokenSessionVersion || tokenSessionVersion !== currentSessionVersion) {
+    sendError(res, "La sesión del portal fue revocada. Ingresá nuevamente.", 401);
     return null;
   }
 
@@ -1967,7 +1979,8 @@ const handleCustomerPortal = async (req: any, res: any) => {
 
     const result = await pool.query(
       `
-        SELECT id, nombre_apellido, razon_social, portal_username, portal_password_hash, portal_enabled, saldo_cta_cte
+        SELECT id, nombre_apellido, razon_social, portal_username, portal_password_hash,
+               portal_enabled, portal_session_version, saldo_cta_cte
         FROM clientes
         WHERE portal_username = $1
           AND COALESCE(portal_enabled, 0) <> 0
@@ -1993,6 +2006,7 @@ const handleCustomerPortal = async (req: any, res: any) => {
       userId: toNumber(cliente.id),
       role: "cliente",
       userName: cliente.nombre_apellido,
+      sessionVersion: getPortalSessionVersion(cliente.portal_session_version) || 1,
     });
 
     return sendSuccess(res, {

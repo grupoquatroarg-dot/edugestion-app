@@ -43,6 +43,10 @@ const toNullableNumber = (value: unknown) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 const toBoolean = (value: unknown) => value === true || value === 1 || String(value) === "1";
+const toPortalSessionVersion = (value: unknown) => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
+};
 const money = (value: unknown) => Math.round(toNumber(value) * 100) / 100;
 const normalizeEmail = (value: unknown) => nullableText(value)?.toLowerCase() || null;
 
@@ -151,6 +155,7 @@ const snapshot = (row: any, portalPasswordChanged = false) => ({
   portal_username: nullableText(row.portal_username),
   portal_password_configured: Boolean(row.portal_password_hash),
   portal_password_changed: portalPasswordChanged,
+  portal_session_version: toPortalSessionVersion(row.portal_session_version),
   activo: toBoolean(row.activo ?? 1),
   content_version: Math.trunc(toNumber(row.content_version)),
 });
@@ -200,6 +205,11 @@ const assertPortalAccess = (current: any, validated: ReturnType<typeof validateI
   }
 };
 
+const portalCredentialsChanged = (current: any, validated: ReturnType<typeof validateInput>) =>
+  toBoolean(current.portal_enabled) !== validated.portalEnabled
+  || nullableText(current.portal_username) !== validated.portalUsername
+  || Boolean(validated.portalPassword);
+
 const assertPortalUsernameSqlite = (db: any, customerId: number, portalUsername: string | null, currentUsername: unknown) => {
   if (!portalUsername || portalUsername.toLowerCase() === normalize(currentUsername).toLowerCase()) return;
   const duplicate = db.prepare(
@@ -233,6 +243,8 @@ const handleSqlite = async (input: CustomerContentInput) => {
     assertPortalUsernameSqlite(db, input.customerId, validated.portalUsername, current.portal_username);
 
     const passwordHash = validated.portalPassword ? bcrypt.hashSync(validated.portalPassword, 10) : null;
+    const nextPortalSessionVersion = toPortalSessionVersion(current.portal_session_version)
+      + (portalCredentialsChanged(current, validated) ? 1 : 0);
     const before = snapshot(current, false);
     const nextVersion = input.expectedContentVersion + 1;
     const afterRow = {
@@ -255,6 +267,7 @@ const handleSqlite = async (input: CustomerContentInput) => {
       portal_enabled: validated.portalEnabled ? 1 : 0,
       portal_username: validated.portalUsername,
       portal_password_hash: passwordHash || current.portal_password_hash,
+      portal_session_version: nextPortalSessionVersion,
       content_version: nextVersion,
     };
     const after = snapshot(afterRow, Boolean(validated.portalPassword));
@@ -283,7 +296,7 @@ const handleSqlite = async (input: CustomerContentInput) => {
           direccion = ?, localidad = ?, provincia = ?, codigo_postal = ?, latitud = ?, longitud = ?,
           observaciones = ?, tipo_cliente = ?, lista_precio = ?, limite_credito = ?,
           portal_enabled = ?, portal_username = ?, portal_password_hash = COALESCE(?, portal_password_hash),
-          content_version = ?, content_changed_at = CURRENT_TIMESTAMP,
+          portal_session_version = ?, content_version = ?, content_changed_at = CURRENT_TIMESTAMP,
           content_changed_by = ?, content_change_reason = ?
       WHERE id = ? AND COALESCE(activo, 1) <> 0 AND content_version = ?
     `).run(
@@ -305,6 +318,7 @@ const handleSqlite = async (input: CustomerContentInput) => {
       validated.portalEnabled ? 1 : 0,
       validated.portalUsername,
       passwordHash,
+      nextPortalSessionVersion,
       nextVersion,
       validated.user,
       validated.reason,
@@ -337,6 +351,8 @@ const handlePostgres = async (input: CustomerContentInput) => {
     await assertPortalUsernamePostgres(client, input.customerId, validated.portalUsername, current.portal_username);
 
     const passwordHash = validated.portalPassword ? bcrypt.hashSync(validated.portalPassword, 10) : null;
+    const nextPortalSessionVersion = toPortalSessionVersion(current.portal_session_version)
+      + (portalCredentialsChanged(current, validated) ? 1 : 0);
     const before = snapshot(current, false);
     const nextVersion = input.expectedContentVersion + 1;
     const afterRow = {
@@ -359,6 +375,7 @@ const handlePostgres = async (input: CustomerContentInput) => {
       portal_enabled: validated.portalEnabled ? 1 : 0,
       portal_username: validated.portalUsername,
       portal_password_hash: passwordHash || current.portal_password_hash,
+      portal_session_version: nextPortalSessionVersion,
       content_version: nextVersion,
     };
     const after = snapshot(afterRow, Boolean(validated.portalPassword));
@@ -389,9 +406,9 @@ const handlePostgres = async (input: CustomerContentInput) => {
            latitud = $10, longitud = $11, observaciones = $12, tipo_cliente = $13,
            lista_precio = $14, limite_credito = $15, portal_enabled = $16,
            portal_username = $17, portal_password_hash = COALESCE($18, portal_password_hash),
-           content_version = $19, content_changed_at = now(), content_changed_by = $20,
-           content_change_reason = $21
-       WHERE id = $22 AND COALESCE(activo, 1) <> 0 AND content_version = $23
+           portal_session_version = $19, content_version = $20, content_changed_at = now(),
+           content_changed_by = $21, content_change_reason = $22
+       WHERE id = $23 AND COALESCE(activo, 1) <> 0 AND content_version = $24
        RETURNING *`,
       [
         validated.nombreApellido,
@@ -412,6 +429,7 @@ const handlePostgres = async (input: CustomerContentInput) => {
         validated.portalEnabled ? 1 : 0,
         validated.portalUsername,
         passwordHash,
+        nextPortalSessionVersion,
         nextVersion,
         validated.user,
         validated.reason,

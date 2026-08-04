@@ -408,6 +408,7 @@ export function initDb() {
       portal_enabled INTEGER DEFAULT 0,
       portal_username TEXT,
       portal_password_hash TEXT,
+      portal_session_version INTEGER NOT NULL DEFAULT 1 CHECK(portal_session_version > 0),
       deactivated_at DATETIME,
       deactivated_by TEXT,
       deactivation_reason TEXT,
@@ -1641,6 +1642,8 @@ export function initDb() {
   try { db.exec("ALTER TABLE clientes ADD COLUMN portal_enabled INTEGER DEFAULT 0"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN portal_username TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN portal_password_hash TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE clientes ADD COLUMN portal_session_version INTEGER NOT NULL DEFAULT 1"); } catch (e) {}
+  try { db.exec("UPDATE clientes SET portal_session_version = 1 WHERE portal_session_version IS NULL OR portal_session_version < 1"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN deactivated_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN deactivated_by TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE clientes ADD COLUMN deactivation_reason TEXT"); } catch (e) {}
