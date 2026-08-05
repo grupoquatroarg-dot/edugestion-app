@@ -124,7 +124,7 @@ interface PetiSalesReport {
 }
 
 export default function SalesModule() {
-  const { hasPermission } = useAuth();
+  const { user, hasPermission } = useAuth();
   const [activeTab, setActiveTab] = useState<'nueva' | 'historial' | 'saldos' | 'pedidos-clientes' | 'reporte-peti'>('nueva');
   const [products, setProducts] = useState<Product[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -133,6 +133,8 @@ export default function SalesModule() {
   const [metodoPagoParcial, setMetodoPagoParcial] = useState<string>('');
   const [montoPagado, setMontoPagado] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
+  const [freightEnabled, setFreightEnabled] = useState(false);
+  const [freightPercentage, setFreightPercentage] = useState<string>('');
   const [chequeData, setChequeData] = useState({
     banco: '',
     numero_cheque: '',
@@ -778,6 +780,15 @@ export default function SalesModule() {
     return originalPrice;
   };
 
+  const isAdmin = user?.role === 'administrador';
+  const activeFreightPercentage = isAdmin && freightEnabled
+    ? Math.min(Math.max(Number(freightPercentage) || 0, 0), 100)
+    : 0;
+  const applyFreightToUnitPrice = (price: number) =>
+    Math.round((price * (1 + activeFreightPercentage / 100) + Number.EPSILON) * 100) / 100;
+  const calculateClientUnitPrice = (item: { product: Product; discountType: 'none' | 'percentage' | 'fixed'; discountValue: number }) =>
+    applyFreightToUnitPrice(calculateDiscountedUnitPrice(item));
+
   const updateCartDiscount = (
     productId: number,
     field: 'discountType' | 'discountValue',
@@ -857,7 +868,7 @@ export default function SalesModule() {
     setCart(prev => prev.filter(item => item.product.id !== productId));
   };
 
-  const total = cart.reduce((sum, item) => sum + (calculateDiscountedUnitPrice(item) * item.quantity), 0);
+  const total = cart.reduce((sum, item) => sum + (calculateClientUnitPrice(item) * item.quantity), 0);
 
   const selectedCliente = useMemo(() => 
     clientes.find(c => c.id === selectedClienteId) || { id: 1, nombre_apellido: 'Consumidor Final', saldo_cta_cte: 0, limite_credito: 0, tiene_deuda_vencida: 0 }
@@ -943,17 +954,19 @@ export default function SalesModule() {
         metodo_pago: metodoPago === 'mixto' ? `mixto (${metodoPagoParcial} + cta_cte)` : metodoPago,
         monto_pagado: (metodoPago === 'cta_cte' || paymentMethods.find(pm => pm.name === metodoPago)?.tipo === 'Crédito') ? 0 : (metodoPago === 'mixto' ? parseFloat(montoPagado) || 0 : total),
         notes,
+        flete_porcentaje: activeFreightPercentage,
         cheque_data: metodoPago === 'Cheque' ? {
           ...chequeData,
           importe: parseFloat(chequeData.importe) || total
         } : null,
         items: cart.map(item => {
           const precioBonificado = calculateDiscountedUnitPrice(item);
+          const precioFinalCliente = calculateClientUnitPrice(item);
 
           return {
             product_id: item.product.id,
             cantidad: item.quantity,
-            precio_venta: precioBonificado,
+            precio_venta: precioFinalCliente,
             precio_unitario_original: item.product.sale_price,
             bonificacion_tipo: item.discountType,
             bonificacion_valor: item.discountValue,
@@ -989,6 +1002,8 @@ export default function SalesModule() {
       setMetodoPagoParcial(defaultPaymentMethod);
       setMontoPagado('');
       setNotes('');
+      setFreightEnabled(false);
+      setFreightPercentage('');
       setChequeData({
         banco: '',
         numero_cheque: '',
@@ -1328,7 +1343,8 @@ export default function SalesModule() {
               <div className="shrink-0 space-y-3 overflow-y-auto border-b border-slate-100 p-3 sm:p-4 max-h-[42dvh] 2xl:max-h-[32dvh] custom-scrollbar">
                 {cart.map(item => {
                   const discountedUnitPrice = calculateDiscountedUnitPrice(item);
-                  const itemSubtotal = discountedUnitPrice * item.quantity;
+                  const clientUnitPrice = calculateClientUnitPrice(item);
+                  const itemSubtotal = clientUnitPrice * item.quantity;
                   const missingUnits = Math.max(0, item.quantity - Number(item.product.stock || 0));
 
                   return (
@@ -1392,8 +1408,10 @@ export default function SalesModule() {
                         <div>
                           <label className="block text-[9px] font-black text-zinc-400 uppercase mb-1 tracking-widest">Precio unitario</label>
                           <div className="h-10 px-3 bg-white border border-zinc-200 rounded-xl flex items-center justify-between gap-2">
-                            <span className="text-sm font-black text-zinc-900 font-mono">${discountedUnitPrice.toFixed(2)}</span>
-                            {item.discountType !== 'none' && (
+                            <span className="text-sm font-black text-zinc-900 font-mono">${clientUnitPrice.toFixed(2)}</span>
+                            {activeFreightPercentage > 0 ? (
+                              <span className="text-[9px] text-indigo-600 font-bold uppercase">Base ${discountedUnitPrice.toFixed(2)}</span>
+                            ) : item.discountType !== 'none' && (
                               <span className="text-[9px] text-emerald-600 font-bold uppercase">Lista ${item.product.sale_price.toFixed(2)}</span>
                             )}
                           </div>
@@ -1447,6 +1465,50 @@ export default function SalesModule() {
               </div>
 
               <div className="flex-1 min-h-0 overflow-y-auto p-3 lg:p-4 bg-zinc-50 space-y-3 custom-scrollbar">
+                {isAdmin && (
+                  <div className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-3 shadow-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-indigo-700">Flete interno</p>
+                        <p className="mt-1 text-[10px] font-medium leading-4 text-indigo-600">Se incorpora al precio unitario y no aparece en el comprobante.</p>
+                      </div>
+                      <label className="inline-flex min-h-10 shrink-0 cursor-pointer items-center gap-2 rounded-xl border border-indigo-200 bg-white px-3 text-xs font-black text-indigo-700">
+                        <input
+                          type="checkbox"
+                          checked={freightEnabled}
+                          onChange={(event) => setFreightEnabled(event.target.checked)}
+                          className="h-4 w-4 accent-indigo-700"
+                        />
+                        Habilitar
+                      </label>
+                    </div>
+                    {freightEnabled && (
+                      <div className="mt-3">
+                        <label htmlFor="sale-freight-percentage" className="block text-[9px] font-black uppercase tracking-widest text-indigo-700">Porcentaje de flete</label>
+                        <div className="relative mt-1">
+                          <input
+                            id="sale-freight-percentage"
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.01"
+                            inputMode="decimal"
+                            value={freightPercentage}
+                            onChange={(event) => setFreightPercentage(event.target.value)}
+                            className="h-11 w-full rounded-xl border border-indigo-200 bg-white px-3 pr-9 text-sm font-black outline-none focus:ring-2 focus:ring-indigo-700"
+                            placeholder="0,00"
+                            aria-describedby="sale-freight-result"
+                          />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 font-black text-indigo-500">%</span>
+                        </div>
+                        <p id="sale-freight-result" className="mt-2 text-[10px] font-bold text-indigo-700">
+                          Precio final aplicado a todos los productos: +{activeFreightPercentage.toFixed(2)}%
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-[9px] font-bold text-zinc-400 uppercase mb-1 tracking-widest">Forma de Pago</label>
                   <select

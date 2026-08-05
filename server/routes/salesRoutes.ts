@@ -25,10 +25,15 @@ const saleSchema = z.object({
     monto_pagado: z.number().nonnegative().optional(),
     notes: z.string().optional(),
     cheque_data: z.any().optional(),
+    flete_porcentaje: z.number().min(0).max(100).optional(),
     items: z.array(z.object({
       product_id: z.number(),
       cantidad: z.number().positive(),
       precio_venta: z.number().nonnegative(),
+      precio_unitario_original: z.number().nonnegative().optional(),
+      bonificacion_tipo: z.enum(['none', 'percentage', 'fixed']).optional(),
+      bonificacion_valor: z.number().nonnegative().optional(),
+      precio_unitario_bonificado: z.number().nonnegative().optional(),
     })).min(1, 'Debe incluir al menos un producto'),
     total: z.number().nonnegative(),
   }),
@@ -88,6 +93,7 @@ router.post('/', requireAuth, requirePermission('sales', 'create'), validate(sal
     const result = await salesService.createSale({
       ...req.body,
       usuario: (req as any).user?.userName || 'Sistema',
+      actor_role: (req as any).user?.role,
     });
     return sendSuccess(res, result, 'Venta registrada exitosamente', 201);
   } catch (error: any) {

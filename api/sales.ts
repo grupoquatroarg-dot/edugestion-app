@@ -30,6 +30,7 @@ const saleSchema = z.object({
   notes: z.string().optional(),
   cheque_data: z.any().optional(),
   route_item_id: z.number().int().positive().optional(),
+  flete_porcentaje: z.number().min(0).max(100).optional(),
   items: z.array(z.object({
     product_id: z.number(),
     cantidad: z.number().positive(),
@@ -1806,6 +1807,7 @@ export default async function handler(req: any, res: any) {
       const result = await salesService.createSale({
         ...parsed.data,
         usuario: user.userName || "Sistema",
+        actor_role: user.role,
       });
 
       return sendSuccess(res, result, "Venta registrada exitosamente", 201);

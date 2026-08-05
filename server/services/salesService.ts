@@ -6,6 +6,10 @@ import { normalizeBusinessDateForStorage } from '../utils/businessDate.js';
 import { saleTraceService } from './saleTraceService.js';
 import type { SaleStockAllocationInput } from './saleTraceService.js';
 import { assertPaymentMethodActive } from './paymentMethodAvailabilityService.js';
+import {
+  calculateSalePricesWithFreight,
+  normalizeSaleFreightPercentage,
+} from '../utils/saleFreightPricing.js';
 
 type TransactionClient = {
   query: (text: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }>;
@@ -71,8 +75,9 @@ const getAndIncrementSetting = async (client: TransactionClient, key: string, de
 
 export const salesService = {
   async createSale(saleData: any, executor?: TransactionClient) {
-    const { items, cliente_id, nombre_cliente, metodo_pago, monto_pagado, notes, cheque_data, usuario, route_item_id, allow_shortage = true } = saleData;
+    const { items, cliente_id, nombre_cliente, metodo_pago, monto_pagado, notes, cheque_data, usuario, actor_role, flete_porcentaje, route_item_id, allow_shortage = true } = saleData;
     const routeItemId = Number(route_item_id || 0);
+    const freightPercentage = normalizeSaleFreightPercentage(flete_porcentaje, actor_role);
 
     const normalizeSaleItem = (item: any) => {
       const cantidad = toNumber(item.cantidad);
@@ -82,24 +87,21 @@ export const salesService = {
       const bonificacionTipo = String(item.bonificacion_tipo || 'none');
       const bonificacionValor = toNumber(item.bonificacion_valor);
 
-      let precioBonificado = toNumber(item.precio_venta, precioOriginal);
-
-      if (bonificacionTipo === 'percentage') {
-        precioBonificado = precioOriginal * (1 - Math.min(Math.max(bonificacionValor, 0), 100) / 100);
-      }
-
-      if (bonificacionTipo === 'fixed') {
-        precioBonificado = Math.max(0, precioOriginal - Math.max(bonificacionValor, 0));
-      }
+      const clientPrices = calculateSalePricesWithFreight({
+        originalPrice: precioOriginal,
+        discountType: bonificacionTipo,
+        discountValue: bonificacionValor,
+        freightPercentage,
+      });
 
       return {
         product_id: Number(item.product_id),
         cantidad,
-        precio_unitario_original: precioOriginal,
+        precio_unitario_original: clientPrices.originalPrice,
         bonificacion_tipo: bonificacionTipo,
-        bonificacion_valor: bonificacionValor,
-        precio_unitario_bonificado: precioBonificado,
-        precio_venta: precioBonificado,
+        bonificacion_valor: clientPrices.discountValue,
+        precio_unitario_bonificado: clientPrices.discountedPrice,
+        precio_venta: clientPrices.discountedPrice,
       };
     };
 
