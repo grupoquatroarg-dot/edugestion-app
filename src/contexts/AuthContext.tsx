@@ -72,10 +72,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = async () => {
-    await apiFetch('/api/auth/logout', { method: 'POST' });
-    localStorage.removeItem('auth_token');
-    setUser(null);
-    disconnectSocket();
+    try {
+      await apiFetch('/api/auth/logout', { method: 'POST' });
+    } finally {
+      localStorage.removeItem('auth_token');
+      setUser(null);
+      disconnectSocket();
+    }
   };
 
   const hasPermission = (module: string, action: 'view' | 'create' | 'edit' | 'delete') => {

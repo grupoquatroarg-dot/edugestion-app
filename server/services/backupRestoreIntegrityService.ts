@@ -79,6 +79,17 @@ export const BACKUP_EXCLUDED_SECURITY_TABLES = [
   "user_content_history",
   "maintenance_operation_history",
   "auth_failed_login_attempts",
+  "auth_revoked_staff_tokens",
+] as const;
+
+const PRE_STAFF_TOKEN_REVOCATION_SECURITY_TABLES_V2 = [
+  "users",
+  "user_permissions",
+  "user_status_history",
+  "user_permission_history",
+  "user_content_history",
+  "maintenance_operation_history",
+  "auth_failed_login_attempts",
 ] as const;
 
 const LEGACY_BACKUP_EXCLUDED_SECURITY_TABLES_V2 = [
@@ -238,11 +249,26 @@ const validateBackupEnvelope = async (client: TransactionClient, input: unknown)
   })();
 
   if (!matchesCurrentSecurityExclusions) {
-    assertStringArrayEqual(
-      excludedSecurityTables,
-      LEGACY_BACKUP_EXCLUDED_SECURITY_TABLES_V2,
-      "La exclusión de seguridad"
-    );
+    const matchesPreTokenRevocationExclusions = (() => {
+      try {
+        assertStringArrayEqual(
+          excludedSecurityTables,
+          PRE_STAFF_TOKEN_REVOCATION_SECURITY_TABLES_V2,
+          "La exclusión de seguridad"
+        );
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+
+    if (!matchesPreTokenRevocationExclusions) {
+      assertStringArrayEqual(
+        excludedSecurityTables,
+        LEGACY_BACKUP_EXCLUDED_SECURITY_TABLES_V2,
+        "La exclusión de seguridad"
+      );
+    }
   }
 
   const tableNames = Object.keys(backup.tables);

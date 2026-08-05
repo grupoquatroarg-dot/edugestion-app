@@ -35,7 +35,7 @@ for (const table of [
 ]) {
   assert(BACKUP_TABLE_ORDER.includes(table as any), `Falta ${table} en la copia íntegra.`);
 }
-for (const table of ["users", "user_permissions", "user_content_history", "maintenance_operation_history", "auth_failed_login_attempts"]) {
+for (const table of ["users", "user_permissions", "user_content_history", "maintenance_operation_history", "auth_failed_login_attempts", "auth_revoked_staff_tokens"]) {
   assert(!BACKUP_TABLE_ORDER.includes(table as any), `${table} no debe ser restaurable.`);
   assert(BACKUP_EXCLUDED_SECURITY_TABLES.includes(table as any), `${table} no figura como exclusión de seguridad.`);
 }

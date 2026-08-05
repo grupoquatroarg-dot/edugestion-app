@@ -1,6 +1,7 @@
 import { getPostgresPool, isPostgresConfigured } from "../utils/postgres.js";
 import { verifyToken, type TokenPayload } from "../utils/jwt.js";
 import { sendError } from "../utils/response.js";
+import { hashAuthToken } from "../utils/tokenHash.js";
 
 export type CurrentUserAuth = Required<Pick<TokenPayload, "userId" | "role" | "userName" | "sessionVersion">>;
 
@@ -23,9 +24,29 @@ const toSessionVersion = (value: unknown) => {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 };
 
-const findCurrentUserById = async (userId: number): Promise<CurrentUserRecord | null> => {
+const findCurrentUserById = async (
+  userId: number,
+  tokenHash?: string
+): Promise<CurrentUserRecord | null> => {
   if (isPostgresConfigured()) {
     const pool = getPostgresPool();
+    if (tokenHash) {
+      const result = await pool.query(
+        `SELECT u.id, u.name, u.role, u.active, u.session_version
+         FROM users u
+         WHERE u.id = $1
+           AND NOT EXISTS (
+             SELECT 1
+             FROM auth_revoked_staff_tokens revoked
+             WHERE revoked.token_hash = $2
+               AND revoked.expires_at > now()
+           )
+         LIMIT 1`,
+        [userId, tokenHash]
+      );
+      return (result.rows[0] as CurrentUserRecord | undefined) ?? null;
+    }
+
     const result = await pool.query(
       `SELECT id, name, role, active, session_version
        FROM users
@@ -34,6 +55,22 @@ const findCurrentUserById = async (userId: number): Promise<CurrentUserRecord | 
       [userId]
     );
     return (result.rows[0] as CurrentUserRecord | undefined) ?? null;
+  }
+
+  if (tokenHash) {
+    const { default: db } = await import("../db.js");
+    return (db.prepare(`
+      SELECT u.id, u.name, u.role, u.active, u.session_version
+      FROM users u
+      WHERE u.id = ?
+        AND NOT EXISTS (
+          SELECT 1
+          FROM auth_revoked_staff_tokens revoked
+          WHERE revoked.token_hash = ?
+            AND datetime(revoked.expires_at) > CURRENT_TIMESTAMP
+        )
+      LIMIT 1
+    `).get(userId, tokenHash) as CurrentUserRecord | undefined) ?? null;
   }
 
   // SQLite solo se carga en el servidor local cuando realmente se necesita.
@@ -52,7 +89,7 @@ export const validateStaffToken = async (token: string | null | undefined): Prom
   const tokenSessionVersion = toSessionVersion(decoded.sessionVersion);
   if (!tokenSessionVersion) return null;
 
-  const user = await findCurrentUserById(Number(decoded.userId));
+  const user = await findCurrentUserById(Number(decoded.userId), hashAuthToken(token));
   if (!user || Number(user.active ?? 0) !== 1) return null;
 
   const currentSessionVersion = toSessionVersion(user.session_version);

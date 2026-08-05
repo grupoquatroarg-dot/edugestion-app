@@ -245,6 +245,21 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_auth_failed_login_attempts_cleanup
       ON auth_failed_login_attempts (attempted_at);
 
+    CREATE TABLE IF NOT EXISTS auth_revoked_staff_tokens (
+      token_hash TEXT PRIMARY KEY CONSTRAINT auth_revoked_staff_tokens_hash_check CHECK(length(token_hash) = 64),
+      user_id INTEGER NOT NULL,
+      revoked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      expires_at DATETIME NOT NULL,
+      CONSTRAINT auth_revoked_staff_tokens_expiry_check CHECK(datetime(expires_at) > datetime(revoked_at)),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_auth_revoked_staff_tokens_user
+      ON auth_revoked_staff_tokens (user_id, revoked_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_auth_revoked_staff_tokens_cleanup
+      ON auth_revoked_staff_tokens (expires_at);
+
     CREATE TABLE IF NOT EXISTS products (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       code TEXT,
@@ -1227,6 +1242,25 @@ export function initDb() {
         ON user_content_history (user_id, changed_at DESC);
       CREATE INDEX IF NOT EXISTS idx_users_content_changed_at
         ON users (content_changed_at DESC);
+    `);
+  } catch (e) {}
+
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS auth_revoked_staff_tokens (
+        token_hash TEXT PRIMARY KEY CONSTRAINT auth_revoked_staff_tokens_hash_check CHECK(length(token_hash) = 64),
+        user_id INTEGER NOT NULL,
+        revoked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        expires_at DATETIME NOT NULL,
+        CONSTRAINT auth_revoked_staff_tokens_expiry_check CHECK(datetime(expires_at) > datetime(revoked_at)),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_auth_revoked_staff_tokens_user
+        ON auth_revoked_staff_tokens (user_id, revoked_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_auth_revoked_staff_tokens_cleanup
+        ON auth_revoked_staff_tokens (expires_at);
+      DELETE FROM auth_revoked_staff_tokens
+      WHERE datetime(expires_at) <= CURRENT_TIMESTAMP;
     `);
   } catch (e) {}
 

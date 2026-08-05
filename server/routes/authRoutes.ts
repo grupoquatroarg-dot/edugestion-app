@@ -13,6 +13,7 @@ import {
   getRequestClientAddress,
   setRetryAfterHeader,
 } from "../services/authAttemptSecurityService.js";
+import { staffTokenRevocationService } from "../services/staffTokenRevocationService.js";
 
 const router = express.Router();
 
@@ -92,15 +93,26 @@ router.get("/me", async (req, res) => {
   return sendSuccess(res, { ...user, permissions });
 });
 
-router.post("/logout", (req, res) => {
+router.post("/logout", async (req, res) => {
   const { cookieOptions } = getSessionConfig();
+  let revocationError: unknown = null;
+
+  try {
+    await staffTokenRevocationService.revokeBearerTokenIfValid(req);
+  } catch (error) {
+    revocationError = error;
+    console.error("[Auth] No se pudo revocar el token actual.", error);
+  }
 
   const clearAuthCookie = () => {
     res.clearCookie('sid', {
       ...cookieOptions,
       maxAge: 0,
     });
-    return sendSuccess(res, null, "Sesión cerrada");
+    if (revocationError) {
+      return sendError(res, "La sesión local se cerró, pero no se pudo revocar el token en el servidor", 503);
+    }
+    return sendSuccess(res, null, "Sesión cerrada y token revocado");
   };
 
   if (!req.session) {

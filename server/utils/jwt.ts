@@ -6,6 +6,7 @@ export interface TokenPayload {
   role: string;
   userName: string;
   sessionVersion?: number;
+  exp?: number;
 }
 
 export const generateToken = (payload: TokenPayload): string => {

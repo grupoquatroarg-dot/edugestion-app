@@ -171,6 +171,17 @@ Usar un cliente de prueba, una ventana normal para Administración y una ventana
 - [ ] Rehabilitarlo y confirmar que solo permita entrar mediante un login nuevo.
 - [ ] Verificar que varios intentos fallidos consecutivos activen el bloqueo temporal.
 
+## 10. Cierre seguro de sesión administrativa
+
+1. Iniciar sesión con el mismo usuario administrativo en dos navegadores o dispositivos (A y B).
+2. Cerrar sesión en A y comprobar que vuelve al acceso.
+3. Intentar reutilizar o actualizar con el token anterior de A: debe ser rechazado.
+4. Actualizar B: la sesión debe continuar activa, porque solo se revocó el token de A.
+5. Volver a iniciar sesión en A: el nuevo acceso debe funcionar normalmente.
+6. Repetir el cierre con el servidor temporalmente inaccesible: el navegador debe limpiar igualmente sus datos locales.
+
+Resultado esperado: el token cerrado queda inutilizable hasta su vencimiento, los demás dispositivos no se desconectan y la base solo conserva su huella SHA-256, nunca el token original.
+
 ## Limpieza
 
 - [ ] Eliminar o identificar claramente clientes de prueba.
