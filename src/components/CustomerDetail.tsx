@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { getSocket } from '../utils/socket';
 import { generateSaleReceipt, printSaleReceipt } from '../utils/pdfGenerator';
+import { openPrintWindowPlaceholder } from '../utils/pdfOutput';
 import { unwrapResponse, apiFetch } from '../utils/api';
 import { formatBusinessDate, formatBusinessDateTime, getBusinessDateInputValue } from '../utils/businessDate';
 
@@ -157,13 +158,16 @@ export default function CustomerDetail({ clienteId, onClose, initialTab = 'venta
   };
 
   const handlePrintReceipt = async (saleId: number) => {
+    const printWindow = openPrintWindowPlaceholder();
+
     try {
       setPrintingSaleId(saleId);
       const res = await apiFetch(`/api/sales?id=${saleId}`);
       const body = await res.json();
       const sale = unwrapResponse(body);
-      printSaleReceipt(sale, businessSettings);
+      printSaleReceipt(sale, businessSettings, printWindow);
     } catch (error) {
+      if (printWindow && !printWindow.closed) printWindow.close();
       console.error("Error printing receipt:", error);
       alert("No se pudo preparar la impresión económica de la venta");
     } finally {

@@ -31,10 +31,10 @@ import { Product } from '../types';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { getSocket } from '../utils/socket';
-import { generateSaleReceipt, printSaleReceipt } from '../utils/pdfGenerator';
+import { generateSaleReceipt, printSaleReceipt, printSaleReceipts } from '../utils/pdfGenerator';
 import CustomerDetail from './CustomerDetail';
 import CustomerOrdersAdmin from './CustomerOrdersAdmin';
-import { outputPdfDocument, type PdfOutputMode } from '../utils/pdfOutput';
+import { openPrintWindowPlaceholder, outputPdfDocument, type PdfOutputMode } from '../utils/pdfOutput';
 import { useAuth } from '../contexts/AuthContext';
 import { unwrapResponse, apiFetch } from '../utils/api';
 import {
@@ -158,6 +158,8 @@ export default function SalesModule() {
   const [selectedSale, setSelectedSale] = useState<any>(null);
   const [downloadingSaleId, setDownloadingSaleId] = useState<number | null>(null);
   const [printingSaleId, setPrintingSaleId] = useState<number | null>(null);
+  const [selectedPrintSaleIds, setSelectedPrintSaleIds] = useState<number[]>([]);
+  const [isBatchPrinting, setIsBatchPrinting] = useState(false);
   const [whatsAppSendingSaleId, setWhatsAppSendingSaleId] = useState<number | null>(null);
   const [saleToCancel, setSaleToCancel] = useState<any>(null);
   const [cancellationReason, setCancellationReason] = useState('');
@@ -212,6 +214,11 @@ export default function SalesModule() {
     () => filteredSalesHistory.filter(sale => String(sale.estado || '').toLowerCase() !== 'anulada'),
     [filteredSalesHistory]
   );
+
+  const allFilteredSalesSelected = useMemo(() => {
+    return filteredSalesHistory.length > 0
+      && filteredSalesHistory.every(sale => selectedPrintSaleIds.includes(Number(sale.id)));
+  }, [filteredSalesHistory, selectedPrintSaleIds]);
 
   const saldosSummary = useMemo(() => {
     const pendingSales = salesHistory.filter(
@@ -309,6 +316,11 @@ export default function SalesModule() {
       socket.off('sale_confirmed');
     };
   }, []);
+
+  useEffect(() => {
+    const availableSaleIds = new Set(salesHistory.map(sale => Number(sale.id)));
+    setSelectedPrintSaleIds(currentIds => currentIds.filter(id => availableSaleIds.has(id)));
+  }, [salesHistory]);
 
   const fetchActiveProducts = async (): Promise<boolean> => {
     try {
@@ -621,17 +633,63 @@ export default function SalesModule() {
   };
 
   const handlePrintReceipt = async (saleId: number) => {
+    const printWindow = openPrintWindowPlaceholder();
+
     try {
       setPrintingSaleId(saleId);
       const res = await apiFetch(`/api/sales?id=${saleId}`);
       const body = await res.json();
       const sale = unwrapResponse(body);
-      printSaleReceipt(sale, businessSettings);
+      printSaleReceipt(sale, businessSettings, printWindow);
     } catch (error) {
+      if (printWindow && !printWindow.closed) printWindow.close();
       console.error("Error printing receipt:", error);
       alert("No se pudo preparar la impresión económica de la venta");
     } finally {
       setPrintingSaleId(null);
+    }
+  };
+
+  const toggleSaleForPrint = (saleId: number) => {
+    setSelectedPrintSaleIds(currentIds => currentIds.includes(saleId)
+      ? currentIds.filter(id => id !== saleId)
+      : [...currentIds, saleId]);
+  };
+
+  const toggleAllFilteredSalesForPrint = () => {
+    const filteredIds = filteredSalesHistory.map(sale => Number(sale.id));
+
+    if (allFilteredSalesSelected) {
+      const filteredIdSet = new Set(filteredIds);
+      setSelectedPrintSaleIds(currentIds => currentIds.filter(id => !filteredIdSet.has(id)));
+      return;
+    }
+
+    setSelectedPrintSaleIds(currentIds => Array.from(new Set([...currentIds, ...filteredIds])));
+  };
+
+  const handlePrintSelectedSales = async () => {
+    const selectedSales = salesHistory.filter(sale => selectedPrintSaleIds.includes(Number(sale.id)));
+    if (selectedSales.length === 0 || isBatchPrinting) return;
+
+    const printWindow = openPrintWindowPlaceholder();
+
+    try {
+      setIsBatchPrinting(true);
+      const detailedSales = await Promise.all(selectedSales.map(async sale => {
+        const response = await apiFetch(`/api/sales?id=${sale.id}`);
+        const body = await response.json();
+        return unwrapResponse(body);
+      }));
+
+      printSaleReceipts(detailedSales, businessSettings, printWindow);
+      setSelectedPrintSaleIds([]);
+    } catch (error) {
+      if (printWindow && !printWindow.closed) printWindow.close();
+      console.error('Error printing selected receipts:', error);
+      alert('No se pudo preparar la impresión de las ventas seleccionadas.');
+    } finally {
+      setIsBatchPrinting(false);
     }
   };
 
@@ -1733,16 +1791,66 @@ export default function SalesModule() {
                 </div>
               </div>
 
+              {hasPermission('sales', 'view') && filteredSalesHistory.length > 0 && (
+                <div className="flex flex-col gap-4 rounded-3xl border border-slate-300 bg-slate-900 p-4 text-white shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5">
+                  <div className="min-w-0">
+                    <p className="text-sm font-black uppercase tracking-wide">Impresión económica por lote</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-300">
+                      Hasta 8 productos: dos ventas por hoja A4. Ventas más extensas: una hoja A4 completa.
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-col gap-2 min-[430px]:flex-row">
+                    <button
+                      type="button"
+                      onClick={toggleAllFilteredSalesForPrint}
+                      className="min-h-11 rounded-xl border border-white/25 bg-white/10 px-4 text-xs font-black uppercase tracking-wide text-white hover:bg-white/20"
+                    >
+                      {allFilteredSalesSelected ? 'Quitar visibles' : 'Seleccionar visibles'}
+                    </button>
+                    {selectedPrintSaleIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPrintSaleIds([])}
+                        className="min-h-11 rounded-xl border border-white/25 bg-white/10 px-4 text-xs font-black uppercase tracking-wide text-white hover:bg-white/20"
+                      >
+                        Limpiar
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handlePrintSelectedSales}
+                      disabled={selectedPrintSaleIds.length === 0 || isBatchPrinting}
+                      className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 text-xs font-black uppercase tracking-wide text-slate-950 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isBatchPrinting ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
+                      {isBatchPrinting ? 'Preparando...' : `Imprimir selección (${selectedPrintSaleIds.length})`}
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-3">
                 {filteredSalesHistory.map((sale: any) => (
                   <article
                     key={sale.id}
-                    className={`rounded-2xl border p-4 shadow-sm transition sm:p-5 ${
+                    className={`rounded-2xl border p-4 shadow-sm transition sm:p-5 ${selectedPrintSaleIds.includes(Number(sale.id)) ? 'ring-2 ring-slate-900 ring-offset-2' : ''} ${
                       String(sale.estado || '').toLowerCase() === 'anulada'
                         ? 'border-red-200 bg-red-50/60'
                         : 'border-slate-200 bg-white hover:border-indigo-200 hover:shadow-md'
                     }`}
                   >
+                    {hasPermission('sales', 'view') && (
+                      <label className="mb-4 inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs font-black text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={selectedPrintSaleIds.includes(Number(sale.id))}
+                          onChange={() => toggleSaleForPrint(Number(sale.id))}
+                          className="h-4 w-4 accent-slate-900"
+                          aria-label={`Seleccionar venta ${sale.numero_venta || sale.id} para impresión económica`}
+                        />
+                        Seleccionar para imprimir
+                      </label>
+                    )}
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                       <div className="min-w-0">
                         <div className="mb-2 flex flex-wrap items-center gap-2">

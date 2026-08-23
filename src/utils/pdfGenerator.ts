@@ -2,6 +2,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { formatBusinessDate, getBusinessDateInputValue, getBusinessDateKey } from './businessDate';
 import { outputPdfDocument, type PdfOutputMode } from './pdfOutput';
+import { buildEconomicSalePrintDocument, getEconomicSalePrintFileName } from './saleReceiptPrint';
 
 const formatCurrency = (value: any) => {
   const numberValue = Number(value || 0);
@@ -313,9 +314,21 @@ export const generateSaleReceipt = (sale: any, businessSettings: Record<string, 
   outputPdfDocument(doc, getReceiptFileName(sale), 'download');
 };
 
-export const printSaleReceipt = (sale: any, businessSettings: Record<string, string> = {}) => {
-  const doc = buildSaleReceiptDoc(sale, businessSettings, 'print');
-  outputPdfDocument(doc, getReceiptFileName(sale), 'print');
+export const printSaleReceipts = (
+  sales: any[],
+  businessSettings: Record<string, string> = {},
+  preparedPrintWindow: Window | null = null
+) => {
+  const doc = buildEconomicSalePrintDocument(sales, businessSettings);
+  outputPdfDocument(doc, getEconomicSalePrintFileName(sales), 'print', preparedPrintWindow);
+};
+
+export const printSaleReceipt = (
+  sale: any,
+  businessSettings: Record<string, string> = {},
+  preparedPrintWindow: Window | null = null
+) => {
+  printSaleReceipts([sale], businessSettings, preparedPrintWindow);
 };
 
 export const createSaleReceiptPdfFile = (sale: any, businessSettings: Record<string, string> = {}) => {
