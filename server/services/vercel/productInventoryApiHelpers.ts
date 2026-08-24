@@ -2,9 +2,10 @@ import { z } from "zod";
 import { getPostgresPool, isPostgresConfigured } from "../../utils/postgres.js";
 import { AppError, sendError, sendSuccess } from "../../utils/response.js";
 import { requireBearerUser } from "../currentUserAuthService.js";
+import { getProductCostUnitPrice, isValidProductQuantity } from "../../../shared/productMeasurement.js";
 
 const stockSchema = z.object({
-  cantidad: z.number().min(1, "La cantidad debe ser al menos 1"),
+  cantidad: z.number().positive("La cantidad debe ser mayor a cero"),
   costo_unitario: z.number().min(0, "El costo no puede ser negativo"),
   notes: z.string().max(500).optional(),
 });
@@ -14,7 +15,7 @@ const minStockSchema = z.object({
 });
 
 const expireSchema = z.object({
-  cantidad: z.number().min(1, "La cantidad debe ser al menos 1"),
+  cantidad: z.number().positive("La cantidad debe ser mayor a cero"),
   notes: z.string().max(500).optional(),
 });
 
@@ -64,12 +65,15 @@ const handleSqlite = async (action: InventoryAction, productId: number, data: an
   const { default: db } = await import("../../db.js");
   return db.transaction(() => {
     const product = db
-      .prepare("SELECT id, stock, cost, estado FROM products WHERE id = ? AND eliminado = 0")
+      .prepare("SELECT id, stock, cost, quantity_mode, measurement_unit, price_reference_quantity, estado FROM products WHERE id = ? AND eliminado = 0")
       .get(productId) as any;
 
     if (!product) throw new AppError("Producto no encontrado", 404);
     if (String(product.estado || "activo").toLowerCase() !== "activo") {
       throw new AppError("El producto está inactivo. Reactivalo antes de modificar su inventario.", 409);
+    }
+    if (action !== "min-stock" && !isValidProductQuantity(product, data.cantidad)) {
+      throw new AppError("La cantidad no es válida para la forma de venta del producto", 400);
     }
 
     if (action === "stock") {
@@ -110,7 +114,7 @@ const handleSqlite = async (action: InventoryAction, productId: number, data: an
     `).run(
       productId,
       data.cantidad,
-      Number(product.cost || 0),
+      getProductCostUnitPrice(product),
       0,
       data.notes || "Merma/Vencimiento",
       "egreso",
@@ -130,7 +134,7 @@ export const applyProductInventoryPostgres = async (
   usuario: string
 ) => {
   const productResult = await client.query(
-    `SELECT id, stock, cost, estado
+    `SELECT id, stock, cost, quantity_mode, measurement_unit, price_reference_quantity, estado
      FROM products
      WHERE id = $1 AND eliminado = 0
      LIMIT 1
@@ -142,6 +146,9 @@ export const applyProductInventoryPostgres = async (
 
   if (String(productResult.rows[0]?.estado || "activo").toLowerCase() !== "activo") {
     throw new AppError("El producto está inactivo. Reactivalo antes de modificar su inventario.", 409);
+  }
+  if (action !== "min-stock" && !isValidProductQuantity(productResult.rows[0], data.cantidad)) {
+    throw new AppError("La cantidad no es válida para la forma de venta del producto", 400);
   }
 
   if (action === "stock") {
@@ -193,7 +200,7 @@ export const applyProductInventoryPostgres = async (
     [
       productId,
       data.cantidad,
-      Number(productResult.rows[0]?.cost || 0),
+      getProductCostUnitPrice(productResult.rows[0]),
       0,
       data.notes || "Merma/Vencimiento",
       "egreso",

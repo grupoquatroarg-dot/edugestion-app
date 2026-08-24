@@ -2,12 +2,22 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { formatBusinessDate, getBusinessDateInputValue, getBusinessDateKey } from './businessDate';
 import { outputPdfDocument, type PdfOutputMode } from './pdfOutput';
+import { formatMeasurementQuantity } from '../../shared/productMeasurement';
 
 const formatCurrency = (value: any) => {
   const numberValue = Number(value || 0);
   return `$${numberValue.toLocaleString('es-AR', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
+  })}`;
+};
+
+const formatUnitCurrency = (value: any, item: any) => {
+  const numberValue = Number(value || 0);
+  const isMeasured = item?.quantity_mode === 'measure';
+  return `$${numberValue.toLocaleString('es-AR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: isMeasured ? 4 : 2,
   })}`;
 };
 
@@ -87,8 +97,8 @@ const buildCustomerOrderPdf = (
 
   const rows = (order?.items || []).map((item: any) => [
     item.product_name || item.name || 'Producto',
-    String(Number(item.cantidad || 0)),
-    formatCurrency(item.precio_unitario),
+    formatMeasurementQuantity(item.cantidad, item.measurement_unit, { includeUnit: item.quantity_mode === 'measure' }),
+    formatUnitCurrency(item.precio_unitario, item),
     formatCurrency(item.importe || Number(item.cantidad || 0) * Number(item.precio_unitario || 0)),
   ]);
 

@@ -9,6 +9,7 @@ import { getPostgresPool, isPostgresConfigured } from "../utils/postgres.js";
 import { productLifecycleService } from "../services/productLifecycleService.js";
 import { inventoryMovementCancellationService } from "../services/inventoryMovementCancellationService.js";
 import { productContentLifecycleService } from "../services/productContentLifecycleService.js";
+import { getProductCostUnitPrice, isValidProductQuantity } from "../../shared/productMeasurement.js";
 
 const router = express.Router();
 
@@ -19,6 +20,9 @@ const productSchema = z.object({
     description: z.string().optional().nullable(),
     cost: z.number().min(0, "El costo no puede ser negativo"),
     sale_price: z.number().min(0, "El precio de venta no puede ser negativo"),
+    quantity_mode: z.enum(["unit", "measure"]).optional().default("unit"),
+    measurement_unit: z.enum(["unidad", "kg", "g", "l", "ml", "m"]).optional().default("unidad"),
+    price_reference_quantity: z.number().positive("La cantidad de referencia debe ser mayor a cero").optional().default(1),
     stock: z.number().min(0, "El stock no puede ser negativo").optional(),
     stock_minimo: z.number().min(0, "El stock mínimo no puede ser negativo").optional(),
     company: z.enum(["Edu", "Peti"]),
@@ -37,7 +41,7 @@ const productContentSchema = z.object({
 
 const stockSchema = z.object({
   body: z.object({
-    cantidad: z.number().min(1, "La cantidad debe ser al menos 1"),
+    cantidad: z.number().positive("La cantidad debe ser mayor a cero"),
     costo_unitario: z.number().min(0, "El costo no puede ser negativo"),
     notes: z.string().optional(),
   })
@@ -51,7 +55,7 @@ const minStockSchema = z.object({
 
 const expireSchema = z.object({
   body: z.object({
-    cantidad: z.number().min(1, "La cantidad debe ser al menos 1"),
+    cantidad: z.number().positive("La cantidad debe ser mayor a cero"),
     notes: z.string().optional(),
   })
 });
@@ -88,7 +92,7 @@ router.post("/", requireAuth, requirePermission('products', 'create'), validate(
           db.prepare(`
             INSERT INTO stock_movimientos (product_id, cantidad, costo_unitario, cantidad_restante, tipo_movimiento, usuario, motivo)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-          `).run(newProduct.id, req.body.stock, req.body.cost, req.body.stock, 'ingreso', usuario, 'Carga inicial');
+          `).run(newProduct.id, req.body.stock, getProductCostUnitPrice(req.body), req.body.stock, 'ingreso', usuario, 'Carga inicial');
         }
       })();
 
@@ -106,7 +110,7 @@ router.post("/", requireAuth, requirePermission('products', 'create'), validate(
         await client.query(
           `INSERT INTO stock_movimientos (product_id, cantidad, costo_unitario, cantidad_restante, tipo_movimiento, usuario, motivo)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [newProduct.id, req.body.stock, req.body.cost, req.body.stock, 'ingreso', usuario, 'Carga inicial']
+          [newProduct.id, req.body.stock, getProductCostUnitPrice(req.body), req.body.stock, 'ingreso', usuario, 'Carga inicial']
         );
       }
 
@@ -161,6 +165,9 @@ router.put("/:id", requireAuth, requirePermission('products', 'edit'), validate(
       description: req.body.description,
       cost: req.body.cost,
       salePrice: req.body.sale_price,
+      quantityMode: req.body.quantity_mode,
+      measurementUnit: req.body.measurement_unit,
+      priceReferenceQuantity: req.body.price_reference_quantity,
       stockMinimum: req.body.stock_minimo,
       company: req.body.company,
       familyId: req.body.family_id,
@@ -183,10 +190,13 @@ router.post("/:id/stock", requireAuth, requirePermission('products', 'edit'), va
   try {
     if (!isPostgresConfigured()) {
       db.transaction(() => {
-        const product = db.prepare("SELECT id, estado FROM products WHERE id = ? AND eliminado = 0").get(productId) as any;
+        const product = db.prepare("SELECT id, quantity_mode, measurement_unit, price_reference_quantity, estado FROM products WHERE id = ? AND eliminado = 0").get(productId) as any;
         if (!product) throw new AppError("Producto no encontrado", 404);
         if (String(product.estado || "activo").toLowerCase() !== "activo") {
           throw new AppError("El producto está inactivo. Reactivalo antes de modificar su inventario.", 409);
+        }
+        if (!isValidProductQuantity(product, cantidad)) {
+          throw new AppError("La cantidad no es válida para la forma de venta del producto", 400);
         }
 
         db.prepare("UPDATE products SET stock = stock + ? WHERE id = ?").run(cantidad, productId);
@@ -208,7 +218,7 @@ router.post("/:id/stock", requireAuth, requirePermission('products', 'edit'), va
       await client.query('BEGIN');
 
       const existing = await client.query(
-        "SELECT id, estado FROM products WHERE id = $1 AND eliminado = 0 LIMIT 1 FOR UPDATE",
+        "SELECT id, quantity_mode, measurement_unit, price_reference_quantity, estado FROM products WHERE id = $1 AND eliminado = 0 LIMIT 1 FOR UPDATE",
         [productId]
       );
 
@@ -217,6 +227,9 @@ router.post("/:id/stock", requireAuth, requirePermission('products', 'edit'), va
       }
       if (String(existing.rows[0]?.estado || "activo").toLowerCase() !== "activo") {
         throw new AppError("El producto está inactivo. Reactivalo antes de modificar su inventario.", 409);
+      }
+      if (!isValidProductQuantity(existing.rows[0], cantidad)) {
+        throw new AppError("La cantidad no es válida para la forma de venta del producto", 400);
       }
 
       await client.query("UPDATE products SET stock = stock + $1 WHERE id = $2", [cantidad, productId]);
@@ -332,12 +345,15 @@ router.post("/:id/expire", requireAuth, requirePermission('products', 'edit'), v
   try {
     if (!isPostgresConfigured()) {
       db.transaction(() => {
-        const product = db.prepare("SELECT stock, cost, estado FROM products WHERE id = ? AND eliminado = 0").get(productId) as any;
+        const product = db.prepare("SELECT stock, cost, quantity_mode, measurement_unit, price_reference_quantity, estado FROM products WHERE id = ? AND eliminado = 0").get(productId) as any;
         if (!product) {
           throw new AppError("Producto no encontrado", 404);
         }
         if (String(product.estado || "activo").toLowerCase() !== "activo") {
           throw new AppError("El producto está inactivo. Reactivalo antes de modificar su inventario.", 409);
+        }
+        if (!isValidProductQuantity(product, cantidad)) {
+          throw new AppError("La cantidad no es válida para la forma de venta del producto", 400);
         }
 
         if (Number(product.stock) < cantidad) {
@@ -350,7 +366,7 @@ router.post("/:id/expire", requireAuth, requirePermission('products', 'edit'), v
             product_id, tipo_movimiento, cantidad, costo_unitario, cantidad_restante,
             descripcion, motivo, usuario, fecha_ingreso, reversion_version
           ) VALUES (?, ?, ?, ?, 0, ?, 'merma', ?, CURRENT_TIMESTAMP, 1)
-        `).run(productId, 'egreso', cantidad, Number(product.cost || 0), notes || 'Merma/Vencimiento', usuario);
+        `).run(productId, 'egreso', cantidad, getProductCostUnitPrice(product), notes || 'Merma/Vencimiento', usuario);
       })();
 
       return sendSuccess(res, null, "Merma registrada exitosamente");
@@ -363,7 +379,7 @@ router.post("/:id/expire", requireAuth, requirePermission('products', 'edit'), v
       await client.query('BEGIN');
 
       const productResult = await client.query(
-        "SELECT stock, cost, estado FROM products WHERE id = $1 AND eliminado = 0 LIMIT 1 FOR UPDATE",
+        "SELECT stock, cost, quantity_mode, measurement_unit, price_reference_quantity, estado FROM products WHERE id = $1 AND eliminado = 0 LIMIT 1 FOR UPDATE",
         [productId]
       );
 
@@ -373,6 +389,9 @@ router.post("/:id/expire", requireAuth, requirePermission('products', 'edit'), v
 
       if (String(productResult.rows[0]?.estado || "activo").toLowerCase() !== "activo") {
         throw new AppError("El producto está inactivo. Reactivalo antes de modificar su inventario.", 409);
+      }
+      if (!isValidProductQuantity(productResult.rows[0], cantidad)) {
+        throw new AppError("La cantidad no es válida para la forma de venta del producto", 400);
       }
 
       const currentStock = Number(productResult.rows[0].stock || 0);
@@ -386,7 +405,7 @@ router.post("/:id/expire", requireAuth, requirePermission('products', 'edit'), v
            product_id, tipo_movimiento, cantidad, costo_unitario, cantidad_restante,
            descripcion, motivo, usuario, reversion_version
          ) VALUES ($1, $2, $3, $4, 0, $5, 'merma', $6, 1)`,
-        [productId, 'egreso', cantidad, Number(productResult.rows[0]?.cost || 0), notes || 'Merma/Vencimiento', usuario]
+        [productId, 'egreso', cantidad, getProductCostUnitPrice(productResult.rows[0]), notes || 'Merma/Vencimiento', usuario]
       );
 
       await client.query('COMMIT');

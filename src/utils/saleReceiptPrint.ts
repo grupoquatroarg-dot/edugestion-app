@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf';
 import { formatBusinessDate, getBusinessDateInputValue } from './businessDate';
+import { formatMeasurementQuantity } from '../../shared/productMeasurement';
 
 export const ECONOMIC_HALF_PAGE_MAX_ITEMS = 8;
 
@@ -36,6 +37,15 @@ const formatCurrency = (value: any) => {
   return `$${numberValue.toLocaleString('es-AR', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
+  })}`;
+};
+
+const formatUnitCurrency = (value: any, item: any) => {
+  const numberValue = Number(value || 0);
+  const isMeasured = item?.quantity_mode === 'measure';
+  return `$${numberValue.toLocaleString('es-AR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: isMeasured ? 4 : 2,
   })}`;
 };
 
@@ -272,11 +282,11 @@ const drawEconomicReceipt = (
     const amount = quantity * finalPrice;
     const values = items.length > 0
       ? [
-          quantity.toLocaleString('es-AR'),
+          formatMeasurementQuantity(quantity, item.measurement_unit, { includeUnit: item.quantity_mode === 'measure' }),
           safeText(item.product_name || item.name || item.producto),
-          formatCurrency(originalPrice),
+          formatUnitCurrency(originalPrice, item),
           getDiscountText(item),
-          formatCurrency(finalPrice),
+          formatUnitCurrency(finalPrice, item),
           formatCurrency(amount),
         ]
       : ['-', 'Sin productos', '-', '-', '-', '-'];

@@ -21,6 +21,13 @@ import { customerOrderApprovalService } from "../server/services/customerOrderAp
 import { customerOrderContentLifecycleService } from "../server/services/customerOrderContentLifecycleService.js";
 import { assertPaymentMethodActive } from "../server/services/paymentMethodAvailabilityService.js";
 import { petiSalesReportService } from "../server/services/petiSalesReportService.js";
+import {
+  getProductCostUnitPrice,
+  getProductMeasurementUnit,
+  getProductPriceReferenceQuantity,
+  getProductQuantityMode,
+  getProductSaleUnitPrice,
+} from "../shared/productMeasurement.js";
 
 const saleSchema = z.object({
   cliente_id: z.number(),
@@ -83,7 +90,7 @@ const supplierOrderItemsSchema = z.object({
   expected_status_version: z.number().int().nonnegative(),
   items: z.array(z.object({
     product_id: z.number().int().positive(),
-    cantidad: z.number().int().positive(),
+    cantidad: z.number().positive(),
   })).min(1, "Debe incluir al menos un producto"),
 });
 
@@ -129,7 +136,7 @@ const customerOrderDeliveryReversalSchema = z.object({
 const customerOrderUpdateSchema = z.object({
   items: z.array(z.object({
     product_id: z.number().int().positive(),
-    cantidad: z.number().int().positive(),
+    cantidad: z.number().positive(),
   })).min(1, "Debe incluir al menos un producto"),
   descuento_tipo: z.enum(["none", "percentage", "fixed"]).optional(),
   descuento_valor: z.number().nonnegative().optional(),
@@ -314,7 +321,14 @@ const fetchSupplierOrderItems = async (queryable: any, orderId: number) => {
         p.name AS product_name,
         COALESCE(p.company, '') AS proveedor,
         COALESCE(p.codigo_unico, p.code, '') AS codigo_unico,
-        COALESCE(si.precio_venta, p.sale_price, 0) AS precio_venta
+        p.quantity_mode,
+        p.measurement_unit,
+        p.price_reference_quantity,
+        COALESCE(
+          si.precio_venta,
+          p.sale_price / NULLIF(CASE WHEN p.quantity_mode = 'measure' THEN p.price_reference_quantity ELSE 1 END, 0),
+          0
+        ) AS precio_venta
       FROM supplier_order_items soi
       JOIN supplier_orders so ON so.id = soi.order_id
       JOIN products p ON soi.product_id = p.id
@@ -753,7 +767,10 @@ const handleSupplierOrders = async (req: any, res: any) => {
             soi.cantidad,
             p.name,
             COALESCE(p.sale_price, 0) AS sale_price,
-            COALESCE(p.cost, 0) AS cost
+            COALESCE(p.cost, 0) AS cost,
+            p.quantity_mode,
+            p.measurement_unit,
+            p.price_reference_quantity
           FROM supplier_order_items soi
           JOIN products p ON soi.product_id = p.id
           WHERE soi.order_id = $1
@@ -773,7 +790,7 @@ const handleSupplierOrders = async (req: any, res: any) => {
         for (const item of itemResult.rows) {
           const productId = toNumber(item.product_id);
           const cantidad = toNumber(item.cantidad);
-          const costoUnitario = toNumber(item.cost);
+          const costoUnitario = getProductCostUnitPrice(item);
 
           await client.query(
             `UPDATE products
@@ -845,14 +862,17 @@ const handleSupplierOrders = async (req: any, res: any) => {
         bonificacion_tipo?: string;
         bonificacion_valor?: number;
         precio_unitario_bonificado?: number;
+        quantity_mode?: string;
+        measurement_unit?: string;
+        price_reference_quantity?: number;
       }> = [];
       const supplierDeliveryAllocations: SaleStockAllocationInput[] = [];
 
       for (const item of itemResult.rows) {
         const productId = toNumber(item.product_id);
         const cantidad = toNumber(item.cantidad);
-        const precioVenta = toNumber(item.sale_price);
-        const costoUnitario = toNumber(item.cost);
+        const precioVenta = getProductSaleUnitPrice(item);
+        const costoUnitario = getProductCostUnitPrice(item);
         const costoTotalItem = cantidad * costoUnitario;
 
         totalVenta += cantidad * precioVenta;
@@ -867,6 +887,9 @@ const handleSupplierOrders = async (req: any, res: any) => {
           bonificacion_tipo: "none",
           bonificacion_valor: 0,
           precio_unitario_bonificado: precioVenta,
+          quantity_mode: getProductQuantityMode(item),
+          measurement_unit: getProductMeasurementUnit(item),
+          price_reference_quantity: getProductPriceReferenceQuantity(item),
         });
 
         const ingressResult = await client.query(
@@ -1179,6 +1202,9 @@ const fetchCustomerOrderItems = async (queryable: any, orderIds: number[]) => {
         p.name AS product_name,
         p.code,
         p.codigo_unico,
+        p.quantity_mode,
+        p.measurement_unit,
+        p.price_reference_quantity,
         COALESCE(p.stock, 0) AS stock_actual
       FROM customer_order_items coi
       JOIN products p ON p.id = coi.product_id
@@ -1200,6 +1226,9 @@ const fetchCustomerOrderItems = async (queryable: any, orderIds: number[]) => {
       code: row.codigo_unico || row.code || "",
       cantidad: toNumber(row.cantidad),
       precio_unitario: toNumber(row.precio_unitario),
+      quantity_mode: getProductQuantityMode(row),
+      measurement_unit: getProductMeasurementUnit(row),
+      price_reference_quantity: getProductPriceReferenceQuantity(row),
       importe: toNumber(row.importe),
       stock_actual: toNumber(row.stock_actual),
       faltante: Math.max(0, toNumber(row.cantidad) - toNumber(row.stock_actual)),

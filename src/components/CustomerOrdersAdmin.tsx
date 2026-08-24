@@ -25,6 +25,7 @@ import { unwrapResponse, apiFetch } from '../utils/api';
 import { generateCustomerOrderPdf, printCustomerOrderPdf } from '../utils/customerOrderPdf';
 import { formatBusinessDateTime, getBusinessDateInputValue, getBusinessDateKey } from '../utils/businessDate';
 import { useAuth } from '../contexts/AuthContext';
+import { formatProductQuantity, isMeasuredProduct } from '../../shared/productMeasurement';
 
 const formatCurrency = (value: number) =>
   `$${Number(value || 0).toLocaleString('es-AR', {
@@ -369,7 +370,7 @@ export default function CustomerOrdersAdmin({
       ...current,
       [orderId]: (current[orderId] || []).map((item: any) =>
         item.id === itemId
-          ? { ...item, cantidad: Math.max(1, Number(quantity || 1)) }
+          ? { ...item, cantidad: Math.max(isMeasuredProduct(item) ? 0.001 : 1, Number(quantity || 1)) }
           : item
       ),
     }));
@@ -1228,7 +1229,8 @@ export default function CustomerOrdersAdmin({
                           <div className="flex w-full items-center gap-2 min-[520px]:w-auto">
                             <input
                               type="number"
-                              min="1"
+                              min={isMeasuredProduct(item) ? 0.001 : 1}
+                              step={isMeasuredProduct(item) ? 0.001 : 1}
                               value={item.cantidad}
                               onChange={(event) =>
                                 updateDraftQty(
@@ -1251,7 +1253,7 @@ export default function CustomerOrdersAdmin({
                         ) : (
                           <div className="text-right shrink-0">
                             <p className="text-[10px] text-zinc-400 font-bold">
-                              {item.cantidad} u.
+                              {formatProductQuantity(item, item.cantidad)}
                             </p>
                             <p className="text-sm font-black font-mono">
                               {formatCurrency(item.importe)}

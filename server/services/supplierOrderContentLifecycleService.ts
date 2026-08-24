@@ -1,5 +1,6 @@
 import { getPostgresPool, isPostgresConfigured } from "../utils/postgres.js";
 import { AppError } from "../utils/response.js";
+import { isValidProductQuantity } from "../../shared/productMeasurement.js";
 
 export type SupplierOrderContentItemInput = {
   product_id: number;
@@ -67,8 +68,8 @@ const validateInput = (input: ContentUpdateInput) => {
     if (!Number.isInteger(productId) || productId <= 0) {
       throw new AppError("Todos los productos deben ser válidos", 400);
     }
-    if (!Number.isInteger(quantity) || quantity <= 0) {
-      throw new AppError("Todas las cantidades deben ser números enteros mayores a cero", 400);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      throw new AppError("Todas las cantidades deben ser mayores a cero", 400);
     }
     if (seen.has(productId)) {
       throw new AppError("Un producto no puede repetirse dentro del pedido", 400);
@@ -149,7 +150,8 @@ const handleSqlite = async (input: ContentUpdateInput) => {
 
     const placeholders = validated.items.map(() => "?").join(", ");
     const products = db.prepare(`
-      SELECT id, name, COALESCE(codigo_unico, code, '') AS product_code
+      SELECT id, name, COALESCE(codigo_unico, code, '') AS product_code,
+             quantity_mode, measurement_unit, price_reference_quantity
       FROM products
       WHERE id IN (${placeholders}) AND COALESCE(eliminado, 0) = 0
       ORDER BY id ASC
@@ -159,6 +161,11 @@ const handleSqlite = async (input: ContentUpdateInput) => {
     }
 
     const productMap = new Map<number, any>(products.map((product) => [toNumber(product.id), product]));
+    for (const item of validated.items) {
+      if (!isValidProductQuantity(productMap.get(item.product_id), item.cantidad)) {
+        throw new AppError(`La cantidad de ${productMap.get(item.product_id)?.name || item.product_id} no es válida para su forma de venta`, 400);
+      }
+    }
     const afterItems = validated.items.map((item) => ({
       ...item,
       product_name: productMap.get(item.product_id)?.name || "",
@@ -278,7 +285,8 @@ const handlePostgres = async (input: ContentUpdateInput, executor?: TransactionC
 
     const productIds = validated.items.map((item) => item.product_id);
     const productsResult = await client.query(
-      `SELECT id, name, COALESCE(codigo_unico, code, '') AS product_code
+      `SELECT id, name, COALESCE(codigo_unico, code, '') AS product_code,
+              quantity_mode, measurement_unit, price_reference_quantity
        FROM products
        WHERE id = ANY($1::int[])
          AND COALESCE(eliminado, 0) = 0
@@ -290,6 +298,11 @@ const handlePostgres = async (input: ContentUpdateInput, executor?: TransactionC
     }
 
     const productMap = new Map<number, any>(productsResult.rows.map((product: any) => [toNumber(product.id), product]));
+    for (const item of validated.items) {
+      if (!isValidProductQuantity(productMap.get(item.product_id), item.cantidad)) {
+        throw new AppError(`La cantidad de ${productMap.get(item.product_id)?.name || item.product_id} no es válida para su forma de venta`, 400);
+      }
+    }
     const afterItems = validated.items.map((item) => ({
       ...item,
       product_name: productMap.get(item.product_id)?.name || "",

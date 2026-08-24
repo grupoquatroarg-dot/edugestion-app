@@ -28,6 +28,12 @@ import { Product, PurchaseInvoice } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { apiFetch, unwrapResponse } from '../utils/api';
 import { formatBusinessDate, getBusinessDateInputValue } from '../utils/businessDate';
+import {
+  getProductCostUnitPrice,
+  getProductMeasurementUnit,
+  isMeasuredProduct,
+  parseLocalizedDecimal,
+} from '../../shared/productMeasurement';
 
 type InvoiceFormItem = {
   product_id: number | string;
@@ -230,6 +236,7 @@ export default function PurchaseInvoiceModule() {
     cantidad: 1,
     costo_unitario: 0,
   });
+  const [currentQuantityInput, setCurrentQuantityInput] = useState('1');
 
   const handleApiJson = async <T,>(res: Response): Promise<T> => {
     const contentType = res.headers.get('content-type') || '';
@@ -344,6 +351,7 @@ export default function PurchaseInvoiceModule() {
 
   const resetCurrentItem = () => {
     setCurrentItem({ product_id: 0, cantidad: 1, costo_unitario: 0 });
+    setCurrentQuantityInput('1');
     setIsCreatingNewProduct(false);
     setNewProductName('');
   };
@@ -1620,7 +1628,7 @@ export default function PurchaseInvoiceModule() {
                             }
                             const productId = Number(value) || 0;
                             const product = products.find((candidate) => candidate.id === productId);
-                            setCurrentItem({ ...currentItem, product_id: productId, costo_unitario: Number(product?.cost || 0) });
+                            setCurrentItem({ ...currentItem, product_id: productId, costo_unitario: product ? getProductCostUnitPrice(product) : 0 });
                           }}
                           className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
                         >
@@ -1646,12 +1654,20 @@ export default function PurchaseInvoiceModule() {
                     </div>
 
                     <label className="min-w-0">
-                      <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">Cantidad</span>
+                      <span className="mb-2 block text-[11px] font-black uppercase tracking-wider text-slate-500">
+                        Cantidad{(() => {
+                          const product = products.find(candidate => candidate.id === Number(currentItem.product_id));
+                          return product && isMeasuredProduct(product) ? ` (${getProductMeasurementUnit(product)})` : '';
+                        })()}
+                      </span>
                       <input
-                        type="number"
-                        min="1"
-                        value={currentItem.cantidad}
-                        onChange={(event) => setCurrentItem({ ...currentItem, cantidad: Number(event.target.value) || 0 })}
+                        type="text"
+                        inputMode="decimal"
+                        value={currentQuantityInput}
+                        onChange={(event) => {
+                          setCurrentQuantityInput(event.target.value);
+                          setCurrentItem({ ...currentItem, cantidad: parseLocalizedDecimal(event.target.value) });
+                        }}
                         className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
                       />
                     </label>

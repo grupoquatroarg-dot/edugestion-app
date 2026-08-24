@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { unwrapResponse, apiFetch } from '../utils/api';
 import { formatBusinessDateTime, getBusinessDateKey } from '../utils/businessDate';
 import { outputPdfDocument, type PdfOutputMode } from '../utils/pdfOutput';
+import { formatProductQuantity, isMeasuredProduct, roundMeasurementQuantity } from '../../shared/productMeasurement';
 
 interface SupplierOrderItem {
   id: number;
@@ -17,6 +18,9 @@ interface SupplierOrderItem {
   cantidad: number;
   precio_venta?: number;
   importe?: number;
+  quantity_mode?: 'unit' | 'measure';
+  measurement_unit?: string;
+  price_reference_quantity?: number;
 }
 
 interface SupplierOrder {
@@ -628,7 +632,10 @@ export default function SupplierOrders() {
   const handleAddItem = (product: any) => {
     const existing = editingItems.find(i => i.product_id === product.id);
     if (existing) {
-      setEditingItems(prev => prev.map(i => i.product_id === product.id ? { ...i, cantidad: i.cantidad + 1 } : i));
+      setEditingItems(prev => prev.map(i => i.product_id === product.id ? {
+        ...i,
+        cantidad: roundMeasurementQuantity(i.cantidad + (isMeasuredProduct(i) ? 0.1 : 1)),
+      } : i));
     } else {
       setEditingItems(prev => [...prev, {
         id: Date.now(), // Temporary ID
@@ -637,7 +644,10 @@ export default function SupplierOrders() {
         product_name: product.name,
         proveedor: product.company,
         codigo_unico: product.codigo_unico,
-        cantidad: 1
+        cantidad: isMeasuredProduct(product) ? Number(product.price_reference_quantity || 1) : 1,
+        quantity_mode: product.quantity_mode,
+        measurement_unit: product.measurement_unit,
+        price_reference_quantity: product.price_reference_quantity,
       }]);
     }
   };
@@ -649,7 +659,7 @@ export default function SupplierOrders() {
   const handleUpdateQuantity = (productId: number, delta: number) => {
     setEditingItems(prev => prev.map(i => {
       if (i.product_id === productId) {
-        const newQty = Math.max(1, i.cantidad + delta);
+        const newQty = roundMeasurementQuantity(Math.max(isMeasuredProduct(i) ? 0.001 : 1, i.cantidad + delta));
         return { ...i, cantidad: newQty };
       }
       return i;
@@ -1484,7 +1494,7 @@ export default function SupplierOrders() {
                             </div>
                             <div className="shrink-0 rounded-xl bg-white px-3 py-2 text-center ring-1 ring-slate-200">
                               <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">Cantidad</p>
-                              <p className="text-base font-black text-slate-950">{item.cantidad}</p>
+                              <p className="text-base font-black text-slate-950">{formatProductQuantity(item, item.cantidad)}</p>
                             </div>
                           </div>
                           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
@@ -1728,16 +1738,16 @@ export default function SupplierOrders() {
                           <div className="flex min-h-11 items-center justify-between rounded-xl border border-slate-200 bg-white p-1">
                             <button
                               type="button"
-                              onClick={() => handleUpdateQuantity(item.product_id, -1)}
+                              onClick={() => handleUpdateQuantity(item.product_id, isMeasuredProduct(item) ? -0.1 : -1)}
                               className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 transition hover:bg-slate-100"
                               aria-label={`Reducir cantidad de ${item.product_name}`}
                             >
                               <Minus size={15} />
                             </button>
-                            <span className="px-3 text-center text-sm font-black text-slate-950">{item.cantidad}</span>
+                            <span className="px-3 text-center text-sm font-black text-slate-950">{formatProductQuantity(item, item.cantidad)}</span>
                             <button
                               type="button"
-                              onClick={() => handleUpdateQuantity(item.product_id, 1)}
+                              onClick={() => handleUpdateQuantity(item.product_id, isMeasuredProduct(item) ? 0.1 : 1)}
                               className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 transition hover:bg-slate-100"
                               aria-label={`Aumentar cantidad de ${item.product_name}`}
                             >

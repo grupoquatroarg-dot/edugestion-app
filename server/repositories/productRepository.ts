@@ -1,6 +1,11 @@
 import db from "../db.js";
 import { getPostgresPool, isPostgresConfigured } from "../utils/postgres.js";
 import { AppError } from "../utils/response.js";
+import {
+  getProductMeasurementUnit,
+  getProductPriceReferenceQuantity,
+  getProductQuantityMode,
+} from "../../shared/productMeasurement.js";
 
 type Queryable = {
   query: (text: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }>;
@@ -23,6 +28,9 @@ const mapProduct = (row: any) => {
     description: row.description,
     cost: toNumber(row.cost),
     sale_price: toNumber(row.sale_price),
+    quantity_mode: getProductQuantityMode(row),
+    measurement_unit: getProductMeasurementUnit(row),
+    price_reference_quantity: getProductPriceReferenceQuantity(row),
     stock: toNumber(row.stock),
     stock_minimo: toNumber(row.stock_minimo),
     company: row.company,
@@ -152,6 +160,9 @@ export const ProductRepository = {
       description,
       cost,
       sale_price,
+      quantity_mode = "unit",
+      measurement_unit = "unidad",
+      price_reference_quantity = 1,
       stock = 0,
       stock_minimo = 0,
       company,
@@ -159,6 +170,16 @@ export const ProductRepository = {
       category_id,
       estado = "activo",
     } = productData;
+
+    if (quantity_mode === "measure" && measurement_unit === "unidad") {
+      throw new AppError("Seleccioná una unidad de medida para el producto fraccionable", 400);
+    }
+    if (!Number.isFinite(Number(price_reference_quantity)) || Number(price_reference_quantity) <= 0) {
+      throw new AppError("La cantidad de referencia del precio debe ser mayor a cero", 400);
+    }
+    if (quantity_mode !== "measure" && (!Number.isInteger(Number(stock)) || !Number.isInteger(Number(stock_minimo)))) {
+      throw new AppError("Los productos por unidad solo admiten stock entero", 400);
+    }
 
     const codigo_unico = `${company}-${code}`;
 
@@ -173,8 +194,12 @@ export const ProductRepository = {
       }
 
       const info = db.prepare(`
-        INSERT INTO products (code, codigo_unico, name, description, cost, sale_price, stock, stock_minimo, company, family_id, category_id, estado)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO products (
+          code, codigo_unico, name, description, cost, sale_price,
+          quantity_mode, measurement_unit, price_reference_quantity,
+          stock, stock_minimo, company, family_id, category_id, estado
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         code,
         codigo_unico,
@@ -182,6 +207,9 @@ export const ProductRepository = {
         description || null,
         cost,
         sale_price,
+        quantity_mode,
+        measurement_unit,
+        price_reference_quantity,
         stock,
         stock_minimo,
         company,
@@ -206,8 +234,12 @@ export const ProductRepository = {
         }
 
         const insertResult = await queryable.query(
-          `INSERT INTO products (code, codigo_unico, name, description, cost, sale_price, stock, stock_minimo, company, family_id, category_id, estado)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          `INSERT INTO products (
+             code, codigo_unico, name, description, cost, sale_price,
+             quantity_mode, measurement_unit, price_reference_quantity,
+             stock, stock_minimo, company, family_id, category_id, estado
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
            RETURNING id`,
           [
             code,
@@ -216,6 +248,9 @@ export const ProductRepository = {
             description || null,
             cost,
             sale_price,
+            quantity_mode,
+            measurement_unit,
+            price_reference_quantity,
             stock,
             stock_minimo,
             company,
@@ -236,12 +271,25 @@ export const ProductRepository = {
       description,
       cost,
       sale_price,
+      quantity_mode = "unit",
+      measurement_unit = "unidad",
+      price_reference_quantity = 1,
       stock_minimo = 0,
       company,
       family_id,
       category_id,
       estado = "activo",
     } = productData;
+
+    if (quantity_mode === "measure" && measurement_unit === "unidad") {
+      throw new AppError("Seleccioná una unidad de medida para el producto fraccionable", 400);
+    }
+    if (!Number.isFinite(Number(price_reference_quantity)) || Number(price_reference_quantity) <= 0) {
+      throw new AppError("La cantidad de referencia del precio debe ser mayor a cero", 400);
+    }
+    if (quantity_mode !== "measure" && !Number.isInteger(Number(stock_minimo))) {
+      throw new AppError("Los productos por unidad solo admiten stock mínimo entero", 400);
+    }
 
     const codigo_unico = `${company}-${code}`;
 
@@ -260,7 +308,9 @@ export const ProductRepository = {
 
       db.prepare(`
         UPDATE products
-        SET code = ?, codigo_unico = ?, name = ?, description = ?, cost = ?, sale_price = ?, stock_minimo = ?, company = ?, family_id = ?, category_id = ?
+        SET code = ?, codigo_unico = ?, name = ?, description = ?, cost = ?, sale_price = ?,
+            quantity_mode = ?, measurement_unit = ?, price_reference_quantity = ?,
+            stock_minimo = ?, company = ?, family_id = ?, category_id = ?
         WHERE id = ?
       `).run(
         code,
@@ -269,6 +319,9 @@ export const ProductRepository = {
         description || null,
         cost,
         sale_price,
+        quantity_mode,
+        measurement_unit,
+        price_reference_quantity,
         stock_minimo,
         company,
         family_id ?? null,
@@ -304,11 +357,14 @@ export const ProductRepository = {
                description = $4,
                cost = $5,
                sale_price = $6,
-               stock_minimo = $7,
-               company = $8,
-               family_id = $9,
-               category_id = $10
-           WHERE id = $11
+               quantity_mode = $7,
+               measurement_unit = $8,
+               price_reference_quantity = $9,
+               stock_minimo = $10,
+               company = $11,
+               family_id = $12,
+               category_id = $13
+           WHERE id = $14
            RETURNING id`,
           [
             code,
@@ -317,6 +373,9 @@ export const ProductRepository = {
             description || null,
             cost,
             sale_price,
+            quantity_mode,
+            measurement_unit,
+            price_reference_quantity,
             stock_minimo,
             company,
             family_id ?? null,

@@ -1,5 +1,6 @@
 import { getPostgresPool } from "../utils/postgres.js";
 import { AppError } from "../utils/response.js";
+import { getProductSaleUnitPrice, isValidProductQuantity } from "../../shared/productMeasurement.js";
 
 export type CustomerOrderContentItemInput = {
   product_id: number;
@@ -85,8 +86,8 @@ const validateInput = (input: ContentUpdateInput) => {
     if (!Number.isInteger(productId) || productId <= 0) {
       throw new AppError("Todos los productos deben ser válidos", 400);
     }
-    if (!Number.isInteger(quantity) || quantity <= 0) {
-      throw new AppError("Todas las cantidades deben ser números enteros mayores a cero", 400);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      throw new AppError("Todas las cantidades deben ser mayores a cero", 400);
     }
     if (seen.has(productId)) {
       throw new AppError("Un producto no puede repetirse dentro del pedido", 400);
@@ -223,6 +224,9 @@ export const customerOrderContentLifecycleService = {
            name,
            COALESCE(codigo_unico, code, '') AS product_code,
            sale_price,
+           quantity_mode,
+           measurement_unit,
+           price_reference_quantity,
            COALESCE(eliminado, 0) AS eliminado,
            COALESCE(estado, 'activo') AS product_status
          FROM products
@@ -245,7 +249,10 @@ export const customerOrderContentLifecycleService = {
 
       const afterItems = validated.items.map((item) => {
         const product = productMap.get(item.product_id);
-        const unitPrice = Math.round(toNumber(product?.sale_price) * 100) / 100;
+        if (!isValidProductQuantity(product, item.cantidad)) {
+          throw new AppError(`La cantidad de ${product?.name || item.product_id} no es válida para su forma de venta`, 400);
+        }
+        const unitPrice = getProductSaleUnitPrice(product);
         if (unitPrice < 0) {
           throw new AppError(`El producto ${product?.name || item.product_id} tiene un precio inválido`, 409);
         }

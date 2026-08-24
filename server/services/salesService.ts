@@ -10,6 +10,16 @@ import {
   calculateSalePricesWithFreight,
   normalizeSaleFreightPercentage,
 } from '../utils/saleFreightPricing.js';
+import {
+  getProductCostUnitPrice,
+  getProductMeasurementUnit,
+  getProductPriceReferenceQuantity,
+  getProductQuantityMode,
+  getProductSaleUnitPrice,
+  isMeasuredProduct,
+  isValidProductQuantity,
+  roundMeasurementQuantity,
+} from '../../shared/productMeasurement.js';
 
 type TransactionClient = {
   query: (text: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }>;
@@ -75,15 +85,29 @@ const getAndIncrementSetting = async (client: TransactionClient, key: string, de
 
 export const salesService = {
   async createSale(saleData: any, executor?: TransactionClient) {
-    const { items, cliente_id, nombre_cliente, metodo_pago, monto_pagado, notes, cheque_data, usuario, actor_role, flete_porcentaje, route_item_id, allow_shortage = true } = saleData;
+    const { items, cliente_id, nombre_cliente, metodo_pago, monto_pagado, notes, cheque_data, usuario, actor_role, flete_porcentaje, route_item_id, allow_shortage = true, use_supplied_prices = false } = saleData;
     const routeItemId = Number(route_item_id || 0);
     const freightPercentage = normalizeSaleFreightPercentage(flete_porcentaje, actor_role);
 
-    const normalizeSaleItem = (item: any) => {
-      const cantidad = toNumber(item.cantidad);
-      const precioOriginal = toNumber(
-        item.precio_unitario_original ?? item.precio_original ?? item.precio_venta ?? item.precio_unitario ?? item.price
-      );
+    const rawItems = Array.isArray(items) ? items : [];
+    let normalizedItems: any[] = [];
+    let totalVenta = 0;
+
+    const normalizeSaleItem = (item: any, product: any) => {
+      const cantidad = roundMeasurementQuantity(item.cantidad);
+      if (!isValidProductQuantity(product, cantidad)) {
+        throw new AppError(
+          isMeasuredProduct(product)
+            ? 'La cantidad medida debe ser mayor a cero'
+            : 'Los productos por unidad solo admiten cantidades enteras mayores a cero',
+          400
+        );
+      }
+
+      const trustSuppliedPrice = Boolean(executor && use_supplied_prices);
+      const precioOriginal = trustSuppliedPrice
+        ? Math.max(0, toNumber(item.precio_unitario_original ?? item.precio_venta))
+        : getProductSaleUnitPrice(product);
       const bonificacionTipo = String(item.bonificacion_tipo || 'none');
       const bonificacionValor = toNumber(item.bonificacion_valor);
 
@@ -92,6 +116,7 @@ export const salesService = {
         discountType: bonificacionTipo,
         discountValue: bonificacionValor,
         freightPercentage,
+        precision: isMeasuredProduct(product) ? 6 : 2,
       });
 
       return {
@@ -102,16 +127,33 @@ export const salesService = {
         bonificacion_valor: clientPrices.discountValue,
         precio_unitario_bonificado: clientPrices.discountedPrice,
         precio_venta: clientPrices.discountedPrice,
+        quantity_mode: getProductQuantityMode(product),
+        measurement_unit: getProductMeasurementUnit(product),
+        price_reference_quantity: getProductPriceReferenceQuantity(product),
       };
     };
-
-    const normalizedItems = items.map(normalizeSaleItem);
-    const totalVenta = normalizedItems.reduce((sum: number, item: any) => sum + item.cantidad * item.precio_venta, 0);
 
     if (!isPostgresConfigured()) {
       await assertPaymentMethodActive(metodo_pago);
       // Flujo local de respaldo: conserva el comportamiento anterior para desarrollo local.
       return db.transaction(() => {
+        const productMap = new Map<number, any>();
+        for (const item of rawItems) {
+          const productId = Number(item.product_id);
+          if (!productMap.has(productId)) {
+            const product = db.prepare(`
+              SELECT id, name, stock, cost, sale_price, quantity_mode, measurement_unit, price_reference_quantity
+              FROM products
+              WHERE id = ? AND eliminado = 0
+              LIMIT 1
+            `).get(productId) as any;
+            if (!product) throw new AppError(`Producto inválido: ${productId}`, 400);
+            productMap.set(productId, product);
+          }
+        }
+        normalizedItems = rawItems.map((item: any) => normalizeSaleItem(item, productMap.get(Number(item.product_id))));
+        totalVenta = roundMoney(normalizedItems.reduce((sum: number, item: any) => sum + item.cantidad * item.precio_venta, 0));
+
         let routeItem: any = null;
         if (routeItemId > 0) {
           routeItem = db.prepare(`
@@ -170,6 +212,9 @@ export const salesService = {
           bonificacion_tipo: item.bonificacion_tipo,
           bonificacion_valor: item.bonificacion_valor,
           precio_unitario_bonificado: item.precio_unitario_bonificado,
+          quantity_mode: item.quantity_mode,
+          measurement_unit: item.measurement_unit,
+          price_reference_quantity: item.price_reference_quantity,
         }));
 
         const saleId = salesRepository.create(saleDataToInsert, processedItems) as unknown as number;
@@ -247,11 +292,11 @@ export const salesService = {
       }
 
       const productIds: number[] = Array.from(
-        new Set<number>(normalizedItems.map((item: any) => Number(item.product_id)))
+        new Set<number>(rawItems.map((item: any) => Number(item.product_id)))
       )
         .sort((a, b) => a - b);
       const productResult = await client.query(
-        `SELECT id, name, stock, cost
+        `SELECT id, name, stock, cost, sale_price, quantity_mode, measurement_unit, price_reference_quantity
          FROM products
          WHERE id = ANY($1::int[])
          ORDER BY id ASC
@@ -267,6 +312,14 @@ export const salesService = {
         productMap.set(productId, row);
         availableStockByProduct.set(productId, Math.max(0, toNumber(row.stock)));
       }
+
+      normalizedItems = rawItems.map((item: any) => {
+        const productId = Number(item.product_id);
+        const product = productMap.get(productId);
+        if (!product) throw new AppError(`Producto inválido: ${productId}`, 400);
+        return normalizeSaleItem(item, product);
+      });
+      totalVenta = roundMoney(normalizedItems.reduce((sum: number, item: any) => sum + item.cantidad * item.precio_venta, 0));
 
       let totalSaleCost = 0;
       const processedItems: SaleItem[] = [];
@@ -346,7 +399,7 @@ export const salesService = {
           }
 
           if (remainingToConsume > 0) {
-            const fallbackUnitCost = toNumber(product?.cost);
+            const fallbackUnitCost = getProductCostUnitPrice(product);
             itemCost += remainingToConsume * fallbackUnitCost;
             lineAllocations.push({
               product_id: productId,
@@ -382,6 +435,9 @@ export const salesService = {
           bonificacion_tipo: item.bonificacion_tipo,
           bonificacion_valor: item.bonificacion_valor,
           precio_unitario_bonificado: item.precio_unitario_bonificado,
+          quantity_mode: item.quantity_mode,
+          measurement_unit: item.measurement_unit,
+          price_reference_quantity: item.price_reference_quantity,
         });
       }
 

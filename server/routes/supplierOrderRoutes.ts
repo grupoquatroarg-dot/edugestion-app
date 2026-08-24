@@ -41,7 +41,7 @@ const contentSchema = z.object({
     expected_status_version: z.number().int().nonnegative(),
     items: z.array(z.object({
       product_id: z.number().int().positive(),
-      cantidad: z.number().int().positive(),
+      cantidad: z.number().positive(),
     })).min(1, 'Debe incluir al menos un producto'),
   }),
 });

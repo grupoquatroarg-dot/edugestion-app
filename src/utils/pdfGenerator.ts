@@ -3,12 +3,22 @@ import autoTable from 'jspdf-autotable';
 import { formatBusinessDate, getBusinessDateInputValue, getBusinessDateKey } from './businessDate';
 import { outputPdfDocument, type PdfOutputMode } from './pdfOutput';
 import { buildEconomicSalePrintDocument, getEconomicSalePrintFileName } from './saleReceiptPrint';
+import { formatMeasurementQuantity } from '../../shared/productMeasurement';
 
 const formatCurrency = (value: any) => {
   const numberValue = Number(value || 0);
   return `$${numberValue.toLocaleString('es-AR', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
+  })}`;
+};
+
+const formatUnitCurrency = (value: any, item: any) => {
+  const numberValue = Number(value || 0);
+  const isMeasured = item?.quantity_mode === 'measure';
+  return `$${numberValue.toLocaleString('es-AR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: isMeasured ? 4 : 2,
   })}`;
 };
 
@@ -143,11 +153,11 @@ const buildSaleReceiptDoc = (
     const importe = cantidad * precioBonificado;
 
     return [
-      cantidad.toLocaleString('es-AR'),
+      formatMeasurementQuantity(cantidad, item.measurement_unit, { includeUnit: item.quantity_mode === 'measure' }),
       safeText(item.product_name || item.name || item.producto),
-      formatCurrency(precioOriginal),
+      formatUnitCurrency(precioOriginal, item),
       getDiscountText(item),
-      formatCurrency(precioBonificado),
+      formatUnitCurrency(precioBonificado, item),
       formatCurrency(importe),
     ];
   });

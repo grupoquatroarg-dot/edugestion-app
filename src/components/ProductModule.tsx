@@ -4,6 +4,14 @@ import { Product, ProductFormData, ProductFamily, ProductCategory } from '../typ
 import { getSocket } from '../utils/socket';
 import { useAuth } from '../contexts/AuthContext';
 import { unwrapResponse, apiFetch } from '../utils/api';
+import {
+  formatProductQuantity,
+  getProductCostUnitPrice,
+  getProductPresentationLabel,
+  getProductSaleUnitPrice,
+  isMeasuredProduct,
+  parseLocalizedDecimal,
+} from '../../shared/productMeasurement';
 
 const socket = getSocket();
 
@@ -46,6 +54,9 @@ export default function ProductModule() {
     description: '',
     cost: 0,
     sale_price: 0,
+    quantity_mode: 'unit',
+    measurement_unit: 'unidad',
+    price_reference_quantity: 1,
     stock: 0,
     stock_minimo: 0,
     company: 'Edu',
@@ -53,13 +64,20 @@ export default function ProductModule() {
     category_id: null,
     estado: 'activo'
   });
+  const [productDecimalInputs, setProductDecimalInputs] = useState({
+    priceReferenceQuantity: '1',
+    stock: '0',
+    stockMinimum: '0',
+  });
 
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [stockFormData, setStockFormData] = useState({ cantidad: 0, costo_unitario: 0 });
+  const [stockQuantityInput, setStockQuantityInput] = useState('0');
   const [selectedProductForStock, setSelectedProductForStock] = useState<Product | null>(null);
 
   const [isExpireModalOpen, setIsExpireModalOpen] = useState(false);
   const [expireFormData, setExpireFormData] = useState({ cantidad: 0 });
+  const [expireQuantityInput, setExpireQuantityInput] = useState('0');
   const [selectedProductForExpire, setSelectedProductForExpire] = useState<Product | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -205,7 +223,8 @@ export default function ProductModule() {
       setIsModalOpen(false);
       setEditingProduct(null);
       setContentChangeReason('');
-      setFormData({ code: '', name: '', description: '', cost: 0, sale_price: 0, stock: 0, stock_minimo: 0, company: 'Edu', family_id: null, category_id: null, estado: 'activo' });
+      setFormData({ code: '', name: '', description: '', cost: 0, sale_price: 0, quantity_mode: 'unit', measurement_unit: 'unidad', price_reference_quantity: 1, stock: 0, stock_minimo: 0, company: 'Edu', family_id: null, category_id: null, estado: 'activo' });
+      setProductDecimalInputs({ priceReferenceQuantity: '1', stock: '0', stockMinimum: '0' });
       fetchProducts();
     } catch (error: any) {
       console.error("Error saving product:", error);
@@ -234,6 +253,7 @@ export default function ProductModule() {
       setIsStockModalOpen(false);
       setSelectedProductForStock(null);
       setStockFormData({ cantidad: 0, costo_unitario: 0 });
+      setStockQuantityInput('0');
       fetchProducts();
     } catch (error: any) {
       console.error("Error loading stock:", error);
@@ -264,6 +284,7 @@ export default function ProductModule() {
 
       setIsExpireModalOpen(false);
       setExpireFormData({ cantidad: 0 });
+      setExpireQuantityInput('0');
       setSelectedProductForExpire(null);
       fetchProducts();
     } catch (error: any) {
@@ -285,12 +306,20 @@ export default function ProductModule() {
       description: product.description,
       cost: product.cost,
       sale_price: product.sale_price,
+      quantity_mode: product.quantity_mode || 'unit',
+      measurement_unit: product.quantity_mode === 'measure' ? (product.measurement_unit || 'kg') : 'unidad',
+      price_reference_quantity: product.quantity_mode === 'measure' ? Number(product.price_reference_quantity || 1) : 1,
       stock: product.stock,
       stock_minimo: product.stock_minimo || 0,
       company: product.company,
       family_id: product.family_id,
       category_id: product.category_id,
       estado: product.estado
+    });
+    setProductDecimalInputs({
+      priceReferenceQuantity: String(product.quantity_mode === 'measure' ? Number(product.price_reference_quantity || 1) : 1).replace('.', ','),
+      stock: String(Number(product.stock || 0)).replace('.', ','),
+      stockMinimum: String(Number(product.stock_minimo || 0)).replace('.', ','),
     });
     setIsModalOpen(true);
   };
@@ -438,7 +467,7 @@ export default function ProductModule() {
         const cost = Number(product.cost || 0);
 
         summary.totalUnits += stock;
-        summary.totalValue += stock * cost;
+        summary.totalValue += stock * getProductCostUnitPrice(product);
         if (product.estado === 'activo') summary.active += 1;
         if (product.estado === 'activo' && stock <= minimum) summary.critical += 1;
         return summary;
@@ -463,6 +492,9 @@ export default function ProductModule() {
       description: '',
       cost: 0,
       sale_price: 0,
+      quantity_mode: 'unit',
+      measurement_unit: 'unidad',
+      price_reference_quantity: 1,
       stock: 0,
       stock_minimo: 0,
       company: 'Edu',
@@ -470,6 +502,7 @@ export default function ProductModule() {
       category_id: null,
       estado: 'activo'
     });
+    setProductDecimalInputs({ priceReferenceQuantity: '1', stock: '0', stockMinimum: '0' });
   };
 
   const openNewProductModal = () => {
@@ -479,13 +512,15 @@ export default function ProductModule() {
 
   const openStockModal = (product: Product) => {
     setSelectedProductForStock(product);
-    setStockFormData({ cantidad: 0, costo_unitario: product.cost });
+    setStockFormData({ cantidad: 0, costo_unitario: getProductCostUnitPrice(product) });
+    setStockQuantityInput('0');
     setIsStockModalOpen(true);
   };
 
   const openExpireModal = (product: Product) => {
     setSelectedProductForExpire(product);
     setExpireFormData({ cantidad: 0 });
+    setExpireQuantityInput('0');
     setIsExpireModalOpen(true);
   };
 
@@ -847,20 +882,23 @@ export default function ProductModule() {
                         }`}>
                           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Stock actual</p>
                           <p className={`mt-1 text-2xl font-black ${isCritical ? 'text-red-600' : 'text-emerald-700'}`}>
-                            {Number(product.stock || 0).toLocaleString('es-AR')}
+                            {formatProductQuantity(product, product.stock)}
                           </p>
-                          <p className="text-[10px] font-bold text-slate-500">mínimo {product.stock_minimo || 0}</p>
+                          <p className="text-[10px] font-bold text-slate-500">mínimo {formatProductQuantity(product, product.stock_minimo || 0)}</p>
                         </div>
                       </div>
 
                       <dl className="mt-4 grid grid-cols-1 gap-px overflow-hidden rounded-2xl border border-slate-200 bg-slate-200 min-[420px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-2 2xl:grid-cols-3">
                         <div className="min-w-0 bg-slate-50 p-3">
                           <dt className="text-[10px] font-black uppercase tracking-wider text-slate-400">Precio de venta</dt>
-                          <dd className="mt-1 break-words font-mono text-sm font-black text-slate-950">{formatCurrency(product.sale_price)}</dd>
+                          <dd className="mt-1 break-words font-mono text-sm font-black text-slate-950">
+                            {formatCurrency(product.sale_price)} <span className="font-sans text-[10px] text-slate-500">{getProductPresentationLabel(product)}</span>
+                          </dd>
+                          {isMeasuredProduct(product) && <dd className="mt-1 text-[10px] font-bold text-indigo-700">{formatCurrency(getProductSaleUnitPrice(product))} por {product.measurement_unit}</dd>}
                         </div>
                         <div className="min-w-0 bg-slate-50 p-3">
                           <dt className="text-[10px] font-black uppercase tracking-wider text-slate-400">Costo</dt>
-                          <dd className="mt-1 break-words font-mono text-sm font-bold text-slate-700">{formatCurrency(product.cost)}</dd>
+                          <dd className="mt-1 break-words font-mono text-sm font-bold text-slate-700">{formatCurrency(product.cost)} <span className="font-sans text-[10px] text-slate-500">{getProductPresentationLabel(product)}</span></dd>
                         </div>
                         <div className="min-w-0 bg-slate-50 p-3">
                           <dt className="text-[10px] font-black uppercase tracking-wider text-slate-400">Familia</dt>
@@ -885,7 +923,7 @@ export default function ProductModule() {
                         <div className="min-w-0 bg-slate-50 p-3">
                           <dt className="text-[10px] font-black uppercase tracking-wider text-slate-400">Margen unitario</dt>
                           <dd className="mt-1 break-words font-mono text-sm font-black text-indigo-700">
-                            {formatCurrency(Number(product.sale_price || 0) - Number(product.cost || 0))}
+                            {formatCurrency(getProductSaleUnitPrice(product) - getProductCostUnitPrice(product))}
                           </dd>
                         </div>
                       </dl>
@@ -948,7 +986,7 @@ export default function ProductModule() {
                     Su stock e historial se conservarán. Si tiene pedidos activos vinculados, la operación será bloqueada.
                     {Number(lifecycleTarget.product.stock || 0) > 0 && (
                       <strong className="mt-2 block">
-                        Conserva {Number(lifecycleTarget.product.stock).toLocaleString('es-AR')} unidades en inventario.
+                        Conserva {formatProductQuantity(lifecycleTarget.product, lifecycleTarget.product.stock)} en inventario.
                       </strong>
                     )}
                   </>
@@ -1052,9 +1090,76 @@ export default function ProductModule() {
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 />
               </div>
+              <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4">
+                <p className="text-xs font-black uppercase tracking-wider text-indigo-700">Forma de venta</p>
+                <div className="mt-3 grid grid-cols-1 gap-4 min-[420px]:grid-cols-2">
+                  <label>
+                    <span className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-700">Tipo de cantidad</span>
+                    <select
+                      value={formData.quantity_mode}
+                      onChange={(event) => {
+                        const quantityMode = event.target.value as 'unit' | 'measure';
+                        setFormData({
+                          ...formData,
+                          quantity_mode: quantityMode,
+                          measurement_unit: quantityMode === 'measure' ? 'kg' : 'unidad',
+                          price_reference_quantity: quantityMode === 'measure' ? Math.max(Number(formData.price_reference_quantity || 1), 1) : 1,
+                        });
+                      }}
+                      className="min-h-11 w-full rounded-xl border border-indigo-200 bg-white px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value="unit">Por unidad (sin decimales)</option>
+                      <option value="measure">Fraccionable / balanza</option>
+                    </select>
+                  </label>
+                  {formData.quantity_mode === 'measure' && (
+                    <label>
+                      <span className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-700">Unidad de medida</span>
+                      <select
+                        value={formData.measurement_unit}
+                        onChange={(event) => setFormData({ ...formData, measurement_unit: event.target.value as Product['measurement_unit'] })}
+                        className="min-h-11 w-full rounded-xl border border-indigo-200 bg-white px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="kg">Kilogramos (kg)</option>
+                        <option value="g">Gramos (g)</option>
+                        <option value="l">Litros (l)</option>
+                        <option value="ml">Mililitros (ml)</option>
+                        <option value="m">Metros (m)</option>
+                      </select>
+                    </label>
+                  )}
+                </div>
+                {formData.quantity_mode === 'measure' && (
+                  <label className="mt-4 block">
+                    <span className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-700">Cantidad incluida en el precio informado</span>
+                    <input
+                      required
+                      type="text"
+                      inputMode="decimal"
+                      value={productDecimalInputs.priceReferenceQuantity}
+                      onChange={(event) => {
+                        setProductDecimalInputs({ ...productDecimalInputs, priceReferenceQuantity: event.target.value });
+                        setFormData({ ...formData, price_reference_quantity: parseLocalizedDecimal(event.target.value) });
+                      }}
+                      className="min-h-11 w-full rounded-xl border border-indigo-200 bg-white px-3 text-sm font-black outline-none focus:ring-2 focus:ring-indigo-500"
+                      placeholder="Ej.: 3,4"
+                    />
+                    <span className="mt-2 block text-[11px] leading-5 text-indigo-700">
+                      Ejemplo conceptual: si el precio cargado corresponde a 3,4 kg, escribí 3,4. La venta calculará automáticamente cualquier peso vendido.
+                    </span>
+                  </label>
+                )}
+                {editingProduct
+                  && editingProduct.quantity_mode !== formData.quantity_mode
+                  && Number(editingProduct.stock || 0) !== 0 && (
+                    <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] font-bold leading-5 text-amber-900">
+                      Atención: el stock histórico no se convierte automáticamente al cambiar la forma de venta. Regularizá primero el stock actual y luego cargalo en la unidad de medida elegida.
+                    </div>
+                  )}
+              </div>
               <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2">
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wider">Costo</label>
+                  <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wider">Costo {getProductPresentationLabel(formData)}</label>
                   <input
                     required
                     type="number"
@@ -1065,7 +1170,7 @@ export default function ProductModule() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wider">Precio Venta</label>
+                  <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wider">Precio Venta {getProductPresentationLabel(formData)}</label>
                   <input
                     required
                     type="number"
@@ -1083,12 +1188,15 @@ export default function ProductModule() {
                   </label>
                   <input
                     required
-                    type="number"
-                    min="0"
+                    type="text"
+                    inputMode="decimal"
                     disabled={Boolean(editingProduct)}
                     className="min-h-11 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
-                    value={formData.stock}
-                    onChange={(e) => setFormData({ ...formData, stock: parseInt(e.target.value) || 0 })}
+                    value={productDecimalInputs.stock}
+                    onChange={(e) => {
+                      setProductDecimalInputs({ ...productDecimalInputs, stock: e.target.value });
+                      setFormData({ ...formData, stock: parseLocalizedDecimal(e.target.value) });
+                    }}
                   />
                   {editingProduct && (
                     <p className="mt-1 text-[10px] leading-4 text-slate-400">
@@ -1100,11 +1208,14 @@ export default function ProductModule() {
                   <label className="block text-xs font-medium text-slate-700 mb-1 uppercase tracking-wider">Stock Mínimo</label>
                   <input
                     required
-                    type="number"
-                    min="0"
+                    type="text"
+                    inputMode="decimal"
                     className="min-h-11 w-full rounded-xl border border-slate-200 px-3 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-sm"
-                    value={formData.stock_minimo}
-                    onChange={(e) => setFormData({ ...formData, stock_minimo: parseInt(e.target.value) || 0 })}
+                    value={productDecimalInputs.stockMinimum}
+                    onChange={(e) => {
+                      setProductDecimalInputs({ ...productDecimalInputs, stockMinimum: e.target.value });
+                      setFormData({ ...formData, stock_minimo: parseLocalizedDecimal(e.target.value) });
+                    }}
                   />
                 </div>
               </div>
@@ -1259,7 +1370,7 @@ export default function ProductModule() {
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
                               <span className={`rounded-full px-2.5 py-1 text-[11px] font-black uppercase tracking-wide ${isIngress ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
-                                {isIngress ? 'Ingreso' : 'Egreso'} {isIngress ? '+' : '-'}{quantity}
+                                {isIngress ? 'Ingreso' : 'Egreso'} {isIngress ? '+' : '-'}{inventoryProduct ? formatProductQuantity(inventoryProduct, quantity) : quantity}
                               </span>
                               {isCancelled && <span className="rounded-full bg-slate-200 px-2.5 py-1 text-[11px] font-black uppercase text-slate-700">Anulado</span>}
                               {movement.reversed_movement_id && <span className="rounded-full bg-indigo-100 px-2.5 py-1 text-[11px] font-black uppercase text-indigo-700">Contramovimiento</span>}
@@ -1320,14 +1431,18 @@ export default function ProductModule() {
                 <label className="block text-sm font-medium text-slate-700 mb-1">Cantidad a Ingresar</label>
                 <input
                   required
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   className="min-h-11 w-full rounded-xl border border-slate-200 px-3 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
-                  value={stockFormData.cantidad}
-                  onChange={(e) => setStockFormData({ ...stockFormData, cantidad: parseInt(e.target.value) })}
+                  value={stockQuantityInput}
+                  onChange={(e) => {
+                    setStockQuantityInput(e.target.value);
+                    setStockFormData({ ...stockFormData, cantidad: parseLocalizedDecimal(e.target.value) });
+                  }}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Costo Unitario (Lote)</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Costo por {selectedProductForStock.measurement_unit === 'unidad' ? 'unidad' : selectedProductForStock.measurement_unit}</label>
                 <input
                   required
                   type="number"
@@ -1375,19 +1490,21 @@ export default function ProductModule() {
                 <div className="text-xs text-amber-800">
                   <p className="font-bold">Atención</p>
                   <p>Esta operación descontará stock y registrará un gasto por merma.</p>
-                  <p className="mt-1">Stock disponible: <span className="font-bold">{selectedProductForExpire.stock}</span></p>
+                  <p className="mt-1">Stock disponible: <span className="font-bold">{formatProductQuantity(selectedProductForExpire, selectedProductForExpire.stock)}</span></p>
                 </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Cantidad Vencida</label>
                 <input
                   required
-                  type="number"
-                  min="1"
-                  max={selectedProductForExpire.stock}
+                  type="text"
+                  inputMode="decimal"
                   className="min-h-11 w-full rounded-xl border border-slate-200 px-3 py-2.5 focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition-all"
-                  value={expireFormData.cantidad}
-                  onChange={(e) => setExpireFormData({ ...expireFormData, cantidad: parseInt(e.target.value) || 0 })}
+                  value={expireQuantityInput}
+                  onChange={(e) => {
+                    setExpireQuantityInput(e.target.value);
+                    setExpireFormData({ ...expireFormData, cantidad: parseLocalizedDecimal(e.target.value) });
+                  }}
                 />
               </div>
               <div className="flex flex-col-reverse gap-2 min-[420px]:flex-row">

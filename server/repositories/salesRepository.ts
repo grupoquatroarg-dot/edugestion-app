@@ -14,6 +14,9 @@ export interface SaleItem {
   bonificacion_tipo?: 'none' | 'percentage' | 'fixed' | string | null;
   bonificacion_valor?: number;
   precio_unitario_bonificado?: number;
+  quantity_mode?: 'unit' | 'measure' | string;
+  measurement_unit?: string;
+  price_reference_quantity?: number;
 }
 
 export interface Sale {
@@ -82,6 +85,11 @@ const mapSaleItem = (row: any) => ({
   bonificacion_tipo: row.bonificacion_tipo ?? 'none',
   bonificacion_valor: toNumber(row.bonificacion_valor),
   precio_unitario_bonificado: toNumber(row.precio_unitario_bonificado, toNumber(row.precio_venta)),
+  quantity_mode: row.quantity_mode === 'measure' ? 'measure' : 'unit',
+  measurement_unit: row.quantity_mode === 'measure' ? (row.measurement_unit || 'kg') : 'unidad',
+  price_reference_quantity: row.quantity_mode === 'measure'
+    ? Math.max(toNumber(row.price_reference_quantity, 1), 0.000001)
+    : 1,
   product_name: row.product_name ?? null,
   company: row.company ?? null,
   codigo_unico: row.codigo_unico ?? null,
@@ -219,9 +227,10 @@ export const salesRepository = {
         const insertItem = db.prepare(`
           INSERT INTO sale_items (
             sale_id, product_id, cantidad, precio_venta, costo_total_peps,
-            precio_unitario_original, bonificacion_tipo, bonificacion_valor, precio_unitario_bonificado
+            precio_unitario_original, bonificacion_tipo, bonificacion_valor, precio_unitario_bonificado,
+            quantity_mode, measurement_unit, price_reference_quantity
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
         for (const item of items) {
@@ -234,7 +243,10 @@ export const salesRepository = {
             item.precio_unitario_original ?? item.precio_venta,
             item.bonificacion_tipo || 'none',
             item.bonificacion_valor || 0,
-            item.precio_unitario_bonificado ?? item.precio_venta
+            item.precio_unitario_bonificado ?? item.precio_venta,
+            item.quantity_mode || 'unit',
+            item.measurement_unit || 'unidad',
+            item.price_reference_quantity || 1
           );
         }
 
@@ -274,9 +286,10 @@ export const salesRepository = {
           await queryable.query(
             `INSERT INTO sale_items (
                sale_id, product_id, cantidad, precio_venta, costo_total_peps,
-               precio_unitario_original, bonificacion_tipo, bonificacion_valor, precio_unitario_bonificado
+               precio_unitario_original, bonificacion_tipo, bonificacion_valor, precio_unitario_bonificado,
+               quantity_mode, measurement_unit, price_reference_quantity
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
             [
               saleId,
               item.product_id,
@@ -287,6 +300,9 @@ export const salesRepository = {
               item.bonificacion_tipo || 'none',
               item.bonificacion_valor || 0,
               item.precio_unitario_bonificado ?? item.precio_venta,
+              item.quantity_mode || 'unit',
+              item.measurement_unit || 'unidad',
+              item.price_reference_quantity || 1,
             ]
           );
         }

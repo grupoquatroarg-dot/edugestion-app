@@ -1,4 +1,11 @@
 import { z } from "zod";
+import {
+  getProductMeasurementUnit,
+  getProductPriceReferenceQuantity,
+  getProductQuantityMode,
+  getProductSaleUnitPrice,
+  isValidProductQuantity,
+} from "../shared/productMeasurement.js";
 import { clientRepository } from "../server/repositories/clientRepository.js";
 import { UserRepository } from "../server/repositories/userRepository.js";
 import { verifyToken, generateToken } from "../server/utils/jwt.js";
@@ -1923,6 +1930,9 @@ const fetchPortalOrderItems = async (pool: any, orderIds: number[]) => {
         p.name AS product_name,
         p.code,
         p.codigo_unico,
+        p.quantity_mode,
+        p.measurement_unit,
+        p.price_reference_quantity,
         COALESCE(p.stock, 0) AS stock_actual
       FROM customer_order_items coi
       JOIN products p ON p.id = coi.product_id
@@ -1944,6 +1954,9 @@ const fetchPortalOrderItems = async (pool: any, orderIds: number[]) => {
       code: row.code || row.codigo_unico || "",
       cantidad: toNumber(row.cantidad),
       precio_unitario: toNumber(row.precio_unitario),
+      quantity_mode: getProductQuantityMode(row),
+      measurement_unit: getProductMeasurementUnit(row),
+      price_reference_quantity: getProductPriceReferenceQuantity(row),
       importe: toNumber(row.importe),
       stock_actual: toNumber(row.stock_actual),
       faltante: Math.max(0, toNumber(row.cantidad) - toNumber(row.stock_actual)),
@@ -2050,7 +2063,9 @@ const handleCustomerPortal = async (req: any, res: any) => {
 
     const result = await pool.query(
       `
-        SELECT p.id, p.code, p.codigo_unico, p.name, p.description, p.sale_price, p.stock, pf.name AS family_name, pc.name AS category_name
+        SELECT p.id, p.code, p.codigo_unico, p.name, p.description, p.sale_price, p.stock,
+               p.quantity_mode, p.measurement_unit, p.price_reference_quantity,
+               pf.name AS family_name, pc.name AS category_name
         FROM products p
         LEFT JOIN product_families pf ON pf.id = p.family_id
         LEFT JOIN product_categories pc ON pc.id = p.category_id
@@ -2066,6 +2081,9 @@ const handleCustomerPortal = async (req: any, res: any) => {
       name: row.name,
       description: row.description || "",
       sale_price: toNumber(row.sale_price),
+      quantity_mode: getProductQuantityMode(row),
+      measurement_unit: getProductMeasurementUnit(row),
+      price_reference_quantity: getProductPriceReferenceQuantity(row),
       stock: toNumber(row.stock),
       family_name: row.family_name || "",
       category_name: row.category_name || "",
@@ -2117,7 +2135,8 @@ const handleCustomerPortal = async (req: any, res: any) => {
 
         const productIds = parsed.data.items.map((item) => item.product_id);
         const productResult = await client.query(
-          `SELECT id, name, sale_price FROM products WHERE id = ANY($1::int[]) AND COALESCE(eliminado, 0) = 0`,
+          `SELECT id, name, sale_price, quantity_mode, measurement_unit, price_reference_quantity
+           FROM products WHERE id = ANY($1::int[]) AND COALESCE(eliminado, 0) = 0`,
           [productIds]
         );
         const productMap = new Map<number, any>(productResult.rows.map((row: any) => [toNumber(row.id), row]));
@@ -2126,7 +2145,10 @@ const handleCustomerPortal = async (req: any, res: any) => {
         for (const item of parsed.data.items) {
           const product = productMap.get(item.product_id);
           if (!product) throw new Error(`Producto inválido: ${item.product_id}`);
-          subtotal += toNumber(item.cantidad) * toNumber(product.sale_price);
+          if (!isValidProductQuantity(product, item.cantidad)) {
+            throw new Error(`Cantidad inválida para ${product.name}`);
+          }
+          subtotal += toNumber(item.cantidad) * getProductSaleUnitPrice(product);
         }
 
         const orderResult = await client.query(
@@ -2145,7 +2167,7 @@ const handleCustomerPortal = async (req: any, res: any) => {
           await client.query(
             `INSERT INTO customer_order_items (order_id, product_id, cantidad, precio_unitario)
              VALUES ($1, $2, $3, $4)`,
-            [orderId, item.product_id, item.cantidad, toNumber(product.sale_price)]
+            [orderId, item.product_id, item.cantidad, getProductSaleUnitPrice(product)]
           );
         }
 

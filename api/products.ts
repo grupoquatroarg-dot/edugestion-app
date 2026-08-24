@@ -6,6 +6,7 @@ import { getPostgresPool, isPostgresConfigured } from "../server/utils/postgres.
 import { AppError, sendError, sendSuccess } from "../server/utils/response.js";
 import { requireBearerUser, type CurrentUserAuth } from "../server/services/currentUserAuthService.js";
 import { bulkPriceReversalService } from "../server/services/bulkPriceReversalService.js";
+import { getProductCostUnitPrice } from "../shared/productMeasurement.js";
 
 const productSchema = z.object({
   code: z.string().min(1, "El codigo es requerido"),
@@ -13,6 +14,9 @@ const productSchema = z.object({
   description: z.string().optional().nullable(),
   cost: z.number().min(0, "El costo no puede ser negativo"),
   sale_price: z.number().min(0, "El precio de venta no puede ser negativo"),
+  quantity_mode: z.enum(["unit", "measure"]).optional().default("unit"),
+  measurement_unit: z.enum(["unidad", "kg", "g", "l", "ml", "m"]).optional().default("unidad"),
+  price_reference_quantity: z.number().positive("La cantidad de referencia debe ser mayor a cero").optional().default(1),
   stock: z.number().min(0, "El stock no puede ser negativo").optional(),
   stock_minimo: z.number().min(0, "El stock minimo no puede ser negativo").optional(),
   company: z.enum(["Edu", "Peti"]),
@@ -106,6 +110,9 @@ const mapProduct = (row: any) => ({
   description: row.description,
   cost: toNumber(row.cost),
   sale_price: toNumber(row.sale_price),
+  quantity_mode: row.quantity_mode === "measure" ? "measure" : "unit",
+  measurement_unit: row.quantity_mode === "measure" ? (row.measurement_unit || "kg") : "unidad",
+  price_reference_quantity: row.quantity_mode === "measure" ? Math.max(toNumber(row.price_reference_quantity, 1), 0.000001) : 1,
   stock: toNumber(row.stock),
   stock_minimo: toNumber(row.stock_minimo),
   company: row.company,
@@ -686,7 +693,7 @@ export default async function handler(req: any, res: any) {
             db.prepare(`
               INSERT INTO stock_movimientos (product_id, cantidad, costo_unitario, cantidad_restante, tipo_movimiento, usuario, motivo)
               VALUES (?, ?, ?, ?, ?, ?, ?)
-            `).run(newProduct.id, parsed.data.stock, parsed.data.cost, parsed.data.stock, "ingreso", usuario, "Carga inicial");
+            `).run(newProduct.id, parsed.data.stock, getProductCostUnitPrice(parsed.data), parsed.data.stock, "ingreso", usuario, "Carga inicial");
           }
         })();
 
@@ -705,7 +712,7 @@ export default async function handler(req: any, res: any) {
           await client.query(
             `INSERT INTO stock_movimientos (product_id, cantidad, costo_unitario, cantidad_restante, tipo_movimiento, usuario, motivo)
              VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [newProduct.id, parsed.data.stock, parsed.data.cost, parsed.data.stock, "ingreso", usuario, "Carga inicial"]
+            [newProduct.id, parsed.data.stock, getProductCostUnitPrice(parsed.data), parsed.data.stock, "ingreso", usuario, "Carga inicial"]
           );
         }
 

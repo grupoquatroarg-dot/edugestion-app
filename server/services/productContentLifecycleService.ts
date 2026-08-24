@@ -1,5 +1,13 @@
 import { getPostgresPool, isPostgresConfigured } from "../utils/postgres.js";
 import { AppError } from "../utils/response.js";
+import {
+  getProductMeasurementUnit,
+  getProductPriceReferenceQuantity,
+  getProductQuantityMode,
+  normalizeProductMeasurementUnit,
+  normalizeProductQuantityMode,
+  roundMeasurementQuantity,
+} from "../../shared/productMeasurement.js";
 
 export type ProductContentInput = {
   productId: number;
@@ -8,6 +16,9 @@ export type ProductContentInput = {
   description?: string | null;
   cost: number;
   salePrice: number;
+  quantityMode?: "unit" | "measure";
+  measurementUnit?: "unidad" | "kg" | "g" | "l" | "ml" | "m";
+  priceReferenceQuantity?: number;
   stockMinimum?: number;
   company: "Edu" | "Peti";
   familyId?: number | null;
@@ -63,7 +74,14 @@ const validateInput = (input: ProductContentInput) => {
   const company = normalize(input.company);
   const cost = money(input.cost);
   const salePrice = money(input.salePrice);
-  const stockMinimum = Math.trunc(toNumber(input.stockMinimum));
+  const stockMinimum = roundMeasurementQuantity(input.stockMinimum);
+  const quantityMode = normalizeProductQuantityMode(input.quantityMode);
+  const measurementUnit = quantityMode === "measure"
+    ? normalizeProductMeasurementUnit(input.measurementUnit)
+    : "unidad";
+  const priceReferenceQuantity = quantityMode === "measure"
+    ? roundMeasurementQuantity(input.priceReferenceQuantity ?? 1)
+    : 1;
   const familyId = parseOptionalId(input.familyId, "Familia");
   const categoryId = parseOptionalId(input.categoryId, "Categoría");
 
@@ -74,7 +92,16 @@ const validateInput = (input: ProductContentInput) => {
   if ((description || "").length > 2000) throw new AppError("La descripción no puede superar los 2000 caracteres", 400);
   if (!Number.isFinite(cost) || cost < 0) throw new AppError("El costo no puede ser negativo", 400);
   if (!Number.isFinite(salePrice) || salePrice < 0) throw new AppError("El precio de venta no puede ser negativo", 400);
-  if (!Number.isInteger(stockMinimum) || stockMinimum < 0) throw new AppError("El stock mínimo no puede ser negativo", 400);
+  if (!Number.isFinite(stockMinimum) || stockMinimum < 0) throw new AppError("El stock mínimo no puede ser negativo", 400);
+  if (quantityMode === "unit" && !Number.isInteger(stockMinimum)) {
+    throw new AppError("Los productos por unidad solo admiten stock mínimo entero", 400);
+  }
+  if (quantityMode === "measure" && measurementUnit === "unidad") {
+    throw new AppError("Seleccioná una unidad de medida para el producto fraccionable", 400);
+  }
+  if (!Number.isFinite(priceReferenceQuantity) || priceReferenceQuantity <= 0) {
+    throw new AppError("La cantidad de referencia del precio debe ser mayor a cero", 400);
+  }
   if (company !== "Edu" && company !== "Peti") throw new AppError("Empresa inválida", 400);
 
   return {
@@ -86,6 +113,9 @@ const validateInput = (input: ProductContentInput) => {
     company: company as "Edu" | "Peti",
     cost,
     salePrice,
+    quantityMode,
+    measurementUnit,
+    priceReferenceQuantity,
     stockMinimum,
     familyId,
     categoryId,
@@ -101,7 +131,10 @@ const snapshot = (row: any) => ({
   description: normalize(row.description) || null,
   cost: money(row.cost),
   sale_price: money(row.sale_price),
-  stock_minimo: Math.trunc(toNumber(row.stock_minimo)),
+  quantity_mode: getProductQuantityMode(row),
+  measurement_unit: getProductMeasurementUnit(row),
+  price_reference_quantity: getProductPriceReferenceQuantity(row),
+  stock_minimo: roundMeasurementQuantity(row.stock_minimo),
   company: normalize(row.company),
   family_id: nullableId(row.family_id),
   category_id: nullableId(row.category_id),
@@ -117,6 +150,9 @@ const editableSnapshot = (row: ReturnType<typeof snapshot>) => ({
   description: row.description,
   cost: row.cost,
   sale_price: row.sale_price,
+  quantity_mode: row.quantity_mode,
+  measurement_unit: row.measurement_unit,
+  price_reference_quantity: row.price_reference_quantity,
   stock_minimo: row.stock_minimo,
   company: row.company,
   family_id: row.family_id,
@@ -212,6 +248,9 @@ const handleSqlite = async (input: ProductContentInput) => {
       description: validated.description,
       cost: validated.cost,
       sale_price: validated.salePrice,
+      quantity_mode: validated.quantityMode,
+      measurement_unit: validated.measurementUnit,
+      price_reference_quantity: validated.priceReferenceQuantity,
       stock_minimo: validated.stockMinimum,
       company: validated.company,
       family_id: validated.familyId,
@@ -239,6 +278,7 @@ const handleSqlite = async (input: ProductContentInput) => {
     const result = db.prepare(`
       UPDATE products
       SET code = ?, codigo_unico = ?, name = ?, description = ?, cost = ?, sale_price = ?,
+          quantity_mode = ?, measurement_unit = ?, price_reference_quantity = ?,
           stock_minimo = ?, company = ?, family_id = ?, category_id = ?, content_version = ?,
           content_changed_at = CURRENT_TIMESTAMP, content_changed_by = ?, content_change_reason = ?
       WHERE id = ? AND eliminado = 0 AND estado = 'activo' AND content_version = ?
@@ -249,6 +289,9 @@ const handleSqlite = async (input: ProductContentInput) => {
       validated.description,
       validated.cost,
       validated.salePrice,
+      validated.quantityMode,
+      validated.measurementUnit,
+      validated.priceReferenceQuantity,
       validated.stockMinimum,
       validated.company,
       validated.familyId,
@@ -312,6 +355,9 @@ const handlePostgres = async (input: ProductContentInput) => {
       description: validated.description,
       cost: validated.cost,
       sale_price: validated.salePrice,
+      quantity_mode: validated.quantityMode,
+      measurement_unit: validated.measurementUnit,
+      price_reference_quantity: validated.priceReferenceQuantity,
       stock_minimo: validated.stockMinimum,
       company: validated.company,
       family_id: validated.familyId,
@@ -340,10 +386,11 @@ const handlePostgres = async (input: ProductContentInput) => {
     const updated = await client.query(
       `UPDATE products
        SET code = $1, codigo_unico = $2, name = $3, description = $4, cost = $5,
-           sale_price = $6, stock_minimo = $7, company = $8, family_id = $9,
-           category_id = $10, content_version = $11, content_changed_at = now(),
-           content_changed_by = $12, content_change_reason = $13
-       WHERE id = $14 AND eliminado = 0 AND estado = 'activo' AND content_version = $15
+           sale_price = $6, quantity_mode = $7, measurement_unit = $8,
+           price_reference_quantity = $9, stock_minimo = $10, company = $11,
+           family_id = $12, category_id = $13, content_version = $14, content_changed_at = now(),
+           content_changed_by = $15, content_change_reason = $16
+       WHERE id = $17 AND eliminado = 0 AND estado = 'activo' AND content_version = $18
        RETURNING *`,
       [
         validated.code,
@@ -352,6 +399,9 @@ const handlePostgres = async (input: ProductContentInput) => {
         validated.description,
         validated.cost,
         validated.salePrice,
+        validated.quantityMode,
+        validated.measurementUnit,
+        validated.priceReferenceQuantity,
         validated.stockMinimum,
         validated.company,
         validated.familyId,

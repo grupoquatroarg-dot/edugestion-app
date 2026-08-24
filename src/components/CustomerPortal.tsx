@@ -35,6 +35,17 @@ import { generateCustomerOrderPdf } from '../utils/customerOrderPdf';
 import { generateSaleReceipt } from '../utils/pdfGenerator';
 import { generatePaymentReceiptPdf } from '../utils/paymentReceiptPdf';
 import { formatBusinessDateTime } from '../utils/businessDate';
+import {
+  formatProductQuantity,
+  getProductMeasurementUnit,
+  getProductPresentationLabel,
+  getProductPriceReferenceQuantity,
+  getProductSaleUnitPrice,
+  isMeasuredProduct,
+  normalizeProductQuantity,
+  parseLocalizedDecimal,
+  roundMeasurementQuantity,
+} from '../../shared/productMeasurement';
 
 type PortalCustomer = {
   id: number;
@@ -49,6 +60,9 @@ type PortalProduct = {
   name: string;
   description?: string;
   sale_price: number;
+  quantity_mode: 'unit' | 'measure';
+  measurement_unit: 'unidad' | 'kg' | 'g' | 'l' | 'ml' | 'm';
+  price_reference_quantity: number;
   stock?: number;
   family_name?: string;
   category_name?: string;
@@ -106,6 +120,12 @@ const formatCurrency = (value: number) =>
   `$${Number(value || 0).toLocaleString('es-AR', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
+  })}`;
+
+const formatUnitCurrency = (value: number, product: PortalProduct) =>
+  `$${Number(value || 0).toLocaleString('es-AR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: isMeasuredProduct(product) ? 4 : 2,
   })}`;
 
 const formatDate = (value?: string | null) => {
@@ -243,7 +263,7 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'catalogo' | 'pedidos' | 'cuenta'>('catalogo');
   const [searchTerm, setSearchTerm] = useState('');
-  const [cart, setCart] = useState<{ product: PortalProduct; quantity: number }[]>([]);
+  const [cart, setCart] = useState<{ product: PortalProduct; quantity: number; quantityInput: string }[]>([]);
   const [submittingOrder, setSubmittingOrder] = useState(false);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [downloadingSaleId, setDownloadingSaleId] = useState<number | null>(null);
@@ -277,7 +297,7 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
   const cartTotal = useMemo(
     () =>
       cart.reduce(
-        (sum, item) => sum + item.quantity * Number(item.product.sale_price || 0),
+        (sum, item) => sum + item.quantity * getProductSaleUnitPrice(item.product),
         0
       ),
     [cart]
@@ -419,26 +439,41 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
       const existing = current.find((item) => item.product.id === product.id);
 
       if (existing) {
+        const increment = isMeasuredProduct(product) ? 0.1 : 1;
+        const quantity = roundMeasurementQuantity(existing.quantity + increment);
         return current.map((item) =>
           item.product.id === product.id
-            ? { ...item, quantity: item.quantity + 1 }
+            ? { ...item, quantity, quantityInput: String(quantity).replace('.', ',') }
             : item
         );
       }
 
-      return [...current, { product, quantity: 1 }];
+      const initialQuantity = isMeasuredProduct(product) ? getProductPriceReferenceQuantity(product) : 1;
+      return [...current, { product, quantity: initialQuantity, quantityInput: String(initialQuantity).replace('.', ',') }];
     });
   };
 
-  const updateCartQty = (productId: number, quantity: number) => {
-    const safeQuantity = Math.max(1, Number(quantity || 1));
+  const updateCartQty = (productId: number, rawValue: string | number) => {
     setCart((current) =>
       current.map((item) =>
         item.product.id === productId
-          ? { ...item, quantity: safeQuantity }
+          ? {
+              ...item,
+              quantityInput: typeof rawValue === 'string' ? rawValue : String(rawValue).replace('.', ','),
+              quantity: normalizeProductQuantity(item.product, typeof rawValue === 'string' ? parseLocalizedDecimal(rawValue) : rawValue),
+            }
           : item
       )
     );
+  };
+
+  const normalizeCartQty = (productId: number) => {
+    setCart(current => current.map(item => {
+      if (item.product.id !== productId) return item;
+      const fallback = isMeasuredProduct(item.product) ? getProductPriceReferenceQuantity(item.product) : 1;
+      const quantity = item.quantity > 0 ? item.quantity : fallback;
+      return { ...item, quantity, quantityInput: String(quantity).replace('.', ',') };
+    }));
   };
 
   const removeFromCart = (productId: number) => {
@@ -447,6 +482,10 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
 
   const submitOrder = () => {
     if (cart.length === 0 || submittingOrder) return;
+    if (cart.some(item => item.quantity <= 0)) {
+      setFeedback({ type: 'error', message: 'Revisá las cantidades del carrito antes de enviar el pedido.' });
+      return;
+    }
     setConfirmAction({ type: 'submit-order' });
   };
 
@@ -592,7 +631,7 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                       {item.product.name}
                     </p>
                     <p className="mt-1 text-xs font-bold text-slate-400">
-                      {formatCurrency(item.product.sale_price)} por unidad
+                      {formatUnitCurrency(getProductSaleUnitPrice(item.product), item.product)} por {isMeasuredProduct(item.product) ? getProductMeasurementUnit(item.product) : 'unidad'}
                     </p>
                   </div>
                   <button
@@ -610,25 +649,29 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                   <div className="grid grid-cols-[44px_64px_44px] items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => updateCartQty(item.product.id, item.quantity - 1)}
+                      onClick={() => updateCartQty(
+                        item.product.id,
+                        roundMeasurementQuantity(Math.max(isMeasuredProduct(item.product) ? 0.001 : 1, item.quantity - (isMeasuredProduct(item.product) ? 0.1 : 1)))
+                      )}
                       className="flex h-11 items-center justify-center rounded-xl bg-slate-100 text-slate-700 transition hover:bg-slate-200"
                       aria-label={`Restar una unidad de ${item.product.name}`}
                     >
                       <Minus size={16} />
                     </button>
                     <input
-                      type="number"
-                      min="1"
-                      value={item.quantity}
+                      type="text"
+                      inputMode="decimal"
+                      value={item.quantityInput}
                       onChange={(event) =>
-                        updateCartQty(item.product.id, Number(event.target.value))
+                        updateCartQty(item.product.id, event.target.value)
                       }
+                      onBlur={() => normalizeCartQty(item.product.id)}
                       className="h-11 w-full rounded-xl border border-slate-200 bg-white text-center font-black text-slate-900 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
                       aria-label={`Cantidad de ${item.product.name}`}
                     />
                     <button
                       type="button"
-                      onClick={() => updateCartQty(item.product.id, item.quantity + 1)}
+                      onClick={() => updateCartQty(item.product.id, roundMeasurementQuantity(item.quantity + (isMeasuredProduct(item.product) ? 0.1 : 1)))}
                       className="flex h-11 items-center justify-center rounded-xl bg-slate-100 text-slate-700 transition hover:bg-slate-200"
                       aria-label={`Sumar una unidad de ${item.product.name}`}
                     >
@@ -637,7 +680,7 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                   </div>
 
                   <p className="break-words text-left text-base font-black text-slate-900 min-[380px]:text-right">
-                    {formatCurrency(item.quantity * item.product.sale_price)}
+                    {formatCurrency(item.quantity * getProductSaleUnitPrice(item.product))}
                   </p>
                 </div>
               </article>
@@ -1071,7 +1114,7 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                         </div>
                         {cartItem && (
                           <span className="shrink-0 rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-black text-indigo-700">
-                            {cartItem.quantity} en carrito
+                            {formatProductQuantity(cartItem.product, cartItem.quantity)} en carrito
                           </span>
                         )}
                       </div>
@@ -1099,6 +1142,12 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                         <p className="break-words text-xl font-black text-emerald-700">
                           {formatCurrency(product.sale_price)}
                         </p>
+                        <p className="mt-1 text-[11px] font-bold text-slate-500">{getProductPresentationLabel(product)}</p>
+                        {isMeasuredProduct(product) && (
+                          <p className="mt-1 text-xs font-black text-indigo-700">
+                            {formatUnitCurrency(getProductSaleUnitPrice(product), product)} por {getProductMeasurementUnit(product)}
+                          </p>
+                        )}
                         <button
                           type="button"
                           onClick={() => addToCart(product)}
@@ -1199,7 +1248,11 @@ export default function CustomerPortal({ onBackToAdmin }: { onBackToAdmin?: () =
                             {item.product_name || item.nombre_producto || item.name || 'Producto'}
                           </p>
                           <div className="mt-2 flex items-center justify-between gap-3 text-xs font-bold text-slate-500">
-                            <span>{Number(item.cantidad || item.quantity || 0)} unidades</span>
+                            <span>{formatProductQuantity({
+                              quantity_mode: item.quantity_mode,
+                              measurement_unit: item.measurement_unit,
+                              price_reference_quantity: item.price_reference_quantity,
+                            }, Number(item.cantidad || item.quantity || 0))}</span>
                             <span className="break-words text-right text-slate-900">
                               {formatCurrency(item.importe || item.subtotal || 0)}
                             </span>

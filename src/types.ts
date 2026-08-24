@@ -21,6 +21,9 @@ export interface Product {
   description: string;
   cost: number;
   sale_price: number;
+  quantity_mode: 'unit' | 'measure';
+  measurement_unit: 'unidad' | 'kg' | 'g' | 'l' | 'ml' | 'm';
+  price_reference_quantity: number;
   stock: number;
   stock_minimo: number;
   company: 'Edu' | 'Peti';

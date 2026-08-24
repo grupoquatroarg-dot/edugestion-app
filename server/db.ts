@@ -268,8 +268,11 @@ export function initDb() {
       description TEXT,
       cost REAL NOT NULL,
       sale_price REAL NOT NULL,
-      stock INTEGER DEFAULT 0,
-      stock_minimo INTEGER DEFAULT 0,
+      quantity_mode TEXT NOT NULL DEFAULT 'unit' CHECK(quantity_mode IN ('unit', 'measure')),
+      measurement_unit TEXT NOT NULL DEFAULT 'unidad' CHECK(measurement_unit IN ('unidad', 'kg', 'g', 'l', 'ml', 'm')),
+      price_reference_quantity REAL NOT NULL DEFAULT 1 CHECK(price_reference_quantity > 0),
+      stock REAL DEFAULT 0,
+      stock_minimo REAL DEFAULT 0,
       company TEXT CHECK(company IN ('Edu', 'Peti')) NOT NULL,
       family_id INTEGER,
       category_id INTEGER,
@@ -485,13 +488,16 @@ export function initDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       sale_id INTEGER NOT NULL,
       product_id INTEGER NOT NULL,
-      cantidad INTEGER NOT NULL,
+      cantidad REAL NOT NULL,
       precio_venta REAL NOT NULL,
       costo_total_peps REAL NOT NULL DEFAULT 0,
       precio_unitario_original REAL NOT NULL DEFAULT 0,
       bonificacion_tipo TEXT NOT NULL DEFAULT 'none' CHECK(bonificacion_tipo IN ('none', 'percentage', 'fixed')),
       bonificacion_valor REAL NOT NULL DEFAULT 0 CHECK(bonificacion_valor >= 0),
       precio_unitario_bonificado REAL NOT NULL DEFAULT 0,
+      quantity_mode TEXT NOT NULL DEFAULT 'unit',
+      measurement_unit TEXT NOT NULL DEFAULT 'unidad',
+      price_reference_quantity REAL NOT NULL DEFAULT 1,
       FOREIGN KEY (sale_id) REFERENCES sales(id),
       FOREIGN KEY (product_id) REFERENCES products(id)
     );
@@ -599,7 +605,7 @@ export function initDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       order_id INTEGER NOT NULL,
       product_id INTEGER NOT NULL,
-      cantidad INTEGER NOT NULL,
+      cantidad REAL NOT NULL,
       FOREIGN KEY (order_id) REFERENCES supplier_orders(id),
       FOREIGN KEY (product_id) REFERENCES products(id)
     );
@@ -1000,9 +1006,9 @@ export function initDb() {
     CREATE TABLE IF NOT EXISTS stock_movimientos (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       product_id INTEGER NOT NULL,
-      cantidad INTEGER NOT NULL,
+      cantidad REAL NOT NULL,
       costo_unitario REAL,
-      cantidad_restante INTEGER,
+      cantidad_restante REAL,
       descripcion TEXT,
       tipo_movimiento TEXT NOT NULL,
       motivo TEXT,
@@ -1067,9 +1073,9 @@ export function initDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       invoice_id INTEGER NOT NULL,
       product_id INTEGER NOT NULL,
-      cantidad INTEGER NOT NULL,
+      cantidad REAL NOT NULL,
       costo_unitario REAL NOT NULL,
-      cantidad_restante INTEGER NOT NULL,
+      cantidad_restante REAL NOT NULL,
       previous_product_cost REAL,
       product_was_created INTEGER NOT NULL DEFAULT 0,
       stock_movement_id INTEGER,
@@ -1417,6 +1423,9 @@ export function initDb() {
   try { db.exec("ALTER TABLE products ADD COLUMN content_changed_at DATETIME"); } catch (e) {}
   try { db.exec("ALTER TABLE products ADD COLUMN content_changed_by TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE products ADD COLUMN content_change_reason TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE products ADD COLUMN quantity_mode TEXT NOT NULL DEFAULT 'unit'"); } catch (e) {}
+  try { db.exec("ALTER TABLE products ADD COLUMN measurement_unit TEXT NOT NULL DEFAULT 'unidad'"); } catch (e) {}
+  try { db.exec("ALTER TABLE products ADD COLUMN price_reference_quantity REAL NOT NULL DEFAULT 1"); } catch (e) {}
   try {
     db.exec(`
       CREATE TABLE IF NOT EXISTS product_content_history (
@@ -1715,6 +1724,9 @@ export function initDb() {
   try { db.exec("ALTER TABLE sale_items ADD COLUMN bonificacion_tipo TEXT NOT NULL DEFAULT 'none'"); } catch (e) {}
   try { db.exec("ALTER TABLE sale_items ADD COLUMN bonificacion_valor REAL NOT NULL DEFAULT 0"); } catch (e) {}
   try { db.exec("ALTER TABLE sale_items ADD COLUMN precio_unitario_bonificado REAL NOT NULL DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE sale_items ADD COLUMN quantity_mode TEXT NOT NULL DEFAULT 'unit'"); } catch (e) {}
+  try { db.exec("ALTER TABLE sale_items ADD COLUMN measurement_unit TEXT NOT NULL DEFAULT 'unidad'"); } catch (e) {}
+  try { db.exec("ALTER TABLE sale_items ADD COLUMN price_reference_quantity REAL NOT NULL DEFAULT 1"); } catch (e) {}
   try {
     db.exec(`
       UPDATE sale_items

@@ -4,6 +4,7 @@ import { getPostgresPool, isPostgresConfigured } from "../utils/postgres.js";
 import { AppError } from "../utils/response.js";
 import { normalizeBusinessDateForStorage, toStoredDateOnly } from "../utils/businessDate.js";
 import { assertPaymentMethodActive } from "./paymentMethodAvailabilityService.js";
+import { getProductPriceReferenceQuantity, isMeasuredProduct } from "../../shared/productMeasurement.js";
 
 type Queryable = {
   query: (text: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }>;
@@ -659,6 +660,8 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
         let productId: number;
         let previousProductCost: number;
         let productWasCreated = 0;
+        let priceReferenceQuantity = 1;
+        let allowsFractionalQuantity = false;
 
         if (typeof item.product_id === "string" && item.product_id.startsWith("new:")) {
           const productName = item.product_id.replace("new:", "").trim();
@@ -672,7 +675,7 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
         } else {
           productId = Number(item.product_id);
           const product = db
-            .prepare("SELECT id, cost FROM products WHERE id = ? LIMIT 1")
+            .prepare("SELECT id, cost, quantity_mode, measurement_unit, price_reference_quantity FROM products WHERE id = ? LIMIT 1")
             .get(productId) as any;
 
           if (!product) {
@@ -680,6 +683,12 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
           }
 
           previousProductCost = toNumber(product.cost);
+          priceReferenceQuantity = getProductPriceReferenceQuantity(product);
+          allowsFractionalQuantity = isMeasuredProduct(product);
+        }
+
+        if (!allowsFractionalQuantity && !Number.isInteger(item.cantidad)) {
+          throw new AppError("Los productos por unidad solo admiten cantidades enteras", 400);
         }
 
         const itemInsert = db
@@ -716,7 +725,11 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
                 cost = ?
             WHERE id = ?
           `
-        ).run(item.cantidad, item.costo_unitario, productId);
+        ).run(
+          item.cantidad,
+          item.costo_unitario * priceReferenceQuantity,
+          productId
+        );
 
         const movementInsert = db
           .prepare(
@@ -876,6 +889,8 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
       let productId: number;
       let previousProductCost: number;
       let productWasCreated = false;
+      let priceReferenceQuantity = 1;
+      let allowsFractionalQuantity = false;
 
       if (typeof item.product_id === "string" && item.product_id.startsWith("new:")) {
         const productName = item.product_id.replace("new:", "").trim();
@@ -890,7 +905,7 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
         productId = Number(item.product_id);
         const productResult = await client.query(
           `
-            SELECT id, cost
+            SELECT id, cost, quantity_mode, measurement_unit, price_reference_quantity
             FROM products
             WHERE id = $1
             LIMIT 1
@@ -905,6 +920,12 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
         }
 
         previousProductCost = toNumber(product.cost);
+        priceReferenceQuantity = getProductPriceReferenceQuantity(product);
+        allowsFractionalQuantity = isMeasuredProduct(product);
+      }
+
+      if (!allowsFractionalQuantity && !Number.isInteger(item.cantidad)) {
+        throw new AppError("Los productos por unidad solo admiten cantidades enteras", 400);
       }
 
       const itemInsert = await client.query(
@@ -941,7 +962,11 @@ export const createPurchaseInvoice = async (payload: z.infer<typeof purchaseInvo
               cost = $2
           WHERE id = $3
         `,
-        [item.cantidad, item.costo_unitario, productId]
+        [
+          item.cantidad,
+          item.costo_unitario * priceReferenceQuantity,
+          productId,
+        ]
       );
 
       const movementInsert = await client.query(

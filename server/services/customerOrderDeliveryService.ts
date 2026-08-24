@@ -107,6 +107,7 @@ export const customerOrderDeliveryService = {
           notes: `Pedido cliente #${orderNumber}`,
           usuario: performedBy,
           allow_shortage: false,
+          use_supplied_prices: true,
           items: items.map((item: any) => ({
             product_id: toNumber(item.product_id),
             cantidad: toNumber(item.cantidad),

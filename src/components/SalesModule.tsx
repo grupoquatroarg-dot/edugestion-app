@@ -44,6 +44,18 @@ import {
   getBusinessDateInputValue,
   getBusinessDateKey,
 } from '../utils/businessDate';
+import {
+  formatMeasurementQuantity,
+  formatProductQuantity,
+  getProductMeasurementUnit,
+  getProductPresentationLabel,
+  getProductPriceReferenceQuantity,
+  getProductSaleUnitPrice,
+  isMeasuredProduct,
+  normalizeProductQuantity,
+  parseLocalizedDecimal,
+  roundMeasurementQuantity,
+} from '../../shared/productMeasurement';
 
 const socket = getSocket();
 
@@ -147,7 +159,13 @@ export default function SalesModule() {
   const [highlightedClienteIndex, setHighlightedClienteIndex] = useState(0);
   const [clienteSelectionDirty, setClienteSelectionDirty] = useState(false);
   const clienteSearchContainerRef = useRef<HTMLDivElement | null>(null);
-  const [cart, setCart] = useState<{ product: Product; quantity: number; discountType: 'none' | 'percentage' | 'fixed'; discountValue: number }[]>([]);
+  const [cart, setCart] = useState<{
+    product: Product;
+    quantity: number;
+    quantityInput: string;
+    discountType: 'none' | 'percentage' | 'fixed';
+    discountValue: number;
+  }[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
@@ -824,7 +842,7 @@ export default function SalesModule() {
   };
 
   const calculateDiscountedUnitPrice = (item: { product: Product; discountType: 'none' | 'percentage' | 'fixed'; discountValue: number }) => {
-    const originalPrice = Number(item.product.sale_price || 0);
+    const originalPrice = getProductSaleUnitPrice(item.product);
     const discountValue = Number(item.discountValue || 0);
 
     if (item.discountType === 'percentage') {
@@ -842,10 +860,13 @@ export default function SalesModule() {
   const activeFreightPercentage = isAdmin && freightEnabled
     ? Math.min(Math.max(Number(freightPercentage) || 0, 0), 100)
     : 0;
-  const applyFreightToUnitPrice = (price: number) =>
-    Math.round((price * (1 + activeFreightPercentage / 100) + Number.EPSILON) * 100) / 100;
+  const applyFreightToUnitPrice = (price: number, product: Product) => {
+    const precision = isMeasuredProduct(product) ? 6 : 2;
+    const factor = 10 ** precision;
+    return Math.round((price * (1 + activeFreightPercentage / 100) + Number.EPSILON) * factor) / factor;
+  };
   const calculateClientUnitPrice = (item: { product: Product; discountType: 'none' | 'percentage' | 'fixed'; discountValue: number }) =>
-    applyFreightToUnitPrice(calculateDiscountedUnitPrice(item));
+    applyFreightToUnitPrice(calculateDiscountedUnitPrice(item), item.product);
 
   const updateCartDiscount = (
     productId: number,
@@ -892,34 +913,55 @@ export default function SalesModule() {
     setCart(prev => {
       const existing = prev.find(item => item.product.id === product.id);
       if (existing) {
+        const increment = isMeasuredProduct(product) ? 0.1 : 1;
+        const quantity = roundMeasurementQuantity(existing.quantity + increment);
         return prev.map(item => 
           item.product.id === product.id 
-            ? { ...item, quantity: item.quantity + 1 } 
+            ? { ...item, quantity, quantityInput: String(quantity).replace('.', ',') }
             : item
         );
       }
-      return [...prev, { product, quantity: 1, discountType: 'none', discountValue: 0 }];
+      const initialQuantity = isMeasuredProduct(product) ? getProductPriceReferenceQuantity(product) : 1;
+      return [...prev, {
+        product,
+        quantity: initialQuantity,
+        quantityInput: String(initialQuantity).replace('.', ','),
+        discountType: 'none',
+        discountValue: 0,
+      }];
     });
   };
 
   const updateQuantity = (productId: number, delta: number) => {
     setCart(prev => prev.map(item => {
       if (item.product.id === productId) {
-        const newQty = Math.max(1, item.quantity + delta);
-        return { ...item, quantity: newQty };
+        const minimum = isMeasuredProduct(item.product) ? 0.001 : 1;
+        const newQty = roundMeasurementQuantity(Math.max(minimum, item.quantity + delta));
+        return { ...item, quantity: newQty, quantityInput: String(newQty).replace('.', ',') };
       }
       return item;
     }));
   };
 
-  const setQuantity = (productId: number, quantity: number) => {
-    const safeQuantity = Math.max(1, Math.floor(Number(quantity) || 1));
-
+  const setQuantity = (productId: number, rawValue: string) => {
     setCart(prev => prev.map(item => (
       item.product.id === productId
-        ? { ...item, quantity: safeQuantity }
+        ? {
+            ...item,
+            quantityInput: rawValue,
+            quantity: normalizeProductQuantity(item.product, parseLocalizedDecimal(rawValue)),
+          }
         : item
     )));
+  };
+
+  const normalizeQuantityInput = (productId: number) => {
+    setCart(prev => prev.map(item => {
+      if (item.product.id !== productId) return item;
+      const fallback = isMeasuredProduct(item.product) ? getProductPriceReferenceQuantity(item.product) : 1;
+      const quantity = item.quantity > 0 ? item.quantity : fallback;
+      return { ...item, quantity, quantityInput: String(quantity).replace('.', ',') };
+    }));
   };
 
   const removeFromCart = (productId: number) => {
@@ -999,6 +1041,11 @@ export default function SalesModule() {
   const handleConfirmOrder = async () => {
     if (cart.length === 0) return;
 
+    if (cart.some(item => item.quantity <= 0)) {
+      alert('Revisá las cantidades del carrito antes de confirmar la venta.');
+      return;
+    }
+
     if (clienteSelectionDirty) {
       alert('Seleccioná un cliente de la lista de resultados antes de confirmar la venta.');
       return;
@@ -1025,7 +1072,7 @@ export default function SalesModule() {
             product_id: item.product.id,
             cantidad: item.quantity,
             precio_venta: precioFinalCliente,
-            precio_unitario_original: item.product.sale_price,
+            precio_unitario_original: getProductSaleUnitPrice(item.product),
             bonificacion_tipo: item.discountType,
             bonificacion_valor: item.discountValue,
             precio_unitario_bonificado: precioBonificado
@@ -1363,9 +1410,11 @@ export default function SalesModule() {
                       <div className="flex items-end justify-between mt-auto pt-4 border-t border-zinc-50">
                         <div className="text-lg lg:text-xl font-black text-zinc-900 font-mono">
                           ${product.sale_price.toFixed(2)}
+                          <span className="mt-0.5 block font-sans text-[9px] font-bold text-zinc-500">{getProductPresentationLabel(product)}</span>
+                          {isMeasuredProduct(product) && <span className="block font-sans text-[9px] font-black text-indigo-600">${getProductSaleUnitPrice(product).toFixed(4)} / {getProductMeasurementUnit(product)}</span>}
                         </div>
                         <div className={`text-[10px] font-bold uppercase ${product.stock <= 5 ? 'text-red-600' : 'text-zinc-400'}`}>
-                          Stock: {product.stock}
+                          Stock: {formatProductQuantity(product, product.stock)}
                         </div>
                       </div>
                     </button>
@@ -1419,7 +1468,7 @@ export default function SalesModule() {
                             <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-lg border ${
                               missingUnits > 0 ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'
                             }`}>
-                              Stock: {item.product.stock} {missingUnits > 0 ? `| Faltan: ${missingUnits}` : ''}
+                              Stock: {formatProductQuantity(item.product, item.product.stock)} {missingUnits > 0 ? `| Faltan: ${formatProductQuantity(item.product, missingUnits)}` : ''}
                             </span>
                           </div>
                         </div>
@@ -1435,27 +1484,28 @@ export default function SalesModule() {
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         <div>
-                          <label className="block text-[9px] font-black text-zinc-400 uppercase mb-1 tracking-widest">Cantidad</label>
+                          <label className="block text-[9px] font-black text-zinc-400 uppercase mb-1 tracking-widest">
+                            Cantidad{isMeasuredProduct(item.product) ? ` (${getProductMeasurementUnit(item.product)})` : ''}
+                          </label>
                           <div className="flex items-center gap-2">
                             <button 
                               type="button"
-                              onClick={() => updateQuantity(item.product.id, -1)}
+                              onClick={() => updateQuantity(item.product.id, isMeasuredProduct(item.product) ? -0.1 : -1)}
                               className="h-10 w-10 bg-white border border-zinc-200 hover:bg-zinc-100 rounded-xl transition-colors flex items-center justify-center shrink-0"
                             >
                               <Minus size={15} />
                             </button>
                             <input
-                              type="number"
-                              min="1"
-                              step="1"
-                              inputMode="numeric"
-                              value={item.quantity}
-                              onChange={(e) => setQuantity(item.product.id, Number(e.target.value))}
+                              type="text"
+                              inputMode="decimal"
+                              value={item.quantityInput}
+                              onChange={(e) => setQuantity(item.product.id, e.target.value)}
+                              onBlur={() => normalizeQuantityInput(item.product.id)}
                               className="w-full h-10 text-center bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none text-base font-black font-mono"
                             />
                             <button 
                               type="button"
-                              onClick={() => updateQuantity(item.product.id, 1)}
+                              onClick={() => updateQuantity(item.product.id, isMeasuredProduct(item.product) ? 0.1 : 1)}
                               className="h-10 w-10 bg-white border border-zinc-200 hover:bg-zinc-100 rounded-xl transition-colors flex items-center justify-center shrink-0"
                             >
                               <Plus size={15} />
@@ -1464,13 +1514,13 @@ export default function SalesModule() {
                         </div>
 
                         <div>
-                          <label className="block text-[9px] font-black text-zinc-400 uppercase mb-1 tracking-widest">Precio unitario</label>
+                          <label className="block text-[9px] font-black text-zinc-400 uppercase mb-1 tracking-widest">Precio por {isMeasuredProduct(item.product) ? getProductMeasurementUnit(item.product) : 'unidad'}</label>
                           <div className="h-10 px-3 bg-white border border-zinc-200 rounded-xl flex items-center justify-between gap-2">
-                            <span className="text-sm font-black text-zinc-900 font-mono">${clientUnitPrice.toFixed(2)}</span>
+                            <span className="text-sm font-black text-zinc-900 font-mono">${clientUnitPrice.toFixed(isMeasuredProduct(item.product) ? 4 : 2)}</span>
                             {activeFreightPercentage > 0 ? (
                               <span className="text-[9px] text-indigo-600 font-bold uppercase">Base ${discountedUnitPrice.toFixed(2)}</span>
                             ) : item.discountType !== 'none' && (
-                              <span className="text-[9px] text-emerald-600 font-bold uppercase">Lista ${item.product.sale_price.toFixed(2)}</span>
+                              <span className="text-[9px] text-emerald-600 font-bold uppercase">Lista ${getProductSaleUnitPrice(item.product).toFixed(2)}</span>
                             )}
                           </div>
                         </div>
@@ -2497,7 +2547,9 @@ export default function SalesModule() {
                         </div>
                       </div>
                       <div className="w-full text-left min-[420px]:w-auto min-[420px]:shrink-0 min-[420px]:text-right">
-                        <p className="text-[10px] sm:text-xs font-bold text-zinc-500">{item.cantidad} x ${item.precio_venta.toFixed(2)}</p>
+                        <p className="text-[10px] sm:text-xs font-bold text-zinc-500">
+                          {formatMeasurementQuantity(item.cantidad, item.measurement_unit, { includeUnit: item.quantity_mode === 'measure' })} x ${item.precio_venta.toFixed(item.quantity_mode === 'measure' ? 4 : 2)}
+                        </p>
                         <p className="text-sm sm:text-base font-black text-zinc-900 font-mono">${(item.cantidad * item.precio_venta).toFixed(2)}</p>
                       </div>
                     </div>

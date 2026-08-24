@@ -27,7 +27,13 @@ export const calculateSalePricesWithFreight = (params: {
   discountType: unknown;
   discountValue: unknown;
   freightPercentage: number;
+  precision?: number;
 }) => {
+  const precision = Math.min(Math.max(Math.trunc(toNumber(params.precision, 2)), 2), 6);
+  const roundPrice = (value: number) => {
+    const factor = 10 ** precision;
+    return Math.round((value + Number.EPSILON) * factor) / factor;
+  };
   const originalPrice = Math.max(0, toNumber(params.originalPrice));
   const discountType = String(params.discountType || 'none');
   const discountValue = Math.max(0, toNumber(params.discountValue));
@@ -41,10 +47,10 @@ export const calculateSalePricesWithFreight = (params: {
 
   const multiplier = 1 + params.freightPercentage / 100;
   return {
-    originalPrice: roundMoney(originalPrice * multiplier),
-    discountedPrice: roundMoney(discountedPrice * multiplier),
+    originalPrice: roundPrice(originalPrice * multiplier),
+    discountedPrice: roundPrice(discountedPrice * multiplier),
     discountValue: discountType === 'fixed'
-      ? roundMoney(discountValue * multiplier)
+      ? roundPrice(discountValue * multiplier)
       : discountValue,
   };
 };
